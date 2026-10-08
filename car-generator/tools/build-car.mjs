@@ -561,10 +561,17 @@ const STRIP = {
   colors: STRIP_COLORS,
   uv: (k) => {
     const i = Math.max(0, Object.keys(STRIP_COLORS).indexOf(k));
-    return [(i * STRIP_CELL + STRIP_CELL / 2) / ATLAS, (STRIP_CELL / 2) / ATLAS];
+    return [(i + 0.5) / 32, 0.5 / 32]; // top 1/32 of any texture, 32 cells across
+
   },
 };
 const BODY_PAL = BAKE ? STRIP : MASK;
+function paintStrip(px, w, h) {
+  const cw = Math.max(1, Math.floor(w / 32)); const ch = Math.max(1, Math.floor(h / 32));
+  STRIP.keys.forEach((k, i) => {
+    for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) px.set(STRIP_COLORS[k], (y * w + i * cw + x) * 4);
+  });
+}
 
 // Textures are written like the original cars': PNG at the template's size, "_s" DDS at half size
 // in DXT3 with a full mip chain (the game's own files are all DXT3 + mips).
@@ -664,8 +671,20 @@ function halve(px, w, h) {
 }
 
 // Any RGBA image as PNG (w × h) + "_s" DXT3 DDS at half size with mips, like the game's files.
-async function writeImage(px, w, h, file) {
+// mode 'half': "_s" at half size with mips (escarabajo; gtv98's color_s). 'full': same size as the PNG,
+// one level (gtv98's base and part textures: flags 0x81007, linear size, caps 0x1000).
+async function writeImage(px, w, h, file, mode = 'half') {
   await sharp(Buffer.from(px), { raw: { width: w, height: h, channels: 4 } }).png().toFile(file + '.png');
+  if (mode === 'full') {
+    const hdr = Buffer.alloc(128);
+    hdr.write('DDS ', 0, 'ascii');
+    const u32 = (o, v) => hdr.writeUInt32LE(v >>> 0, o);
+    const data = dxt3(Buffer.from(px), w, h);
+    u32(4, 124); u32(8, 0x81007); u32(12, h); u32(16, w); u32(20, data.length);
+    u32(76, 32); u32(80, 0x4); hdr.write('DXT3', 84, 'ascii'); u32(108, 0x1000);
+    fs.writeFileSync(file + '_s.dds', Buffer.concat([hdr, data]));
+    return;
+  }
   let lw = Math.max(1, w >> 1); let lh = Math.max(1, h >> 1);
   let level = halve(px, w, h);
   const levels = [];
@@ -995,7 +1014,9 @@ const BUDGET = RAW ? { // fill each file close to the .0m limit (~21k triangles)
   headlight: [40, 300, 700], rearlight: [60, 220, 500], hood: [40, 130, 300], roof: [100, 250, 500],
   skirt: [60, 140, 300],
 };
-const SLOT_DIRS = ['frontbumper', 'headlight', 'hood', 'mainspoiler', 'rearbumper', 'rearlight', 'roof', 'skirt'];
+const SLOT_DIRS = BAKE // --bake follows the template's own part folders (gtv98 also has grill)
+  ? fs.readdirSync(TPL, { withFileTypes: true }).filter((e) => e.isDirectory() && !/^(dooropen|icon)$/i.test(e.name)).map((e) => e.name).sort()
+  : ['frontbumper', 'headlight', 'hood', 'mainspoiler', 'rearbumper', 'rearlight', 'roof', 'skirt'];
 const tplName = path.basename(path.resolve(TPL));
 fs.mkdirSync(OUT, { recursive: true });
 const readOM = (f) => { const b = fs.readFileSync(f); return parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.length)); };
@@ -1079,7 +1100,7 @@ if (BAKE) {
   const [bw, bh] = pngSize(path.join(TPL, `${tplName}_base.png`), [512, 512]);
   const red = Buffer.alloc(bw * bh * 4);
   for (let i = 0; i < red.length; i += 4) { red[i] = 255; red[i + 3] = 255; }
-  await writeImage(red, bw, bh, path.join(OUT, `${NAME}_base`));
+  await writeImage(red, bw, bh, path.join(OUT, `${NAME}_base`), 'full');
 } else {
   await writeTexture(MASK, path.join(OUT, `${NAME}_base`), pngSize(path.join(TPL, `${tplName}_base.png`), [512, 512]));
   await writeTexture(MASK, path.join(OUT, `${NAME}_color`), pngSize(path.join(TPL, `${tplName}_color.png`), [128, 64]));
@@ -1093,7 +1114,7 @@ for (const dir of SLOT_DIRS) {
   const isLightSlot = dir === 'headlight' || dir === 'rearlight';
   // Every part folder gets <car>_<dir>.png/_s.dds, named in list.xml wherever the template names a
   // texture (the template leaves some defaults empty, e.g. hood and roof; those stay empty).
-  const tex = `${NAME}_${dir}`;
+  const tex = BAKE ? `${NAME}_${dir}_default` : `${NAME}_${dir}`;
   const pal = BAKE ? STRIP : isLightSlot ? LIGHT : MASK;
   if (!BAKE) await writeTexture(pal, path.join(OUT, dir, tex), pngSize(path.join(TPL, dir, `${tplName}_${dir}.png`), [64, 64]));
   let meshFor;
@@ -1112,10 +1133,16 @@ for (const dir of SLOT_DIRS) {
     }
     meshFor = (v) => v.mesh;
   } else {
-    const byLod = slotParts(dir, BUDGET[dir], pal);
-    if (!byLod[2].length) { console.warn(`! no triangles for ${dir}`); continue; }
-    writeLods(dir, 'default', tplMesh, byLod);
-    meshFor = () => 'default'; // every shop variant shows the stock part
+    const byLod = slotParts(dir, BUDGET[dir] || BUDGET.hood, pal);
+    if (!byLod[2].length && BAKE) {
+      // A template part our car has nothing for (gtv98's grill): same files, hidden 1 mm stand-ins.
+      for (const v of variants) writeLods(dir, v.mesh, v.mesh, [[], [], []]);
+      meshFor = (v) => v.mesh;
+    } else {
+      if (!byLod[2].length) { console.warn(`! no triangles for ${dir}`); continue; }
+      writeLods(dir, 'default', tplMesh, byLod);
+      meshFor = () => 'default'; // every shop variant shows the stock part
+    }
   }
   // list.xml: keep the template's ids and names so tuning items still resolve.
   const out = list.replace(/<part\b([^>]*)\/>/g, (all, attrs) => {
@@ -1131,30 +1158,83 @@ for (const dir of SLOT_DIRS) {
   fs.writeFileSync(path.join(OUT, dir, 'list.xml'), xmlUtf16(out));
 }
 
-// --bake: one atlas for every LOD 2 part (spoilers use the flat cells), then write all files.
+// --bake: like gtv98, every part folder gets its own texture (sized like the template's), each part
+// file is one submesh, and every LOD uses the detailed mesh. The body's detail layer is <car>_color.
 if (BAKE) {
-  const lod2 = pending.filter(([dir]) => dir !== 'mainspoiler').flatMap(([, , , byLod]) => byLod[2]);
-  transferNormals(REFM, lod2);
-  const ppm = unwrapParts(lod2, ATLAS, STRIP_CELL * 2);
-  // Like the game's newer cars (gtv98): every LOD uses the detailed mesh.
-  if (SAME_LODS) for (const job of pending) if (job[0] !== 'mainspoiler') job[3] = [job[3][2], job[3][2], job[3][2]];
-  console.log(`atlas ${ATLAS}×${ATLAS}: ${ppm.toFixed(0)} px/m (${(1000 / ppm).toFixed(1)} mm per texel)`);
+  const tplPng = (dir) => {
+    const d = path.join(TPL, dir);
+    const own = path.join(d, `${tplName}_${dir}_default.png`);
+    if (fs.existsSync(own)) return pngSize(own, [128, 128]);
+    const any = fs.readdirSync(d).find((f) => f.endsWith('.png'));
+    return any ? pngSize(path.join(d, any), [128, 128]) : [128, 128];
+  };
+  const merge = (parts) => {
+    const P = []; const N = []; const UV = []; const I = [];
+    for (const q of parts) {
+      const base = P.length / 3;
+      P.push(...q.positions); N.push(...q.normals); UV.push(...q.uvs);
+      for (const i of q.indices) I.push(base + i);
+    }
+    return { name: 'merged', kind: 0, positions: new Float32Array(P), normals: new Float32Array(N), uvs: new Float32Array(UV), indices: new Uint16Array(I) };
+  };
   const t0 = Date.now();
-  const px = bakeAtlas(REFM, lod2, ATLAS);
-  console.log(`baked in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
-  STRIP.keys.forEach((k, i) => {
-    for (let y = 0; y < STRIP_CELL; y++) for (let x = 0; x < STRIP_CELL; x++) px.set(STRIP_COLORS[k], ((y * ATLAS) + i * STRIP_CELL + x) * 4);
-  });
-  await writeImage(px, ATLAS, ATLAS, path.join(OUT, `${NAME}_color`));
-  for (const dir of SLOT_DIRS) {
-    if (!fs.existsSync(path.join(OUT, dir))) continue;
-    for (const ext of ['.png', '_s.dds']) fs.copyFileSync(path.join(OUT, `${NAME}_color${ext}`), path.join(OUT, dir, `${NAME}_${dir}${ext}`));
+  const dirs = [...new Set(pending.map(([dir]) => dir))];
+  for (const dir of dirs) {
+    const jobs = pending.filter(([d]) => d === dir);
+    // Template sizes, but at least 256 (the original cars use 256 too): our detail is in the texture.
+    let [w, h] = dir === '' ? [ATLAS, ATLAS] : dir === 'mainspoiler' ? [64, 64] : tplPng(dir);
+    if (dir !== '' && dir !== 'mainspoiler') { while (w < 256) w *= 2; while (h < 256 && h < w) h *= 2; }
+    const parts = dir === 'mainspoiler' ? [] : jobs.flatMap(([, , , byLod]) => byLod[2]);
+    let px = new Uint8ClampedArray(w * h * 4);
+    if (parts.length) {
+      transferNormals(REFM, parts);
+      const ppm = unwrapParts(parts, w, Math.ceil(h / 32) + 2, h);
+      px = bakeAtlas(REFM, parts, w, { height: h });
+      console.log(`  ${(dir || 'body').padEnd(12)} texture ${w}×${h}: ${(1000 / ppm).toFixed(1)} mm per texel`);
+      for (const job of jobs) job[3][2] = [merge(job[3][2])];
+    }
+    paintStrip(px, w, h);
+    if (dir === '') await writeImage(px, w, h, path.join(OUT, `${NAME}_color`), 'half');
+    else await writeImage(px, w, h, path.join(OUT, dir, `${NAME}_${dir}_default`), 'full');
+    if (SAME_LODS) for (const job of jobs) if (dir !== 'mainspoiler') job[3] = [job[3][2], job[3][2], job[3][2]];
   }
+  console.log(`baked in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
   pending.done = true;
   for (const job of pending) writeLods(...job);
   for (const [dir, mesh, , byLod] of pending) {
     const nv = byLod.map((ps) => ps.reduce((s2, q) => s2 + q.positions.length / 3, 0));
     report.push(`${(dir || 'body').padEnd(12)} ${mesh.padEnd(10)} verts LOD0/1/2 ${nv.join(' / ')}`);
+  }
+}
+
+// --bake: mirror the template's part folders file for file — its list.xml (names only changed), a mesh
+// file for every variant it names (the stock part, or what the template ships), and a texture for every
+// texture it names or ships (our part texture).
+if (BAKE) {
+  for (const dir of SLOT_DIRS) {
+    const od = path.join(OUT, dir);
+    if (!fs.existsSync(od)) continue;
+    const list = readXml(path.join(TPL, dir, 'list.xml'));
+    const mine = `${NAME}_${dir}_default`;
+    const variants = [...list.matchAll(/<part\b[^>]*name='([^']*)'[^>]*mesh='([^']*)'[^>]*tex='([^']*)'/g)].map((m) => ({ mesh: m[2], tex: m[3] }));
+    const stock = fs.existsSync(path.join(od, 'default_2.0m')) ? 'default' : variants.find((v) => fs.existsSync(path.join(od, `${v.mesh}_2.0m`)))?.mesh;
+    const tplFiles = fs.readdirSync(path.join(TPL, dir));
+    for (const v of variants) {
+      for (let l = 0; l < 3; l++) {
+        const f = path.join(od, `${v.mesh}_${l}.0m`);
+        if (!fs.existsSync(f) && stock && tplFiles.includes(`${v.mesh}_${l}.0m`)) fs.copyFileSync(path.join(od, `${stock}_${l}.0m`), f);
+      }
+    }
+    const texNames = new Set([...variants.map((v) => v.tex), ...tplFiles.filter((f) => f.endsWith('.png')).map((f) => f.slice(0, -4))]);
+    for (const t of texNames) {
+      if (!t) continue;
+      const name = t.split(tplName).join(NAME);
+      for (const ext of ['.png', '_s.dds']) {
+        const f = path.join(od, name + ext);
+        if (!fs.existsSync(f) && fs.existsSync(path.join(od, mine + ext))) fs.copyFileSync(path.join(od, mine + ext), f);
+      }
+    }
+    fs.writeFileSync(path.join(od, 'list.xml'), xmlUtf16(list.split(tplName).join(NAME)));
   }
 }
 

@@ -195,7 +195,12 @@ node tools/build-car.mjs model.glb path/to/car/gtv98 out/rc_mycar --name rc_myca
 node tools/make-icons.mjs out/rc_mycar path/to/car/gtv98
 ```
 
-กะบะ `rc_canyon` สร้างแบบนี้: LOD2 ทั้งคัน ~2,900 สามเหลี่ยม ไฟล์ใหญ่สุด ~1,940 จุด
+`--bake` ทำตามแม่แบบทีละไฟล์: โฟลเดอร์ชิ้นส่วนเดียวกับแม่แบบ (gtv98 มี grill ด้วย), `list.xml` เหมือนแม่แบบ
+(เปลี่ยนแค่ชื่อรถ), มีไฟล์ `.0m` ทุกแบบที่แม่แบบอ้าง (ใช้ชิ้นของเรา), ชิ้นละ 1 submesh เรียงตามแม่แบบ,
+ทุกชิ้นส่วนมีภาพของตัวเอง (ขนาดตามแม่แบบ อย่างน้อย 256) และ `_s.dds` แบบเดียวกับ gtv98
+(ขนาดเท่า PNG ไม่มี mipmap · `color_s` ครึ่งขนาดมี mipmap)
+
+กะบะ `rc_canyon` สร้างแบบนี้: LOD2 ทั้งคัน ~2,900 สามเหลี่ยม ไฟล์ใหญ่สุด ~1,940 จุด zip ~1 MB
 
 สิ่งที่ตัวแปลงทำ (โหมดปกติ / `--raw`):
 - แบ่งโมเดลตามตำแหน่ง/วัสดุเป็นชิ้น: `body`, `hood`, `roof`, `frontbumper`, `rearbumper`, `headlight`, `rearlight`, `skirt`

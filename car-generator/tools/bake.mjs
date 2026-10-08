@@ -111,7 +111,7 @@ function shelfPack(rects, scale, x0, x1, y0, y1, pad) {
 // Gives every part an atlas UV set. parts: [{ positions, normals, indices, ... }] (mutated: vertices are
 // split along chart seams, uvs set). The atlas is size × size; rows [paletteRows, size) are charts,
 // the top rows hold the flat palette cells used by the far LODs.
-export function unwrapParts(parts, size, top) {
+export function unwrapParts(parts, size, top, height = size) {
   const pad = 2;
   const all = [];
   for (const part of parts) {
@@ -123,9 +123,9 @@ export function unwrapParts(parts, size, top) {
   let lo = 1; let hi = 4096;
   for (let k = 0; k < 30; k++) {
     const mid = (lo + hi) / 2;
-    if (shelfPack(all, mid, 0, size, top, size, pad)) lo = mid; else hi = mid;
+    if (shelfPack(all, mid, 0, size, top, height, pad)) lo = mid; else hi = mid;
   }
-  shelfPack(all, lo, 0, size, top, size, pad);
+  shelfPack(all, lo, 0, size, top, height, pad);
   for (const part of parts) {
     const P = []; const N = []; const UV = []; const IDX = [];
     for (const ch of part.charts) {
@@ -134,7 +134,7 @@ export function unwrapParts(parts, size, top) {
         remap.set(i, P.length / 3);
         P.push(part.positions[i * 3], part.positions[i * 3 + 1], part.positions[i * 3 + 2]);
         N.push(part.normals[i * 3], part.normals[i * 3 + 1], part.normals[i * 3 + 2]);
-        UV.push((ch.px + uv[0] * lo) / size, (ch.py + ch.h * lo - uv[1] * lo) / size);
+        UV.push((ch.px + uv[0] * lo) / size, (ch.py + ch.h * lo - uv[1] * lo) / height);
       }
       for (const t of ch.tris) for (let e = 0; e < 3; e++) IDX.push(remap.get(part.indices[t * 3 + e]));
     }
@@ -194,9 +194,10 @@ function styleColor(mat, rgb, n) {
 
 // Bakes one atlas. parts: [{ positions, normals, uvs, indices, name (canonical material) }] at the
 // atlas's pixel size. Returns RGBA pixels (paint transparent).
-export function bakeAtlas(ref, parts, size, { reach = 0.12 } = {}) {
-  const px = new Uint8ClampedArray(size * size * 4);
-  const filled = new Uint8Array(size * size);
+export function bakeAtlas(ref, parts, size, { reach = 0.12, height = size } = {}) {
+  const W = size; const H = height;
+  const px = new Uint8ClampedArray(W * H * 4);
+  const filled = new Uint8Array(W * H);
   const ray = new THREE.Ray();
   const bary = new THREE.Vector3();
   const tri = new THREE.Triangle();
@@ -207,10 +208,10 @@ export function bakeAtlas(ref, parts, size, { reach = 0.12 } = {}) {
     const I = part.indices; const P = part.positions; const N = part.normals; const UV = part.uvs;
     for (let t = 0; t < I.length; t += 3) {
       const ia = I[t]; const ib = I[t + 1]; const ic = I[t + 2];
-      const ux = [UV[ia * 2] * size, UV[ib * 2] * size, UV[ic * 2] * size];
-      const uy = [UV[ia * 2 + 1] * size, UV[ib * 2 + 1] * size, UV[ic * 2 + 1] * size];
-      const x0 = Math.max(0, Math.floor(Math.min(...ux)) - 1); const x1 = Math.min(size - 1, Math.ceil(Math.max(...ux)) + 1);
-      const y0 = Math.max(0, Math.floor(Math.min(...uy)) - 1); const y1 = Math.min(size - 1, Math.ceil(Math.max(...uy)) + 1);
+      const ux = [UV[ia * 2] * W, UV[ib * 2] * W, UV[ic * 2] * W];
+      const uy = [UV[ia * 2 + 1] * H, UV[ib * 2 + 1] * H, UV[ic * 2 + 1] * H];
+      const x0 = Math.max(0, Math.floor(Math.min(...ux)) - 1); const x1 = Math.min(W - 1, Math.ceil(Math.max(...ux)) + 1);
+      const y0 = Math.max(0, Math.floor(Math.min(...uy)) - 1); const y1 = Math.min(H - 1, Math.ceil(Math.max(...uy)) + 1);
       const den = (uy[1] - uy[2]) * (ux[0] - ux[2]) + (ux[2] - ux[1]) * (uy[0] - uy[2]);
       if (Math.abs(den) < 1e-12) continue;
       for (let y = y0; y <= y1; y++) {
@@ -223,20 +224,20 @@ export function bakeAtlas(ref, parts, size, { reach = 0.12 } = {}) {
           const e = 1.5 / Math.max(1, Math.sqrt(Math.abs(den)));
           if (w0 < -e || w1 < -e || w2 < -e) continue;
           const inside = w0 >= 0 && w1 >= 0 && w2 >= 0;
-          if (filled[y * size + x] === 2 || (!inside && filled[y * size + x])) continue;
+          if (filled[y * W + x] === 2 || (!inside && filled[y * W + x])) continue;
           w0 = Math.max(0, w0); w1 = Math.max(0, w1); w2 = Math.max(0, w2);
           const s = w0 + w1 + w2; w0 /= s; w1 /= s; w2 /= s;
           const p = [0, 1, 2].map((k) => P[ia * 3 + k] * w0 + P[ib * 3 + k] * w1 + P[ic * 3 + k] * w2);
           const n = norm([0, 1, 2].map((k) => N[ia * 3 + k] * w0 + N[ib * 3 + k] * w1 + N[ic * 3 + k] * w2));
           const c = ownGlass ? [0.02, 0.02, 0.025, 1, 1] : sample(p, n);
-          const o = (y * size + x) * 4;
+          const o = (y * W + x) * 4;
           px[o] = c[0] * 255; px[o + 1] = c[1] * 255; px[o + 2] = c[2] * 255; px[o + 3] = c[3] * 255;
-          filled[y * size + x] = inside ? 2 : 1;
+          filled[y * W + x] = inside ? 2 : 1;
         }
       }
     }
   }
-  dilate(px, filled, size, 4);
+  dilate(px, filled, W, H, 4);
   return px;
 
   // Front-to-back along the inward normal from just outside the low-poly surface: transparent
@@ -298,16 +299,16 @@ export function bakeAtlas(ref, parts, size, { reach = 0.12 } = {}) {
 }
 
 // Spreads baked texels into empty neighbours so filtering and mipmaps don't bleed in background.
-function dilate(px, filled, size, steps) {
+function dilate(px, filled, W, H, steps) {
   for (let s = 0; s < steps; s++) {
     const add = [];
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        if (filled[y * size + x]) continue;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (filled[y * W + x]) continue;
         for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
           const xx = x + dx; const yy = y + dy;
-          if (xx < 0 || yy < 0 || xx >= size || yy >= size || !filled[yy * size + xx]) continue;
-          add.push([y * size + x, yy * size + xx]);
+          if (xx < 0 || yy < 0 || xx >= W || yy >= H || !filled[yy * W + xx]) continue;
+          add.push([y * W + x, yy * W + xx]);
           break;
         }
       }

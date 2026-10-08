@@ -4,7 +4,7 @@ rc_canyon — RayCity car package
 https://sketchfab.com/3d-models/2023-gmc-canyon-at4x-372b6c66794649499c7bffbb07888609
 License: CC BY-NC-SA 4.0 (http://creativecommons.org/licenses/by-nc-sa/4.0/)
   - credit the author, non-commercial use only, share changes under the same license.
-Changes: converted to RayCity .0m format, split into tuning parts, simplified to 3 LODs,
-wheels and number plates removed, colors baked into palette textures, openings/wheel wells/underbody closed.
+Changes (--raw mode): converted to RayCity .0m format, split into tuning parts, simplified to 3 LODs,
+wheels removed (the game adds its own), colors baked into palette textures; nothing else added or removed.
 
-Built with car-generator/tools/build-car.mjs (--keep-logos) using escarabajo as the layout template.
+Built with car-generator/tools/build-car.mjs (--raw) using escarabajo as the layout template.

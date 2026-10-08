@@ -26,7 +26,12 @@ const NAME = opt('--name', 'rc_car');
 const SPEC = opt('--spec', '');
 const LOCK = opt('--lock', '0') === '1';
 const SCALE = Number(opt('--budget', '1'));
-const KEEP_LOGOS = args.includes('--keep-logos') && Boolean(args.splice(args.indexOf('--keep-logos'), 1));
+const flag = (f) => args.includes(f) && Boolean(args.splice(args.indexOf(f), 1));
+// --raw: as close to the source as the format allows. Nothing added (hole fills, wheel wells, underbody,
+// gear lever), nothing removed but the wheels, source normals and double-sided flags kept; only
+// simplification, spread over every part file so the most detail fits.
+const RAW = flag('--raw');
+const KEEP_LOGOS = flag('--keep-logos') || RAW;
 const [SRC, TPL, OUT] = args;
 if (!SRC || !TPL || !OUT) {
   console.error('usage: node tools/build-car.mjs <model.glb> <template-car-folder> <out-dir> [--name rc_car] [--spec x.xml]');
@@ -45,7 +50,7 @@ const doc = await io.read(SRC);
 //   carbon, interior; logos/badges/plates and wheels/tires/brakes are skipped.
 // The canonical names below are what the rest of the builder works with.
 const CANON = [
-  [/^plate$|license/i, null], // the game draws its own number plate
+  [/^plate$|license/i, RAW ? 'plastic_gray' : null], // the game draws its own number plate
   [/logo|badge|emblem|costura|icons?$/i, KEEP_LOGOS ? 'metal_chrome' : null],
   [/tyre|tire|break|brake|rim|wheel/i, null],
   [/window|^glass(_t|_gray)?$|windshield/i, 'Glass_Gray'],
@@ -63,7 +68,8 @@ const canon = (name) => CANON.find(([re]) => re.test(name))[1];
 
 // Meshes we never export: wheels (shared in game) and badges. Inner panels (floor, dash, door cards)
 // are kept: without them the car is see-through in game.
-const SKIP_NODE = KEEP_LOGOS ? /^(wheel|rim_root|steering|centre)|plates?(\.|_|$)/i
+const SKIP_NODE = RAW ? /^(wheel|rim_root)/i
+  : KEEP_LOGOS ? /^(wheel|rim_root|steering|centre)|plates?(\.|_|$)/i
   : /^(wheel|rim_root|steering|blue|yellow_trim|centre)|logo|badge|emblem|plates?(\.|_|$)/i;
 const wheelCenters = [];
 let steeringPos = null; // used to place the gear lever
@@ -94,6 +100,8 @@ doc.getRoot().getDefaultScene().traverse((node) => {
     const mat = canon(srcMat);
     if (!mat) { skipped.set(srcMat, (skipped.get(srcMat) || 0) + 1); continue; }
     const inner = mat === 'Interior_dark';
+    const ds = Boolean(prim.getMaterial()?.getDoubleSided());
+    const nrmAttr = prim.getAttribute('NORMAL');
     const pos = prim.getAttribute('POSITION');
     const idx = prim.getIndices();
     const v = [];
@@ -105,8 +113,23 @@ doc.getRoot().getDefaultScene().traverse((node) => {
       const z = m[2] * v[0] + m[6] * v[1] + m[10] * v[2] + m[14];
       P.push(orient([-x, z, y]));
     }
+    const NR = [];
+    if (nrmAttr) {
+      for (let i = 0; i < nrmAttr.getCount(); i++) {
+        nrmAttr.getElement(i, v);
+        const x = m[0] * v[0] + m[4] * v[1] + m[8] * v[2];
+        const y = m[1] * v[0] + m[5] * v[1] + m[9] * v[2];
+        const z = m[2] * v[0] + m[6] * v[1] + m[10] * v[2];
+        const l = Math.hypot(x, y, z) || 1;
+        NR.push(orient([-x / l, z / l, y / l]));
+      }
+    }
     const I = idx ? idx.getArray() : P.map((_, i) => i);
-    for (let t = 0; t + 2 < I.length; t += 3) tris.push({ a: P[I[t]], b: P[I[t + 1]], c: P[I[t + 2]], mat, inner });
+    for (let t = 0; t + 2 < I.length; t += 3) {
+      const tri = { a: P[I[t]], b: P[I[t + 1]], c: P[I[t + 2]], mat, inner, ds };
+      if (NR.length) tri.vn = [NR[I[t]], NR[I[t + 1]], NR[I[t + 2]]];
+      tris.push(tri);
+    }
   }
 });
 if (skipped.size) console.log(`skipped materials: ${[...skipped.keys()].join(', ')}`);
@@ -177,6 +200,7 @@ function slotOf(t) {
   if (z < zs(0.42) && ax > 0.78 && axleSpan(y)) return 'skirt';
   return 'body';
 }
+if (!RAW) // (--raw keeps everything)
 // Inner panels: keep only what closes visible holes — the cabin tub (floor, dash, door cards)
 // and the underbody. Engine bay and bumper internals would poke through the skin.
 {
@@ -193,7 +217,7 @@ function slotOf(t) {
 }
 
 // Remove badges/lettering: small separate pieces near the centerline at the nose or tail.
-{
+if (!RAW) {
   const key = (p) => `${Math.round(p[0] * 2000)},${Math.round(p[1] * 2000)},${Math.round(p[2] * 2000)}`;
   const parent = new Map();
   const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
@@ -233,7 +257,8 @@ function slotOf(t) {
 
 // Pieces whose faces point both into and out of the car (curved lamp surrounds, lips, fins) get
 // drawn from both sides; for the rest one outward-facing side is enough.
-{
+if (RAW) for (const t of tris) t.twoSided = t.ds; // the source's own double-sided flags
+else {
   const key = (p) => `${Math.round(p[0] * 2000)},${Math.round(p[1] * 2000)},${Math.round(p[2] * 2000)}`;
   const parent = new Map();
   const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
@@ -303,7 +328,7 @@ const added = [];
 
 // Openings (grille holes, intakes, panel gaps): boundary loops of the outer skin, filled with a
 // slightly recessed dark carbon/mesh panel. Wheel arches and the cabin opening stay open.
-{
+if (!RAW) {
   const key = (p) => `${Math.round(p[0] * 1000)},${Math.round(p[1] * 1000)},${Math.round(p[2] * 1000)}`;
   const pts = new Map();
   const id = (p) => { const k = key(p); if (!pts.has(k)) pts.set(k, { i: pts.size, p }); return pts.get(k).i; };
@@ -436,7 +461,7 @@ const added = [];
   box(0, y + 0.03, z + 0.18, 0.045, 0.045, 0.045, 'Leather'); // knob
   console.log(`gear lever at y ${y.toFixed(2)}, z ${z.toFixed(2)}`);
 }
-tris.push(...added);
+if (!RAW) tris.push(...added);
 
 const slots = {};
 for (const t of tris) (slots[slotOf(t)] ||= []).push(t);
@@ -517,11 +542,17 @@ function weld(list) {
   // The source is modeled double-sided: every panel exists twice with opposite winding. Keep only the
   // copy facing away from the car center, otherwise the two layers simplify differently and leave holes.
   const seen = new Map();
+  const vn = []; // authored normals per welded vertex (distinct directions)
   for (const t of list) {
-    const ids = [t.a, t.b, t.c].map((p) => {
+    const ids = [t.a, t.b, t.c].map((p, k3) => {
       const k = key(p);
       let i = map.get(k);
       if (i === undefined) { i = pos.length / 3; map.set(k, i); pos.push(p[0], p[1], p[2]); }
+      if (t.vn) {
+        const n = t.vn[k3];
+        const list2 = vn[i] || (vn[i] = []);
+        if (!list2.some((m) => m[0] * n[0] + m[1] * n[1] + m[2] * n[2] > 0.995)) list2.push(n);
+      }
       return i;
     });
     if (ids[0] === ids[1] || ids[1] === ids[2] || ids[0] === ids[2]) continue;
@@ -538,10 +569,10 @@ function weld(list) {
   const score = new Map();
   for (const { ids, out } of seen.values()) { const r = find(ids[0]); score.set(r, (score.get(r) || 0) + out); }
   for (const { ids } of seen.values()) {
-    if (score.get(find(ids[0])) < 0) idx.push(ids[0], ids[2], ids[1]);
+    if (!RAW && score.get(find(ids[0])) < 0) idx.push(ids[0], ids[2], ids[1]);
     else idx.push(...ids);
   }
-  return { pos: new Float32Array(pos), idx: new Uint32Array(idx) };
+  return { pos: new Float32Array(pos), idx: new Uint32Array(idx), vn };
 }
 
 // lod 2: open edges (panel seams) locked so nothing tears; lods 1/0: free collapse within an error
@@ -606,7 +637,8 @@ function simplifyGroup(list, targetTris, lod, interior = false, attempt = 0, two
   if (interior && LOD_ERR_INTERIOR[lod] === undefined) return { pos: new Float32Array(), idx: new Uint32Array() };
   const welded = weld(list);
   const pos = welded.pos;
-  const idx = dropSmallPieces(pos, welded.idx, LOD_MIN_PIECE[lod] * (1 + attempt));
+  const idx = RAW && lod === 2 && attempt === 0 ? welded.idx
+    : dropSmallPieces(pos, welded.idx, LOD_MIN_PIECE[lod] * (1 + attempt) * (RAW ? 0.5 : 1));
   const err = interior ? LOD_ERR_INTERIOR[lod] * (1 + attempt) : LOD_ERR[lod];
   // After a few tries at .0m size limits, let borders collapse too (small cracks beat a failed build).
   const lock = (err === null && attempt < 3) || LOCK;
@@ -614,12 +646,12 @@ function simplifyGroup(list, targetTris, lod, interior = false, attempt = 0, two
   let out = idx.length / 3 <= targetTris ? idx
     : MeshoptSimplifier.simplify(idx, pos, 3, Math.max(3, targetTris * 3), lock ? 1 : errFree, lock ? ['LockBorder'] : [])[0];
   if (interior && out.length / 3 > targetTris) out = clusterSimplify(pos, out, Math.round(targetTris / (1 + attempt)));
-  if (!interior && !twoSided) return { pos, idx: out, ref: idx };
+  if (!interior && !twoSided) return { pos, idx: out, ref: idx, vn: welded.vn };
   // Interior and ambiguous pieces are seen from any side: add the back faces after simplifying.
   const both = new Uint32Array(out.length * 2);
   both.set(out);
   for (let t = 0; t < out.length; t += 3) both.set([out[t], out[t + 2], out[t + 1]], out.length + t);
-  return { pos, idx: both, ref: idx };
+  return { pos, idx: both, ref: idx, vn: welded.vn };
 }
 
 // Smooth normals, but split vertices where faces meet at more than `crease` degrees.
@@ -645,8 +677,8 @@ function sourceNormals(pos, refIdx, crease = 50) {
   return groups;
 }
 
-function withNormals(pos, idx, crease = 45, refIdx = null) {
-  const ref = refIdx ? sourceNormals(pos, refIdx) : null;
+function withNormals(pos, idx, crease = 45, refIdx = null, authored = null) {
+  const ref = authored ? null : refIdx ? sourceNormals(pos, refIdx) : null;
   const refCos = Math.cos((30 * Math.PI) / 180);
   const nt = idx.length / 3;
   const fn = new Float32Array(nt * 3);
@@ -673,7 +705,16 @@ function withNormals(pos, idx, crease = 45, refIdx = null) {
     for (let k = 0; k < 3; k++) {
       const v = idx[t * 3 + k];
       let n = null;
-      if (ref && ref.has(v)) {
+      if (authored && authored[v]) {
+        // The source's own normal at this vertex that best matches this face.
+        let best = -2;
+        for (const m of authored[v]) {
+          const d = m[0] * ft[0] + m[1] * ft[1] + m[2] * ft[2];
+          if (d > best) { best = d; n = m; }
+        }
+        if (best < 0) n = null;
+      }
+      if (!n && ref && ref.has(v)) {
         let best = -2;
         for (const g of ref.get(v)) {
           const m = norm(g);
@@ -709,14 +750,15 @@ function buildSlot(list, budget, pal, lod = 2) {
     const parts = buildSlotOnce(list, budget, pal, lod, attempt);
     const nv = parts.reduce((s, q) => s + q.positions.length / 3, 0);
     const ni = parts.reduce((s, q) => s + q.indices.length, 0);
-    if ((nv <= 65000 && ni <= 65000) || attempt >= 8) return parts;
+    if ((nv <= 65000 && ni <= 65000) || attempt >= 14) return parts;
   }
 }
 
 function buildSlotOnce(list, budgetIn, pal, lod, attempt) {
   // Once borders are allowed to collapse (attempt ≥ 3), aim just under the .0m limit instead of the
   // small LOD budget, so LOD 2 stays the most detailed.
-  const budget = attempt >= 3 ? Math.max(budgetIn, (19000 * 0.85 ** (attempt - 3)) / SCALE) : budgetIn;
+  const budget = RAW ? budgetIn * 0.82 ** attempt // raw budgets start at the limit: shrink until it fits
+    : attempt >= 3 ? Math.max(budgetIn, (19000 * 0.85 ** (attempt - 3)) / SCALE) : budgetIn;
   const byMat = new Map();
   for (const t of list) {
     const k = t.twoSided ? `${t.mat}|2s` : t.mat;
@@ -729,10 +771,10 @@ function buildSlotOnce(list, budgetIn, pal, lod, attempt) {
     const mat = key.replace(/\|2s$/, '');
     const twoSided = key.endsWith('|2s');
     const target = Math.max(4, Math.round((budget * SCALE * group.length) / total));
-    const { pos, idx, ref } = simplifyGroup(group, target, lod, INTERIOR.test(mat), attempt, twoSided);
+    const { pos, idx, ref, vn } = simplifyGroup(group, target, lod, !RAW && INTERIOR.test(mat), attempt, twoSided);
     if (process.env.DEBUG) console.log(`    lod${lod} ${mat.padEnd(16)} src ${group.length} target ${target} got ${idx.length / 3}`);
     if (idx.length < 3) continue;
-    const g = withNormals(pos, idx, 45, ref);
+    const g = withNormals(pos, idx, 45, ref, RAW ? vn : null);
     const [u, v] = pal.uv(pal.colors[mat] ? mat : pal.keys[0]);
     // Submesh kind (flags[0]) tells the game to draw glass and lamps as such.
     const kind = /^Glass/i.test(mat) ? 1 : /projector/i.test(mat) ? 2 : /taillight/i.test(mat) ? 3 : /led/i.test(mat) ? 4 : 0;
@@ -775,7 +817,11 @@ function wing(kind) {
 // ---------------------------------------------------------------------------------------------
 // 5. Write the folder.
 
-const BUDGET = { // [LOD0, LOD1, LOD2] triangles, roughly 2–3× the original car (LOD2 total ≈ 7k)
+const BUDGET = RAW ? { // fill each file close to the .0m limit (~21k triangles)
+  body: [7000, 13000, 19500], frontbumper: [2500, 6000, 12000], rearbumper: [2500, 6000, 12000],
+  headlight: [2000, 5000, 12000], rearlight: [2000, 5000, 12000], hood: [1000, 3000, 8000],
+  roof: [1500, 4000, 10000], skirt: [1000, 3000, 8000],
+} : { // [LOD0, LOD1, LOD2] triangles, roughly 2–3× the original car (LOD2 total ≈ 7k)
   body: [500, 1400, 2800], frontbumper: [180, 500, 1100], rearbumper: [180, 500, 1100],
   headlight: [40, 300, 700], rearlight: [60, 220, 500], hood: [40, 130, 300], roof: [100, 250, 500],
   skirt: [60, 140, 300],

@@ -166,12 +166,26 @@ escarabajo/
 ```bash
 cd car-generator
 npm install
+node tools/build-car.mjs model.glb path/to/car/escarabajo out/rc_mycar --name rc_mycar --bake   # แนะนำ: poly น้อย + อบรายละเอียดลงภาพ
 node tools/build-car.mjs model.glb path/to/car/escarabajo out/rc_mycar --name rc_mycar [--keep-logos] [--raw] [--budget 0.5] [--max-verts 7000]
 node tools/make-icons.mjs out/rc_mycar path/to/car/escarabajo      # ไอคอนร้านแต่ง 64×64 (ต้องมี Chromium)
 node tools/fix-anim.mjs out/rc_mycar path/to/car/escarabajo        # แก้รถที่สร้างก่อนหน้านี้ (ดูด้านล่าง)
 ```
 
-สิ่งที่ตัวแปลงทำ:
+### โหมด `--bake` (แนะนำ): poly น้อยเท่ารถในเกม แต่รายละเอียดครบจากภาพ
+
+1. สร้างเปลือกนอกใหม่จากโมเดลจริง (`tools/hull.mjs`): แปลงเป็น voxel 2 ซม. (กระจกนับเป็นของแข็ง)
+   ปิดช่องเล็กๆ (ร่องประตู รูกระจัง) แล้วดึงผิวด้านนอกออกมาเป็นชิ้นเดียวปิดสนิท ไม่มีรู
+2. ลด poly ของเปลือกด้วย meshoptimizer จนทุกไฟล์ `.0m` มีไม่เกิน `--max-verts` (ค่าเริ่ม 2,000 จุด เท่ารถในเกม)
+   แล้วแบ่งเป็นชิ้น body/hood/roof/กันชน/ไฟ/skirt ตามวัสดุของโมเดลจริงใต้แต่ละสามเหลี่ยม
+3. คลี่ UV ทุกชิ้นลงภาพเดียว (`--atlas 1024`) แล้วอบภาพ (`tools/bake.mjs`): ยิงแสงจากเปลือกเข้าหาโมเดลจริง
+   ได้สี/ภาพของกระจัง โลโก้ ไฟ (มองทะลุเลนส์เห็นโคมข้างใน) ขอบยาง กระจก (เห็นเบาะข้างในจางๆ) ร่องประตู
+4. ภาพเขียนแบบเดียวกับเกม: `<ชื่อรถ>_base.png` = มาสก์สีรถ (แดงทั้งภาพ), `<ชื่อรถ>_color.png` และ
+   เท็กซ์เจอร์ชิ้นส่วน = ชั้นรายละเอียดซ้อนทับ (ตรงสีรถโปร่งใส ผู้เล่นเปลี่ยนสีได้) · LOD 0/1 ใช้สีพื้นจากแถบบนสุดของภาพ
+
+กะบะ `rc_canyon` สร้างด้วย `--bake`: LOD2 ทั้งคัน ~2,900 สามเหลี่ยม (escarabajo ~3,500) ไฟล์ใหญ่สุด ~2,000 จุด
+
+สิ่งที่ตัวแปลงทำ (โหมดปกติ / `--raw`):
 - แบ่งโมเดลตามตำแหน่ง/วัสดุเป็นชิ้น: `body`, `hood`, `roof`, `frontbumper`, `rearbumper`, `headlight`, `rearlight`, `skirt`
   และสร้างสปอยเลอร์หลัง 5 แบบให้ช่อง `mainspoiler`
 - ข้ามล้อ (เกมใช้ล้อกลาง) และโลโก้ยี่ห้อ (ชิ้นเล็กๆ ที่หน้า/ท้ายรถ)

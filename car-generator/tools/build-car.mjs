@@ -18,6 +18,8 @@ import { MeshoptSimplifier } from 'meshoptimizer';
 import sharp from 'sharp';
 import { ShapeUtils, Vector2 } from 'three';
 import { parseOM, writeOM, matchTemplateSubmeshes } from '../js/om.js';
+import { unwrapParts, makeReference, bakeAtlas, materialAt } from './bake.mjs';
+import { buildHull } from './hull.mjs';
 import { readSpec, writeSpec, encodeSpec, decodeSpec } from '../js/carSpec.js';
 
 const args = process.argv.slice(2);
@@ -26,14 +28,18 @@ const NAME = opt('--name', 'rc_car');
 const SPEC = opt('--spec', '');
 const LOCK = opt('--lock', '0') === '1';
 const SCALE = Number(opt('--budget', '1'));
-// --max-verts N: hard cap of vertices per .0m file (the game's own files stay under ~2,000).
-const MAX_VERTS = Math.min(65000, Number(opt('--max-verts', '65000')));
 const flag = (f) => args.includes(f) && Boolean(args.splice(args.indexOf(f), 1));
 // --raw: as close to the source as the format allows. Nothing added (hole fills, wheel wells, underbody,
 // gear lever), nothing removed but the wheels, source normals and double-sided flags kept; only
 // simplification, spread over every part file so the most detail fits.
 const RAW = flag('--raw');
-const KEEP_LOGOS = flag('--keep-logos') || RAW;
+// --bake: low-poly parts with a baked detail texture (tools/bake.mjs). Badges and small details come
+// from the source model through the texture, so the meshes can be as light as the game's own cars.
+const BAKE = flag('--bake') && !RAW;
+const ATLAS = Number(opt('--atlas', '1024'));
+const KEEP_LOGOS = flag('--keep-logos') || RAW || BAKE;
+// --max-verts N: hard cap of vertices per .0m file (the game's own files stay under ~2,000).
+const MAX_VERTS = Math.min(65000, Number(opt('--max-verts', BAKE ? '2000' : '65000')));
 const [SRC, TPL, OUT] = args;
 if (!SRC || !TPL || !OUT) {
   console.error('usage: node tools/build-car.mjs <model.glb> <template-car-folder> <out-dir> [--name rc_car] [--spec x.xml]');
@@ -90,10 +96,30 @@ for (const w of wheelCenters) w.p = orient(w.p);
 if (steeringPos) steeringPos = orient(steeringPos);
 console.log(`wheels: ${wheelCenters.length}${FLIP ? ' (model turned around: front was +Y)' : ''}`);
 
+// Source material looks for baking: base color factor and decoded base color texture.
+const srcMats = new Map();
+for (const m of doc.getRoot().listMaterials()) {
+  const rec = { factor: m.getBaseColorFactor(), alphaMode: m.getAlphaMode(), tex: null };
+  const t = BAKE && m.getBaseColorTexture();
+  if (t && t.getImage()) {
+    try {
+      const { data, info } = await sharp(Buffer.from(t.getImage())).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      rec.tex = { w: info.width, h: info.height, data };
+    } catch { /* unreadable image: factor only */ }
+  }
+  srcMats.set(m, rec);
+}
+const DEFAULT_MAT = { factor: [0.5, 0.5, 0.5, 1], alphaMode: 'OPAQUE', tex: null };
+const DETAIL = /logo|badge|emblem|costura|icons?$/i;
+
 const tris = []; // { a, b, c (float3 arrays), mat (canonical), inner }
 const skipped = new Map();
 doc.getRoot().getDefaultScene().traverse((node) => {
-  for (let n = node; n; n = n.getParentNode()) if (SKIP_NODE.test(n.getName())) return;
+  let detailNode = false;
+  for (let n = node; n; n = n.getParentNode()) {
+    if (SKIP_NODE.test(n.getName())) return;
+    if (/logo|badge|emblem/i.test(n.getName())) detailNode = true;
+  }
   const mesh = node.getMesh();
   if (!mesh) return;
   const m = node.getWorldMatrix();
@@ -104,6 +130,9 @@ doc.getRoot().getDefaultScene().traverse((node) => {
     const inner = mat === 'Interior_dark';
     const ds = Boolean(prim.getMaterial()?.getDoubleSided());
     const nrmAttr = prim.getAttribute('NORMAL');
+    const uvAttr = BAKE ? prim.getAttribute('TEXCOORD_0') : null;
+    const src = srcMats.get(prim.getMaterial()) || DEFAULT_MAT;
+    const detail = BAKE && (detailNode || DETAIL.test(srcMat));
     const pos = prim.getAttribute('POSITION');
     const idx = prim.getIndices();
     const v = [];
@@ -130,12 +159,21 @@ doc.getRoot().getDefaultScene().traverse((node) => {
     for (let t = 0; t + 2 < I.length; t += 3) {
       const tri = { a: P[I[t]], b: P[I[t + 1]], c: P[I[t + 2]], mat, inner, ds };
       if (NR.length) tri.vn = [NR[I[t]], NR[I[t + 1]], NR[I[t + 2]]];
+      if (BAKE) {
+        tri.src = src;
+        tri.detail = detail;
+        if (uvAttr) tri.uv = [I[t], I[t + 1], I[t + 2]].map((i) => uvAttr.getElement(i, []));
+      }
       tris.push(tri);
     }
   }
 });
 if (skipped.size) console.log(`skipped materials: ${[...skipped.keys()].join(', ')}`);
 console.log(`source: ${tris.length} triangles`);
+// Bake reference: the whole source as loaded (badges, interior...); the low-poly car leaves the
+// small details out, they come back through the texture.
+const REF = BAKE ? tris.map((t) => ({ a: t.a, b: t.b, c: t.c, mat: t.mat, src: t.src, uv: t.uv })) : null;
+if (BAKE) for (let i = tris.length - 1; i >= 0; i--) if (tris[i].detail) tris.splice(i, 1);
 
 // ---------------------------------------------------------------------------------------------
 // 2. Measure the car and split into RayCity part slots.
@@ -507,6 +545,26 @@ function palette(colors) {
 const MASK = palette(MASK_COLORS);
 const LIGHT = palette(LIGHT_COLORS);
 
+// --bake: the far LODs (0/1) use flat cells in the atlas's top row, colored like the detail layer
+// (paint transparent so it shows the player's color; the rest opaque).
+const STRIP_COLORS = {
+  Body_Color: [0, 0, 0, 0], Wing: [0, 0, 0, 0], Glass_Gray: [5, 5, 7, 255], Grille: [12, 12, 12, 255],
+  Underbody: [8, 8, 8, 255], plastic_gray: [22, 22, 24, 255], metal_gray: [120, 122, 126, 255],
+  metal_chrome: [185, 188, 194, 255], Carbon_Fiber: [34, 34, 36, 255], Leather: [20, 20, 20, 255],
+  Interior_dark: [18, 18, 18, 255], Taillight_Glass: [190, 16, 20, 255], Projector_Glass: [225, 230, 238, 255],
+  Turn_Signal_LED: [255, 160, 40, 255], WingDark: [20, 20, 20, 255],
+};
+const STRIP_CELL = 8;
+const STRIP = {
+  keys: Object.keys(STRIP_COLORS),
+  colors: STRIP_COLORS,
+  uv: (k) => {
+    const i = Math.max(0, Object.keys(STRIP_COLORS).indexOf(k));
+    return [(i * STRIP_CELL + STRIP_CELL / 2) / ATLAS, (STRIP_CELL / 2) / ATLAS];
+  },
+};
+const BODY_PAL = BAKE ? STRIP : MASK;
+
 // Textures are written like the original cars': PNG at the template's size, "_s" DDS at half size
 // in DXT3 with a full mip chain (the game's own files are all DXT3 + mips).
 function palettePixels(pal, w, h) {
@@ -584,6 +642,45 @@ function pngSize(file, fallback) {
   if (!fs.existsSync(file)) return fallback;
   const b = fs.readFileSync(file);
   return [b.readUInt32BE(16), b.readUInt32BE(20)];
+}
+
+// 2×2 box filter (alpha-weighted color) for mip levels.
+function halve(px, w, h) {
+  const nw = Math.max(1, w >> 1); const nh = Math.max(1, h >> 1);
+  const out = Buffer.alloc(nw * nh * 4);
+  for (let y = 0; y < nh; y++) for (let x = 0; x < nw; x++) {
+    let r = 0; let g = 0; let b = 0; let a = 0; let n = 0;
+    for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+      const sx = Math.min(w - 1, x * 2 + dx); const sy = Math.min(h - 1, y * 2 + dy);
+      const i = (sy * w + sx) * 4;
+      const wa = px[i + 3] + 1;
+      r += px[i] * wa; g += px[i + 1] * wa; b += px[i + 2] * wa; a += px[i + 3]; n += wa;
+    }
+    const o = (y * nw + x) * 4;
+    out[o] = r / n; out[o + 1] = g / n; out[o + 2] = b / n; out[o + 3] = a / 4;
+  }
+  return out;
+}
+
+// Any RGBA image as PNG (w × h) + "_s" DXT3 DDS at half size with mips, like the game's files.
+async function writeImage(px, w, h, file) {
+  await sharp(Buffer.from(px), { raw: { width: w, height: h, channels: 4 } }).png().toFile(file + '.png');
+  let lw = Math.max(1, w >> 1); let lh = Math.max(1, h >> 1);
+  let level = halve(px, w, h);
+  const levels = [];
+  for (;;) {
+    levels.push(dxt3(level, lw, lh));
+    if (lw === 1 && lh === 1) break;
+    level = halve(level, lw, lh);
+    lw = Math.max(1, lw >> 1); lh = Math.max(1, lh >> 1);
+  }
+  const hdr = Buffer.alloc(128);
+  hdr.write('DDS ', 0, 'ascii');
+  const u32 = (o, v) => hdr.writeUInt32LE(v >>> 0, o);
+  u32(4, 124); u32(8, 0x21007); u32(12, Math.max(1, h >> 1)); u32(16, Math.max(1, w >> 1)); u32(28, levels.length);
+  u32(76, 32); u32(80, 0x4); hdr.write('DXT3', 84, 'ascii');
+  u32(108, 0x401008);
+  fs.writeFileSync(file + '_s.dds', Buffer.concat([hdr, ...levels]));
 }
 
 async function writeTexture(pal, file, [w, h] = [64, 64]) {
@@ -905,7 +1002,63 @@ const xmlUtf16 = (text) => Buffer.from(encodeSpec(text));
 const readXml = (f) => decodeSpec(fs.readFileSync(f));
 const report = [];
 
+// --bake: the car is rebuilt as one watertight outer shell (tools/hull.mjs), simplified to each LOD's
+// triangle count, then split into the part slots by the source material under each triangle.
+const HULL_TRIS = [Number(opt('--hull-lod0', '1200')), Number(opt('--hull-lod1', '2800')), Number(opt('--hull-tris', '6000'))];
+const REFM = BAKE ? makeReference(REF) : null;
+const hullSlots = {};
+if (BAKE) {
+  const t0 = Date.now();
+  const hull = buildHull(REF, { voxel: Number(opt('--voxel', '0.02')) });
+  console.log(`shell: ${hull.idx.length / 3} triangles (${hull.grid.join('×')} voxels, ${((Date.now() - t0) / 1000).toFixed(0)} s)`);
+  // Everything is drawn as plain textured submeshes (kind 0): lamps, glass and trim are in the baked
+  // texture; per-triangle lamp/glass kinds would follow the coarse triangles and look jagged.
+  const buildLod = (target) => {
+    const idx = MeshoptSimplifier.simplify(hull.idx, hull.pos, 3, Math.round(target) * 3, 1, [])[0];
+    const P = hull.pos;
+    const groups = new Map(); // slot → mat → [indices]
+    for (let t = 0; t < idx.length; t += 3) {
+      const v = [idx[t], idx[t + 1], idx[t + 2]].map((i) => [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]);
+      const c0 = [0, 1, 2].map((k) => (v[0][k] + v[1][k] + v[2][k]) / 3);
+      const n = norm(cross(sub(v[1], v[0]), sub(v[2], v[0])));
+      const mat = materialAt(REFM, c0, n) || 'Underbody';
+      const slot = slotOf({ c0, n, mat });
+      if (!groups.has(slot)) groups.set(slot, new Map());
+      const g = groups.get(slot);
+      if (!g.has(mat)) g.set(mat, []);
+      g.get(mat).push(idx[t], idx[t + 1], idx[t + 2]);
+    }
+    const out = {};
+    for (const [slot, g] of groups) {
+      out[slot] = [];
+      for (const [mat, list] of g) {
+        const nm = withNormals(P, new Uint32Array(list), 70);
+        const [u, v] = STRIP.uv(STRIP_COLORS[mat] ? mat : 'plastic_gray');
+        out[slot].push({ name: mat, kind: 0, ...nm, uvs: new Float32Array((nm.positions.length / 3) * 2).map((_, i) => (i % 2 ? v : u)) });
+      }
+    }
+    return out;
+  };
+  // Each LOD shrinks until every part file stays under --max-verts (UV seams add ~20 % later).
+  for (let l = 0; l < 3; l++) {
+    let target = HULL_TRIS[l];
+    let res;
+    for (let k = 0; k < 8; k++) {
+      res = buildLod(target);
+      const worst = Math.max(...Object.values(res).map((ps) => ps.reduce((s2, q) => s2 + q.positions.length / 3, 0)));
+      if (worst * 1.2 <= MAX_VERTS) break;
+      target *= Math.max(0.5, (MAX_VERTS / (worst * 1.2)) * 0.95);
+    }
+    for (const [slot, ps] of Object.entries(res)) (hullSlots[slot] ||= [[], [], []])[l] = ps;
+  }
+  for (const [slot, byLod] of Object.entries(hullSlots)) console.log(`  shell ${slot.padEnd(12)} LOD0/1/2 ${byLod.map((ps) => ps.reduce((s2, q) => s2 + q.indices.length / 3, 0)).join(' / ')} tris`);
+}
+const slotParts = (dir, budgetList, pal) => (BAKE ? (hullSlots[dir] || [[], [], []])
+  : [0, 1, 2].map((l) => buildSlot(slots[dir] || [], budgetList[l], pal, l)));
+
+const pending = []; // --bake: written after the atlas is baked
 function writeLods(dir, mesh, tplMesh, partsByLod) {
+  if (BAKE && !pending.done) { pending.push([dir, mesh, tplMesh, partsByLod]); return; }
   for (let l = 0; l < 3; l++) {
     const tpl = readOM(path.join(TPL, dir, `${tplMesh}_${l}.0m`));
     const bytes = writeOM(tpl, matchTemplateSubmeshes(tpl, partsByLod[l]));
@@ -916,9 +1069,17 @@ function writeLods(dir, mesh, tplMesh, partsByLod) {
 }
 
 // Body
-writeLods('', 'body', 'body', [0, 1, 2].map((l) => buildSlot(slots.body, BUDGET.body[l], MASK, l)));
-await writeTexture(MASK, path.join(OUT, `${NAME}_base`), pngSize(path.join(TPL, `${tplName}_base.png`), [512, 512]));
-await writeTexture(MASK, path.join(OUT, `${NAME}_color`), pngSize(path.join(TPL, `${tplName}_color.png`), [128, 64]));
+writeLods('', 'body', 'body', slotParts('body', BUDGET.body, BODY_PAL));
+if (BAKE) {
+  // Paint mask: all paint (the detail layer covers what isn't).
+  const [bw, bh] = pngSize(path.join(TPL, `${tplName}_base.png`), [512, 512]);
+  const red = Buffer.alloc(bw * bh * 4);
+  for (let i = 0; i < red.length; i += 4) { red[i] = 255; red[i + 3] = 255; }
+  await writeImage(red, bw, bh, path.join(OUT, `${NAME}_base`));
+} else {
+  await writeTexture(MASK, path.join(OUT, `${NAME}_base`), pngSize(path.join(TPL, `${tplName}_base.png`), [512, 512]));
+  await writeTexture(MASK, path.join(OUT, `${NAME}_color`), pngSize(path.join(TPL, `${tplName}_color.png`), [128, 64]));
+}
 
 for (const dir of SLOT_DIRS) {
   fs.mkdirSync(path.join(OUT, dir), { recursive: true });
@@ -929,8 +1090,8 @@ for (const dir of SLOT_DIRS) {
   // Every part folder gets <car>_<dir>.png/_s.dds, named in list.xml wherever the template names a
   // texture (the template leaves some defaults empty, e.g. hood and roof; those stay empty).
   const tex = `${NAME}_${dir}`;
-  const pal = isLightSlot ? LIGHT : MASK;
-  await writeTexture(pal, path.join(OUT, dir, tex), pngSize(path.join(TPL, dir, `${tplName}_${dir}.png`), [64, 64]));
+  const pal = BAKE ? STRIP : isLightSlot ? LIGHT : MASK;
+  if (!BAKE) await writeTexture(pal, path.join(OUT, dir, tex), pngSize(path.join(TPL, dir, `${tplName}_${dir}.png`), [64, 64]));
   let meshFor;
   if (dir === 'mainspoiler') {
     const kinds = { pty_h300: 'lip', m10010: 'wing', h11000: 'gt', rbrc_001: 'twin', rbrc_002: 'wing' };
@@ -943,13 +1104,13 @@ for (const dir of SLOT_DIRS) {
       }
       // Same-named template variant when there is one: its header and moving pieces match (h11000 animates).
       const vTpl = fs.existsSync(path.join(TPL, dir, `${v.mesh}_0.0m`)) ? v.mesh : tplMesh;
-      writeLods(dir, v.mesh, vTpl, [0, 1, 2].map(() => buildSlot(src, 400, MASK)));
+      writeLods(dir, v.mesh, vTpl, [0, 1, 2].map(() => buildSlot(src, 400, BAKE ? STRIP : MASK)));
     }
     meshFor = (v) => v.mesh;
   } else {
-    const src = slots[dir] || [];
-    if (!src.length) { console.warn(`! no triangles for ${dir}`); continue; }
-    writeLods(dir, 'default', tplMesh, [0, 1, 2].map((l) => buildSlot(src, BUDGET[dir][l], pal, l)));
+    const byLod = slotParts(dir, BUDGET[dir], pal);
+    if (!byLod[2].length) { console.warn(`! no triangles for ${dir}`); continue; }
+    writeLods(dir, 'default', tplMesh, byLod);
     meshFor = () => 'default'; // every shop variant shows the stock part
   }
   // list.xml: keep the template's ids and names so tuning items still resolve.
@@ -959,10 +1120,35 @@ for (const dir of SLOT_DIRS) {
     const v = variants.find((x) => x.name === name);
     let a = attrs;
     if (/mesh='/.test(a)) a = a.replace(/mesh='[^']*'/, `mesh='${meshFor(v)}'`);
-    if (/tex='[^']+'/.test(a)) a = a.replace(/tex='[^']*'/, `tex='${tex}'`);
+    // (--bake: every variant, the detail layer is in the part texture)
+    if (BAKE ? /tex='/.test(a) : /tex='[^']+'/.test(a)) a = a.replace(/tex='[^']*'/, `tex='${tex}'`);
     return `<part${a}/>`;
   });
   fs.writeFileSync(path.join(OUT, dir, 'list.xml'), xmlUtf16(out));
+}
+
+// --bake: one atlas for every LOD 2 part (spoilers use the flat cells), then write all files.
+if (BAKE) {
+  const lod2 = pending.filter(([dir]) => dir !== 'mainspoiler').flatMap(([, , , byLod]) => byLod[2]);
+  const ppm = unwrapParts(lod2, ATLAS, STRIP_CELL * 2);
+  console.log(`atlas ${ATLAS}×${ATLAS}: ${ppm.toFixed(0)} px/m (${(1000 / ppm).toFixed(1)} mm per texel)`);
+  const t0 = Date.now();
+  const px = bakeAtlas(REFM, lod2, ATLAS);
+  console.log(`baked in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+  STRIP.keys.forEach((k, i) => {
+    for (let y = 0; y < STRIP_CELL; y++) for (let x = 0; x < STRIP_CELL; x++) px.set(STRIP_COLORS[k], ((y * ATLAS) + i * STRIP_CELL + x) * 4);
+  });
+  await writeImage(px, ATLAS, ATLAS, path.join(OUT, `${NAME}_color`));
+  for (const dir of SLOT_DIRS) {
+    if (!fs.existsSync(path.join(OUT, dir))) continue;
+    for (const ext of ['.png', '_s.dds']) fs.copyFileSync(path.join(OUT, `${NAME}_color${ext}`), path.join(OUT, dir, `${NAME}_${dir}${ext}`));
+  }
+  pending.done = true;
+  for (const job of pending) writeLods(...job);
+  for (const [dir, mesh, , byLod] of pending) {
+    const nv = byLod.map((ps) => ps.reduce((s2, q) => s2 + q.positions.length / 3, 0));
+    report.push(`${(dir || 'body').padEnd(12)} ${mesh.padEnd(10)} verts LOD0/1/2 ${nv.join(' / ')}`);
+  }
 }
 
 // dooropen: same door timing as the template

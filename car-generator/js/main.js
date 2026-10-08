@@ -530,24 +530,6 @@ const KIND_MATS = {
   4: new THREE.MeshStandardMaterial({ name: 'RC_Indicator', color: '#c9862a', emissive: '#ffb347', emissiveIntensity: 0.4, roughness: 0.2, side: THREE.DoubleSide }),
 };
 
-// True when most vertices of submesh k sample opaque pixels of the texture.
-function opaqueAt(tex, om, k) {
-  const img = tex.image;
-  if (!img.__px) img.__px = img.getContext('2d').getImageData(0, 0, img.width, img.height).data;
-  const s = om.submeshes[k];
-  let hit = 0;
-  const step = Math.max(1, Math.floor(s.vertexCount / 64));
-  let n = 0;
-  for (let i = s.vertexStart; i < s.vertexStart + s.vertexCount; i += step, n++) {
-    const u = om.uvs[i * 2] % 1;
-    const v = om.uvs[i * 2 + 1] % 1;
-    const x = Math.min(img.width - 1, Math.floor((u < 0 ? u + 1 : u) * img.width));
-    const y = Math.min(img.height - 1, Math.floor((v < 0 ? v + 1 : v) * img.height));
-    if (img.__px[(y * img.width + x) * 4 + 3] > 128) hit++;
-  }
-  return hit > n * 0.6;
-}
-
 const textureCache = new Map();
 async function loadTexture(file, recolor) {
   const key = `${file.name}:${file.size}:${JSON.stringify(recolor)}`;
@@ -584,6 +566,58 @@ async function loadTexture(file, recolor) {
 
 const bodyTexName = () => folder.slots.find((sl) => !sl.dir)?.variants[0]?.tex || '';
 
+// How the game layers a car's textures (from the original files): the paint mask (<car>_base.png,
+// recolored with the player's paint) and on top of it, by its alpha, a detail layer: <car>_color.png
+// for the body, the part's own texture (tex in list.xml) for parts. Returns the composed texture and
+// the detail layer's pixels (to tell lamps with baked art from bare lens submeshes).
+async function composeTexture(baseFile, overlayFile, recolor) {
+  const key = `C:${baseFile?.name}:${baseFile?.size}:${overlayFile?.name}:${overlayFile?.size}:${JSON.stringify(recolor)}`;
+  if (textureCache.has(key)) return textureCache.get(key);
+  const base = baseFile && (await loadTexture(baseFile, recolor)).image;
+  const over = overlayFile && await createImageBitmap(overlayFile);
+  const w = Math.max(base?.width || 0, over?.width || 0, 1);
+  const h = Math.max(base?.height || 0, over?.height || 0, 1);
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const g = c.getContext('2d');
+  g.imageSmoothingEnabled = true;
+  if (base) g.drawImage(base, 0, 0, w, h);
+  let overPx = null;
+  if (over) {
+    g.drawImage(over, 0, 0, w, h);
+    const oc = document.createElement('canvas');
+    oc.width = over.width;
+    oc.height = over.height;
+    oc.getContext('2d').drawImage(over, 0, 0);
+    overPx = { width: over.width, height: over.height, data: oc.getContext('2d').getImageData(0, 0, over.width, over.height).data };
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.flipY = false;
+  t.anisotropy = 4;
+  const out = { texture: t, overPx };
+  textureCache.set(key, out);
+  return out;
+}
+
+// True when most vertices of submesh k land on opaque pixels of the detail layer.
+function opaqueOver(overPx, om, k) {
+  if (!overPx) return false;
+  const s = om.submeshes[k];
+  const step = Math.max(1, Math.floor(s.vertexCount / 64));
+  let hit = 0;
+  let n = 0;
+  for (let i = s.vertexStart; i < s.vertexStart + s.vertexCount; i += step, n++) {
+    const u = ((om.uvs[i * 2] % 1) + 1) % 1;
+    const v = ((om.uvs[i * 2 + 1] % 1) + 1) % 1;
+    const x = Math.min(overPx.width - 1, Math.floor(u * overPx.width));
+    const y = Math.min(overPx.height - 1, Math.floor(v * overPx.height));
+    if (overPx.data[(y * overPx.width + x) * 4 + 3] > 128) hit++;
+  }
+  return hit > n * 0.6;
+}
+
 async function assembleFolder() {
   const group = new THREE.Group();
   group.name = folder.name;
@@ -598,27 +632,28 @@ async function assembleFolder() {
     const rel = lods.map((l) => `${prefix}${v.mesh}_${l}.0m`).find((r) => folder.files.has(r));
     try {
       const om = parseOM(await folder.files.get(rel).arrayBuffer());
-      // Paint comes from the body mask: part UVs point into the same 512×512 atlas (red = paint,
-      // green/blue = second paint areas). A part's own texture (tex in list.xml) is used for the
-      // submeshes whose UVs land on its opaque pixels (e.g. our light palettes); original cars'
-      // part textures carry lamp/grille art whose mapping isn't decoded yet, so they fall back to paint.
+      // Paint mask recolored with the chosen paint, detail layer on top (see composeTexture).
       const findTex = (t) => t && (folder.files.get(`${prefix}${t}.png`)
         || [...folder.files].find(([r]) => r.split('/').pop().toLowerCase() === `${t}.png`.toLowerCase())?.[1]);
       const second = params.twoTone ? params.secondColor : params.paintColor;
-      const bodyFile = findTex(bodyTexName());
-      const bodyMat = bodyFile && new THREE.MeshStandardMaterial({
-        name: 'RC_Body', roughness: 0.35, metalness: 0.5, side: THREE.DoubleSide,
-        map: await loadTexture(bodyFile, { paint: params.paintColor, trim: second, glass: second }),
+      const baseName = bodyTexName();
+      const bodyFile = findTex(baseName);
+      const overlayFile = slot.dir ? findTex(v.tex) : findTex(baseName.replace(/_base$/i, '_color'));
+      const recolor = { paint: params.paintColor, trim: second, glass: second };
+      const comp = (bodyFile || overlayFile) && await composeTexture(bodyFile, overlayFile, recolor);
+      const mat = comp && new THREE.MeshStandardMaterial({
+        name: 'RC_Body', roughness: 0.35, metalness: 0.4, side: THREE.DoubleSide, map: comp.texture, alphaTest: 0,
       });
-      const partFile = slot.dir ? findTex(v.tex) : null;
-      const partTex = partFile && await loadTexture(partFile, null);
-      const partMat = partTex && new THREE.MeshStandardMaterial({
-        name: `RC_${partFile.name.replace(/\.png$/i, '')}`, map: partTex, roughness: 0.4, metalness: 0.2, side: THREE.DoubleSide,
+      const litMat = comp && new THREE.MeshStandardMaterial({
+        name: 'RC_Lamp', roughness: 0.2, metalness: 0.1, side: THREE.DoubleSide, map: comp.texture,
+        emissiveMap: comp.texture, emissive: '#ffffff', emissiveIntensity: 0.35,
       });
       const partMats = (kind, k) => {
-        if (KIND_MATS[kind]) return KIND_MATS[kind];
-        if (partMat && opaqueAt(partTex, om, k)) return partMat;
-        return bodyMat || omColorMats[(colorIndex + k) % omColorMats.length];
+        // Glass is drawn by the game's own glass shader; lamps use their baked art when the detail
+        // layer has some there, else a plain lens color (the original cars' lenses).
+        if (kind === 1) return KIND_MATS[1];
+        if (KIND_MATS[kind]) return litMat && opaqueOver(comp.overPx, om, k) ? litMat : KIND_MATS[kind];
+        return mat || omColorMats[(colorIndex + k) % omColorMats.length];
       };
       colorIndex += om.submeshes.length;
       const obj = omToObject(om, partMats);

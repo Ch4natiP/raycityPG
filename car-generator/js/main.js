@@ -230,7 +230,7 @@ function syncUI() {
 function set(key, value) {
   params[key] = value;
   queueRebuild();
-  if (folder && imported && /^(paintColor|secondColor|twoTone|glassColor)$/.test(key)) queueReassemble();
+  if (folder && imported && /^(paintColor|secondColor|twoTone)$/.test(key)) queueReassemble();
 }
 
 let reassembleTimer = 0;
@@ -500,7 +500,7 @@ function buildPartPickers() {
 
 const textureCache = new Map();
 async function loadTexture(file, recolor) {
-  const key = `${file.name}:${file.size}:${recolor || ''}`;
+  const key = `${file.name}:${file.size}:${JSON.stringify(recolor)}`;
   if (textureCache.has(key)) return textureCache.get(key);
   const bmp = await createImageBitmap(file);
   const c = document.createElement('canvas');
@@ -508,8 +508,22 @@ async function loadTexture(file, recolor) {
   c.height = bmp.height;
   const g = c.getContext('2d');
   g.drawImage(bmp, 0, 0);
-  if (recolor) {
-    // Body textures are paint masks: red = main paint, green = second paint area, blue = glass (guess).
+  if (recolor && recolor.decal) {
+    // Part textures: alpha is not transparency but a paint mask. Alpha 0 shows the car paint,
+    // alpha 255 shows the texture (grille, lamp, carbon...), like the game.
+    const img = g.getImageData(0, 0, c.width, c.height);
+    const pc = new THREE.Color(recolor.decal);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const a = d[i + 3] / 255;
+      d[i] = d[i] * a + 255 * pc.r * (1 - a);
+      d[i + 1] = d[i + 1] * a + 255 * pc.g * (1 - a);
+      d[i + 2] = d[i + 2] * a + 255 * pc.b * (1 - a);
+      d[i + 3] = 255;
+    }
+    g.putImageData(img, 0, 0);
+  } else if (recolor) {
+    // Body textures are paint masks: red = main paint, green/blue = second paint areas (e.g. the hood).
     const img = g.getImageData(0, 0, c.width, c.height);
     const pc = new THREE.Color(recolor.paint);
     const tc = new THREE.Color(recolor.trim);
@@ -559,11 +573,13 @@ async function assembleFolder() {
       if (texFile) {
         // Green in the mask is the car's second paint area (e.g. the hood): same as the paint unless two-tone.
         const second = params.twoTone ? params.secondColor : params.paintColor;
-        const recolor = isMask ? { paint: params.paintColor, trim: second, glass: params.glassColor } : null;
+        // Blue covers the hood in the original masks (glass uses red too): treat it like green.
+        const recolor = isMask ? { paint: params.paintColor, trim: second, glass: second }
+          : { decal: params.paintColor };
         const map = await loadTexture(texFile, recolor);
         partMats = [new THREE.MeshStandardMaterial({
           name: `RC_${texFile.name.replace(/\.png$/i, '')}`, map, roughness: 0.4, metalness: isMask ? 0.5 : 0.2,
-          transparent: !isMask, alphaTest: 0.05, side: THREE.DoubleSide,
+          side: THREE.DoubleSide,
         })];
       } else {
         partMats = om.submeshes.map(() => omColorMats[colorIndex++ % omColorMats.length]);

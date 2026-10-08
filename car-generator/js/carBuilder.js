@@ -9,6 +9,7 @@ const SLOT = { PAINT: 0, STRIPE: 1, TRIM: 2, GLASS: 3 };
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = (x) => x * x * (3 - 2 * x);
 
 // Monotone cubic (Fritsch–Carlson) interpolation: smooth, no overshoot.
 function monotone(points) {
@@ -94,7 +95,13 @@ function makeProfile(p) {
       const u = (r - d) / r;
       f = 1 - p.endTaper + p.endTaper * Math.sqrt(1 - u * u);
     }
-    return (W / 2) * f;
+    // Supercar plan shape: narrower nose, wider rear haunches (normalized so max width stays W).
+    const tFA = p.frontOverhang / L;
+    const tRA = 1 - p.rearOverhang / L;
+    const nose = 1 - p.noseTaper * (1 - smooth(clamp(t / (tFA + 0.08), 0, 1)));
+    const hipU = (t - tRA) / 0.22;
+    const hip = 1 + p.hipFlare * Math.exp(-hipU * hipU * 2);
+    return ((W / 2) * f * nose * hip) / (1 + p.hipFlare);
   };
   const bottom = (t) => {
     let y = p.clearance;
@@ -290,10 +297,13 @@ function buildBody(p, prof) {
 // Cabin cross-section at t: side widths at the belt (wb) and roof (wt), belt height and roof height.
 function cabinSection(p, prof, t) {
   const hb = prof.halfW(t);
-  const wb = Math.min(hb * 0.9, prof.shoulderX(t));
-  const wt = Math.min(hb * p.cabinTopWidth, wb);
-  const base = prof.surfaceY(t, wb) - 0.015;
   const { windshieldBase: tW, roofFront: tRF, roofRear: tRR, rearWindowBase: tR } = p;
+  // Teardrop canopy: the cabin narrows towards the windshield base and the rear window.
+  const u = clamp((t - (tRF + tRR) / 2) / ((tR - tW) / 2), -1, 1);
+  const taper = 1 - p.cabinTaper * u * u;
+  const wb = Math.min(hb * 0.9 * (1 - p.cabinTaper * 0.5 * u * u), prof.shoulderX(t));
+  const wt = Math.min(hb * p.cabinTopWidth * taper, wb);
+  const base = prof.surfaceY(t, wb) - 0.015;
   let roofY;
   if (t <= tRF) {
     const s = clamp((t - tW) / (tRF - tW), 0, 1);
@@ -483,6 +493,80 @@ function cylZ(r, len, mat, name, seg = 16) {
   return m;
 }
 
+// Triangular prism from a 2D outline, extruded `depth` along the given axis.
+function prism(points, depth, mat, name, axis) {
+  const shape = new THREE.Shape(points.map(([a, b]) => new THREE.Vector2(a, b)));
+  const g = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false });
+  if (axis === 'x') g.rotateY(Math.PI / 2); // shape (−z, y) → extrude along +x
+  const m = new THREE.Mesh(g, mat);
+  m.name = name;
+  return m;
+}
+
+// Large dark air intakes in the front bumper corners.
+function buildFrontIntakes(p, prof, mats) {
+  const g = new THREE.Group();
+  g.name = 'FrontIntakes';
+  const yb = prof.bottom(0.02) + 0.04;
+  const h = Math.max(0.08, (p.noseHeight - yb) * 0.55);
+  for (const side of [1, -1]) {
+    const x0 = prof.halfW(0.03) * 0.35;
+    const x1 = prof.halfW(0.03) * 0.92;
+    const pts = side > 0 ? [[x0, yb], [x1, yb], [x1, yb + h], [x0 + 0.05, yb + h * 0.55]]
+      : [[-x1, yb], [-x0, yb], [-x0 - 0.05, yb + h * 0.55], [-x1, yb + h]];
+    const m = prism(pts, 0.08, mats.trim, side > 0 ? 'FrontIntake_L' : 'FrontIntake_R');
+    m.position.z = surfaceZ(prof, x1, yb + h / 2, true) - 0.06;
+    g.add(m);
+    // Horizontal fins inside the intake
+    for (let i = 1; i < 3; i++) {
+      const fin = box(x1 - x0 - 0.04, 0.012, 0.02, mats.chromeDark, 'IntakeFin');
+      fin.position.set(side * (x0 + x1) / 2, yb + (h * i) / 3.2, m.position.z + 0.075);
+      g.add(fin);
+    }
+  }
+  return g;
+}
+
+// Side scoops ahead of the rear wheels (mid-engine style).
+function buildSideIntakes(p, prof, mats) {
+  const g = new THREE.Group();
+  g.name = 'SideIntakes';
+  const tB = lerp(p.roofFront, p.roofRear, 0.45);
+  const z0 = prof.zOf(tB) - 0.05;
+  const z1 = prof.axles[1] + prof.archR + 0.04;
+  if (z0 - z1 < 0.3) return g;
+  const tm = (prof.L / 2 - (z0 + z1) / 2) / prof.L;
+  const yb = prof.bottom(tm) + 0.12;
+  const yt = prof.sideTop(tm) - prof.edgeRadius(tm) - 0.05;
+  for (const side of [1, -1]) {
+    // Wedge widening towards the rear wheel. Shape is drawn as (−z, y).
+    const pts = [[-z0, yt - 0.02], [-z1, yb + (yt - yb) * 0.15], [-z1, yt]];
+    const d = 0.05;
+    const m = prism(pts, d, mats.trim, side > 0 ? 'SideIntake_L' : 'SideIntake_R', 'x');
+    m.position.x = side > 0 ? prof.halfW(tm) - d * 0.55 : -prof.halfW(tm) - d * 0.45;
+    g.add(m);
+  }
+  return g;
+}
+
+// Louvered engine cover on the rear deck.
+function buildLouvers(p, prof, mats) {
+  const g = new THREE.Group();
+  g.name = 'EngineLouvers';
+  const t0 = p.rearWindowBase + 0.015;
+  const t1 = 0.93;
+  if (t1 - t0 < 0.04) return g;
+  const n = Math.max(3, Math.round(((t1 - t0) * prof.L) / 0.07));
+  for (let i = 0; i < n; i++) {
+    const t = lerp(t0, t1, (i + 0.5) / n);
+    const slat = box(prof.shoulderX(t) * 1.2, 0.012, 0.035, mats.trim, 'Louver');
+    slat.position.set(0, prof.centerTop(t) + 0.004, prof.zOf(t));
+    slat.rotation.x = -0.25;
+    g.add(slat);
+  }
+  return g;
+}
+
 function headlightAssembly(p, W, mats, name, side) {
   const g = new THREE.Group();
   g.name = name;
@@ -499,6 +583,25 @@ function headlightAssembly(p, W, mats, name, side) {
     ring.name = `${name}_Ring`;
     ring.position.z = 0.05;
     g.add(ring);
+    return g;
+  }
+  if (style === 'blade') {
+    // Angled slim light that rises towards the outside, with a Y-shaped DRL.
+    const w = W * 0.25;
+    const housing = box(w, 0.06, 0.1, mats.chromeDark, `${name}_Housing`);
+    housing.rotation.z = side * 0.18;
+    g.add(housing);
+    for (const [f, lr] of [[0.25, 0.026], [-0.05, 0.022]]) {
+      const lens = cylZ(lr, 0.03, mats.lens, `${name}_Lens`, 16);
+      lens.position.set(side * w * f, side * w * f * 0.18, 0.045);
+      g.add(lens);
+    }
+    for (const [x, y, rz, len] of [[0, 0.022, 0.18, w * 0.85], [-0.33, -0.005, -0.9, 0.06], [-0.4, 0.018, 0.5, 0.05]]) {
+      const drl = box(len, 0.01, 0.02, mats.headlight, `${name}_DRL`);
+      drl.position.set(side * w * x, y, 0.05);
+      drl.rotation.z = side * rz;
+      g.add(drl);
+    }
     return g;
   }
   const slim = style === 'slim';
@@ -712,7 +815,22 @@ function buildDetails(p, prof, mats) {
   // Taillights
   const tailT = 0.98;
   const yT = lerp(prof.bottom(tailT), p.tailHeight, 0.7);
-  if (p.taillightStyle === 'bar') {
+  if (p.taillightStyle === 'yshape') {
+    for (const side of [1, -1]) {
+      const x = prof.halfW(1) * 0.62 * side;
+      const tl = new THREE.Group();
+      tl.name = side > 0 ? 'Taillight_L' : 'Taillight_R';
+      tl.add(box(W * 0.24, 0.09, 0.06, mats.chromeDark, 'TaillightHousing'));
+      for (const [bx, by, rz, len] of [[0, 0.025, 0, 0.2], [-0.07, -0.01, 0.9, 0.1], [0.07, -0.01, -0.9, 0.1], [0.11, 0.025, 0, 0.1]]) {
+        const bar = box(len, 0.016, 0.02, mats.taillight, 'TaillightY');
+        bar.position.set(side * bx, by, -0.035);
+        bar.rotation.z = side * rz;
+        tl.add(bar);
+      }
+      tl.position.set(x, yT, surfaceZ(prof, x + side * W * 0.1, yT, false) + 0.02);
+      lights.add(tl);
+    }
+  } else if (p.taillightStyle === 'bar') {
     const z = surfaceZ(prof, prof.halfW(1) * 0.75, yT, false);
     const m = box(prof.halfW(1) * 1.8, 0.07, 0.1, mats.taillight, 'Taillight_Bar');
     m.position.set(0, yT, z + 0.03);
@@ -763,6 +881,9 @@ function buildDetails(p, prof, mats) {
     }
   }
 
+  if (p.frontIntakes) group.add(buildFrontIntakes(p, prof, mats));
+  if (p.sideIntake) group.add(buildSideIntakes(p, prof, mats));
+  if (p.engineLouvers) group.add(buildLouvers(p, prof, mats));
   if (p.panelLines) group.add(buildPanelLines(p, prof, mats));
   if (p.interior) group.add(buildInterior(p, prof, mats));
 
@@ -780,7 +901,8 @@ function buildDetails(p, prof, mats) {
 
   // Mirrors
   if (p.mirrors) {
-    const t = p.windshieldBase + 0.025;
+    // At the A-pillar, a little way up the windshield.
+    const t = p.windshieldBase + (p.roofFront - p.windshieldBase) * 0.3;
     const hb = prof.halfW(t);
     const wb = Math.min(hb * 0.9, prof.shoulderX(t));
     const y = prof.surfaceY(t, wb) + 0.09;

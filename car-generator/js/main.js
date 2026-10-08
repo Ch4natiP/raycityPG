@@ -230,7 +230,7 @@ function syncUI() {
 function set(key, value) {
   params[key] = value;
   queueRebuild();
-  if (folder && imported && /^(paintColor|trimColor|glassColor)$/.test(key)) queueReassemble();
+  if (folder && imported && /^(paintColor|secondColor|twoTone|glassColor)$/.test(key)) queueReassemble();
 }
 
 let reassembleTimer = 0;
@@ -509,7 +509,7 @@ async function loadTexture(file, recolor) {
   const g = c.getContext('2d');
   g.drawImage(bmp, 0, 0);
   if (recolor) {
-    // Body textures are paint masks: red = main paint (guess: green = secondary/trim, blue = glass).
+    // Body textures are paint masks: red = main paint, green = second paint area, blue = glass (guess).
     const img = g.getImageData(0, 0, c.width, c.height);
     const pc = new THREE.Color(recolor.paint);
     const tc = new THREE.Color(recolor.trim);
@@ -557,7 +557,9 @@ async function assembleFolder() {
       if (!texFile) { texFile = findTex(bodyTexName()); isMask = true; }
       let partMats;
       if (texFile) {
-        const recolor = isMask ? { paint: params.paintColor, trim: params.trimColor, glass: params.glassColor } : null;
+        // Green in the mask is the car's second paint area (e.g. the hood): same as the paint unless two-tone.
+        const second = params.twoTone ? params.secondColor : params.paintColor;
+        const recolor = isMask ? { paint: params.paintColor, trim: second, glass: params.glassColor } : null;
         const map = await loadTexture(texFile, recolor);
         partMats = [new THREE.MeshStandardMaterial({
           name: `RC_${texFile.name.replace(/\.png$/i, '')}`, map, roughness: 0.4, metalness: isMask ? 0.5 : 0.2,

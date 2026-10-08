@@ -14,6 +14,8 @@ export const SCHEMA = [
     { key: 'cornerRadius', label: 'ความมนมุมหน้า/ท้าย', min: 0.05, max: 1, step: 0.01 },
     { key: 'endTaper', label: 'ความสอบหน้า/ท้าย', min: 0, max: 0.5, step: 0.01 },
     { key: 'edgeRadius', label: 'ความมนขอบบน', min: 0.01, max: 0.2, step: 0.005 },
+    { key: 'noseTaper', label: 'หน้าแหลม (ลิ่ม)', min: 0, max: 0.4, step: 0.01 },
+    { key: 'hipFlare', label: 'สะโพกหลังบาน', min: 0, max: 0.15, step: 0.005 },
   ] },
   { group: 'ห้องโดยสาร · Cabin', items: [
     { key: 'roofHeight', label: 'ความสูงหลังคา', min: 0.9, max: 2.2, step: 0.01 },
@@ -22,6 +24,7 @@ export const SCHEMA = [
     { key: 'roofRear', label: 'ท้ายหลังคา', min: 0.3, max: 0.94, step: 0.005 },
     { key: 'rearWindowBase', label: 'ฐานกระจกหลัง', min: 0.4, max: 0.965, step: 0.005 },
     { key: 'cabinTopWidth', label: 'ความกว้างหลังคา', min: 0.5, max: 0.95, step: 0.01 },
+    { key: 'cabinTaper', label: 'ห้องโดยสารทรงหยดน้ำ', min: 0, max: 0.45, step: 0.01 },
   ] },
   { group: 'ล้อ · Wheels', items: [
     { key: 'wheelRadius', label: 'รัศมีล้อ', min: 0.22, max: 0.55, step: 0.005 },
@@ -38,10 +41,10 @@ export const SCHEMA = [
   ] },
   { group: 'ไฟ & ชุดแต่ง · Parts', items: [
     { key: 'headlightStyle', label: 'ไฟหน้า', type: 'select', options: [
-      ['rect', 'เหลี่ยม'], ['slim', 'เรียวยาว'], ['round', 'กลม'],
+      ['rect', 'เหลี่ยม'], ['slim', 'เรียวยาว'], ['blade', 'เฉียงคม (ซูเปอร์คาร์)'], ['round', 'กลม'],
     ] },
     { key: 'taillightStyle', label: 'ไฟท้าย', type: 'select', options: [
-      ['rect', 'เหลี่ยม'], ['bar', 'แถบยาว'], ['round', 'กลม'],
+      ['rect', 'เหลี่ยม'], ['bar', 'แถบยาว'], ['yshape', 'ตัว Y (ซูเปอร์คาร์)'], ['round', 'กลม'],
     ] },
     { key: 'grille', label: 'กระจังหน้า', type: 'select', options: [
       ['normal', 'ซี่นอน'], ['wide', 'ตาข่ายกว้าง'], ['kidney', 'ไตคู่ (สไตล์ BMW)'], ['none', 'ไม่มี'],
@@ -55,6 +58,9 @@ export const SCHEMA = [
     ] },
     { key: 'stripeWidth', label: 'ความกว้างแถบ', min: 0.1, max: 0.8, step: 0.01 },
     { key: 'fogLights', label: 'ไฟตัดหมอก', type: 'check' },
+    { key: 'frontIntakes', label: 'ช่องรับลมหน้าใหญ่', type: 'check' },
+    { key: 'sideIntake', label: 'ช่องรับลมข้าง', type: 'check' },
+    { key: 'engineLouvers', label: 'ครีบฝาครอบเครื่อง', type: 'check' },
     { key: 'panelLines', label: 'ร่องประตู + มือจับ', type: 'check' },
     { key: 'interior', label: 'ภายใน (เบาะ, พวงมาลัย)', type: 'check' },
     { key: 'driveSide', label: 'ตำแหน่งพวงมาลัย', type: 'select', options: [['left', 'ซ้าย'], ['right', 'ขวา']] },
@@ -76,6 +82,8 @@ export const SCHEMA = [
     { key: 'trimColor', label: 'สีพลาสติก/คิ้ว', type: 'color' },
     { key: 'interiorColor', label: 'สีภายใน', type: 'color' },
     { key: 'caliperColor', label: 'สีคาลิปเปอร์', type: 'color' },
+    { key: 'twoTone', label: 'ทูโทน (ไฟล์ RayCity: ส่วนสีเขียวในมาสก์)', type: 'check' },
+    { key: 'secondColor', label: 'สีที่สอง (ทูโทน)', type: 'color' },
     { key: 'underglowColor', label: 'สีไฟใต้ท้อง', type: 'color' },
     { key: 'metalness', label: 'ความเมทัลลิก', min: 0, max: 1, step: 0.01 },
     { key: 'roughness', label: 'ความด้าน', min: 0, max: 1, step: 0.01 },
@@ -105,6 +113,8 @@ export const DEFAULTS = {
   splitter: false, diffuser: false, sideSkirts: false, hoodScoop: false, roofRack: false,
   mirrors: true, plates: true, bedCover: false, underglow: false,
   fogLights: false, panelLines: true, interior: true, driveSide: 'left',
+  frontIntakes: false, sideIntake: false, engineLouvers: false,
+  noseTaper: 0.05, hipFlare: 0, cabinTaper: 0.1, twoTone: false, secondColor: '#151617',
   paintColor: '#c4172c', stripeColor: '#f2f2f2', rimColor: '#c9ccd1', glassColor: '#16202b',
   trimColor: '#151617', caliperColor: '#d4231d', underglowColor: '#29b6ff', interiorColor: '#2b2622',
   metalness: 0.55, roughness: 0.32, clearcoat: 1, glassOpacity: 0.7,
@@ -172,15 +182,44 @@ export const PRESETS = {
     headlightStyle: 'round', paintColor: '#9fd8c7', rimColor: '#f0f0f0', rimStyle: 'disc', exhaust: 1,
     cornerRadius: 0.3, edgeRadius: 0.1,
   } },
-  supercar: { label: 'ซูเปอร์คาร์', params: {
-    name: 'RC_Super', length: 4.6, width: 1.98, clearance: 0.09,
-    noseHeight: 0.42, hoodHeight: 0.62, beltHeight: 0.78, trunkHeight: 0.92, tailHeight: 0.95,
-    roofHeight: 1.14, windshieldBase: 0.26, roofFront: 0.46, roofRear: 0.58, rearWindowBase: 0.86,
-    cabinTopWidth: 0.62, wheelRadius: 0.35, wheelWidth: 0.3, rimRatio: 0.76, frontOverhang: 1.0,
-    rearOverhang: 1.1, headlightStyle: 'slim', taillightStyle: 'bar', spoiler: 'gt', sideSkirts: true,
-    splitter: true, diffuser: true, exhaust: 4, paintColor: '#7cd321', rimColor: '#202224',
-    caliperColor: '#ffd400', rimStyle: 'split', spokeCount: 7, metalness: 0.7, roughness: 0.25,
-    underglow: true, underglowColor: '#7cff3a',
+  supercar: { label: 'ซูเปอร์คาร์ V12', params: {
+    name: 'RC_V12', length: 4.8, width: 2.05, clearance: 0.1,
+    noseHeight: 0.4, hoodHeight: 0.62, beltHeight: 0.8, trunkHeight: 0.9, tailHeight: 0.88,
+    roofHeight: 1.14, windshieldBase: 0.2, roofFront: 0.42, roofRear: 0.55, rearWindowBase: 0.66,
+    cabinTopWidth: 0.6, cabinTaper: 0.32, noseTaper: 0.26, hipFlare: 0.08,
+    crown: 0.02, cornerRadius: 0.55, endTaper: 0.3, edgeRadius: 0.035,
+    wheelRadius: 0.36, wheelWidth: 0.32, rimRatio: 0.78, frontOverhang: 1.05, rearOverhang: 1.1,
+    wheelInset: 0.01, archScale: 1.08, rimStyle: 'split', spokeCount: 5,
+    headlightStyle: 'blade', taillightStyle: 'yshape', grille: 'none', spoiler: 'wing', exhaust: 3,
+    frontIntakes: true, sideIntake: true, engineLouvers: true, diffuser: true, splitter: true,
+    sideSkirts: true, fogLights: false, plates: false,
+    paintColor: '#f2b800', rimColor: '#1d1f22', caliperColor: '#1d1f22', stripeStyle: 'none',
+    metalness: 0.6, roughness: 0.22, interiorColor: '#1a1a1a',
+  } },
+  hypercar: { label: 'ไฮเปอร์คาร์', params: {
+    name: 'RC_Hyper', length: 4.55, width: 2.04, clearance: 0.1,
+    noseHeight: 0.5, hoodHeight: 0.7, beltHeight: 0.84, trunkHeight: 0.98, tailHeight: 0.94,
+    roofHeight: 1.2, windshieldBase: 0.26, roofFront: 0.44, roofRear: 0.58, rearWindowBase: 0.74,
+    cabinTopWidth: 0.62, cabinTaper: 0.36, noseTaper: 0.2, hipFlare: 0.1,
+    crown: 0.04, cornerRadius: 0.6, endTaper: 0.25, edgeRadius: 0.1,
+    wheelRadius: 0.37, wheelWidth: 0.32, rimRatio: 0.78, frontOverhang: 1.0, rearOverhang: 0.95,
+    wheelInset: 0.0, rimStyle: 'multi', spokeCount: 10,
+    headlightStyle: 'slim', taillightStyle: 'bar', grille: 'normal', spoiler: 'ducktail', exhaust: 4,
+    frontIntakes: true, sideIntake: true, engineLouvers: false, diffuser: true, splitter: true, plates: false,
+    paintColor: '#0c2f73', stripeColor: '#111214', stripeStyle: 'center', stripeWidth: 0.5,
+    rimColor: '#c9ccd1', caliperColor: '#2a6fdb', metalness: 0.8, roughness: 0.2, interiorColor: '#3a2a20',
+  } },
+  gt: { label: 'GT สปอร์ต', params: {
+    name: 'RC_GT', length: 4.5, width: 1.92, clearance: 0.11,
+    noseHeight: 0.55, hoodHeight: 0.72, beltHeight: 0.86, trunkHeight: 0.98, tailHeight: 0.9,
+    roofHeight: 1.29, windshieldBase: 0.3, roofFront: 0.45, roofRear: 0.57, rearWindowBase: 0.92,
+    cabinTopWidth: 0.68, cabinTaper: 0.22, noseTaper: 0.12, hipFlare: 0.09,
+    crown: 0.05, cornerRadius: 0.55, endTaper: 0.25, edgeRadius: 0.12,
+    wheelRadius: 0.35, wheelWidth: 0.29, rimRatio: 0.76, frontOverhang: 0.9, rearOverhang: 1.0,
+    rimStyle: 'spoke', spokeCount: 5, headlightStyle: 'round', taillightStyle: 'bar', grille: 'none',
+    spoiler: 'ducktail', exhaust: 2, frontIntakes: true, diffuser: true, plates: false,
+    paintColor: '#c8ccd2', rimColor: '#1d1f22', caliperColor: '#ffd400', metalness: 0.85, roughness: 0.2,
+    interiorColor: '#7a1f1f',
   } },
 };
 
@@ -219,8 +258,8 @@ export function randomParams(seed) {
   p.spokeCount = 3 + Math.floor(rnd() * 8);
   p.exhaust = Math.floor(rnd() * 5);
   p.rimStyle = pick(['spoke', 'split', 'multi', 'disc', 'spoke', 'split']);
-  p.headlightStyle = pick(['rect', 'slim', 'round']);
-  p.taillightStyle = pick(['rect', 'bar', 'round']);
+  p.headlightStyle = pick(['rect', 'slim', 'round', 'blade']);
+  p.taillightStyle = pick(['rect', 'bar', 'round', 'yshape']);
   p.spoiler = pick(['none', 'none', 'ducktail', 'wing', 'gt']);
   p.stripeStyle = pick(['none', 'none', 'center', 'double']);
   for (const k of ['splitter', 'diffuser', 'sideSkirts', 'fogLights']) p[k] = rnd() < 0.4;

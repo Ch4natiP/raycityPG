@@ -29,6 +29,9 @@ function findGeometry(dv) {
     if (n < 3) continue;
     const end = o + 26 + 12 * n;
     if (end + 2 > len || dv.getUint16(end, true) !== n) continue;
+    // The normals are followed by an empty block and the uv count: rules out false matches.
+    const nEnd = end + 2 + 12 * n;
+    if (nEnd + 4 > len || dv.getUint16(nEnd, true) !== 0 || dv.getUint16(nEnd + 2, true) !== n) continue;
     const bb = [];
     for (let k = 0; k < 6; k++) bb.push(dv.getFloat32(o + 4 * k, true));
     if (!bb.every((v) => Number.isFinite(v) && Math.abs(v) < 100)) continue;
@@ -272,4 +275,37 @@ export function mergePartsByName(parts) {
     for (const i of part.indices) cur.indices.push(base + i);
   }
   return [...byName.values()].flat();
+}
+
+// Submeshes of a parsed .0m as writeOM parts (flags kept).
+export function omParts(om) {
+  return om.submeshes.map((s) => ({
+    positions: om.positions.slice(s.vertexStart * 3, (s.vertexStart + s.vertexCount) * 3),
+    normals: om.normals.slice(s.vertexStart * 3, (s.vertexStart + s.vertexCount) * 3),
+    uvs: om.uvs.slice(s.vertexStart * 2, (s.vertexStart + s.vertexCount) * 2),
+    indices: om.indices.slice(s.indexStart, s.indexStart + s.indexCount),
+    flags: s.flags.slice(),
+  }));
+}
+
+// Lays parts out like the template's submesh table. Moving pieces (flags[1..2] set: doors 0/1, hood 2,
+// door windows, ...) are found by the game through the template's header and flags, so every one of
+// them keeps its index and flags; where the new car has no such piece, a hidden 1 mm triangle stands
+// in at the template piece's position. The new car's own parts fill the other slots, then follow.
+export function matchTemplateSubmeshes(template, parts) {
+  const placeholder = (s) => {
+    const i = s.vertexStart * 3;
+    const [x, y, z] = [template.positions[i], template.positions[i + 1], template.positions[i + 2]];
+    return {
+      positions: new Float32Array([x, y, z, x + 0.001, y, z, x, y + 0.001, z]),
+      normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+      uvs: new Float32Array([template.uvs[s.vertexStart * 2], template.uvs[s.vertexStart * 2 + 1], template.uvs[s.vertexStart * 2], template.uvs[s.vertexStart * 2 + 1], template.uvs[s.vertexStart * 2], template.uvs[s.vertexStart * 2 + 1]]),
+      indices: new Uint16Array([0, 1, 2]),
+      flags: s.flags.slice(),
+    };
+  };
+  const moving = (f) => f[1] !== 0 || f[2] !== 0;
+  const own = parts.map((p) => ({ ...p, flags: [(p.flags ? p.flags[0] : p.kind) || 0, 0, 0] }));
+  const out = template.submeshes.map((s) => (moving(s.flags) ? placeholder(s) : own.shift() || placeholder(s)));
+  return out.concat(own);
 }

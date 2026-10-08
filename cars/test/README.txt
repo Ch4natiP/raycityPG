@@ -24,3 +24,9 @@ test4_new_mesh_old_textures.zip
 test5_old_mesh_new_textures.zip
   Old .0m meshes with the new textures (DXT3) and list.xml. Crashes on spawn → the new textures or
   list.xml are the cause.
+
+test6_old_rc_canyon_doors_fixed.zip   <- try this first
+  The old rc_canyon (the one that spawns) with the door fix: every .0m now has the submesh layout of
+  escarabajo's file, including the moving pieces the garage animates (doors 0/1 in roof, hood = door 2,
+  door windows, h11000 spoiler). Our car had none of them, so opening the doors in the garage crashed.
+  cars/rc_canyon (the new build) has the same fix.

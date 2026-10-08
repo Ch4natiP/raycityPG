@@ -17,7 +17,7 @@ import draco3d from 'draco3dgltf';
 import { MeshoptSimplifier } from 'meshoptimizer';
 import sharp from 'sharp';
 import { ShapeUtils, Vector2 } from 'three';
-import { parseOM, writeOM } from '../js/om.js';
+import { parseOM, writeOM, matchTemplateSubmeshes } from '../js/om.js';
 import { readSpec, writeSpec, encodeSpec, decodeSpec } from '../js/carSpec.js';
 
 const args = process.argv.slice(2);
@@ -908,7 +908,7 @@ const report = [];
 function writeLods(dir, mesh, tplMesh, partsByLod) {
   for (let l = 0; l < 3; l++) {
     const tpl = readOM(path.join(TPL, dir, `${tplMesh}_${l}.0m`));
-    const bytes = writeOM(tpl, partsByLod[l]);
+    const bytes = writeOM(tpl, matchTemplateSubmeshes(tpl, partsByLod[l]));
     fs.writeFileSync(path.join(OUT, dir, `${mesh}_${l}.0m`), bytes);
   }
   const tri = partsByLod.map((ps) => ps.reduce((s, q) => s + q.indices.length / 3, 0));
@@ -941,7 +941,9 @@ for (const dir of SLOT_DIRS) {
         t.c0 = [0, 1, 2].map((k) => (t.a[k] + t.b[k] + t.c[k]) / 3);
         t.n = norm(cross(sub(t.b, t.a), sub(t.c, t.a)));
       }
-      writeLods(dir, v.mesh, tplMesh, [0, 1, 2].map(() => buildSlot(src, 400, MASK)));
+      // Same-named template variant when there is one: its header and moving pieces match (h11000 animates).
+      const vTpl = fs.existsSync(path.join(TPL, dir, `${v.mesh}_0.0m`)) ? v.mesh : tplMesh;
+      writeLods(dir, v.mesh, vTpl, [0, 1, 2].map(() => buildSlot(src, 400, MASK)));
     }
     meshFor = (v) => v.mesh;
   } else {

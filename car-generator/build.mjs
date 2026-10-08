@@ -32,7 +32,7 @@ function embedCars() {
   if (fs.existsSync(dir)) {
     for (const name of fs.readdirSync(dir)) {
       const root = path.join(dir, name);
-      if (!fs.statSync(root).isDirectory()) continue;
+      if (!fs.statSync(root).isDirectory() || !fs.existsSync(path.join(root, 'body_2.0m'))) continue; // cars only, not cars/test
       const files = {};
       const walk = (d) => {
         for (const e of fs.readdirSync(d, { withFileTypes: true })) {

@@ -5,7 +5,7 @@
 // - Splits the model into the game's tunable parts (body, hood, roof, bumpers, lights, skirt) by region
 //   and material, adds procedural rear wings for the spoiler slot.
 // - Simplifies every part to three LODs with meshoptimizer, budgets close to the original cars.
-// - Bakes material colors into small palette textures (PNG + uncompressed DDS "_s" copy).
+// - Bakes material colors into palette textures (PNG + DXT3 "_s" DDS, sizes like the template's).
 // - Writes .0m files using the template car's files of the same slot/LOD as header templates,
 //   list.xml files with the template's variant names, mesh.xml (collision hull), dooropen and the spec XML.
 // Wheels are skipped: RayCity uses shared wheels.
@@ -26,6 +26,8 @@ const NAME = opt('--name', 'rc_car');
 const SPEC = opt('--spec', '');
 const LOCK = opt('--lock', '0') === '1';
 const SCALE = Number(opt('--budget', '1'));
+// --max-verts N: hard cap of vertices per .0m file (the game's own files stay under ~2,000).
+const MAX_VERTS = Math.min(65000, Number(opt('--max-verts', '65000')));
 const flag = (f) => args.includes(f) && Boolean(args.splice(args.indexOf(f), 1));
 // --raw: as close to the source as the format allows. Nothing added (hole fills, wheel wells, underbody,
 // gear lever), nothing removed but the wheels, source normals and double-sided flags kept; only
@@ -505,27 +507,88 @@ function palette(colors) {
 const MASK = palette(MASK_COLORS);
 const LIGHT = palette(LIGHT_COLORS);
 
-async function writeTexture(pal, file) {
-  const px = Buffer.alloc(64 * 64 * 4);
-  pal.keys.forEach((k, i) => {
-    const [r, g, b] = pal.colors[k];
-    for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
-      const o = (((Math.floor(i / 8) * 8 + y) * 64) + (i % 8) * 8 + x) * 4;
-      px[o] = r; px[o + 1] = g; px[o + 2] = b; px[o + 3] = 255;
+// Textures are written like the original cars': PNG at the template's size, "_s" DDS at half size
+// in DXT3 with a full mip chain (the game's own files are all DXT3 + mips).
+function palettePixels(pal, w, h) {
+  const px = Buffer.alloc(w * h * 4);
+  const keyAt = pal.keys;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = Math.floor((y * 8) / h) * 8 + Math.floor((x * 8) / w);
+    const [r, g, b] = i < keyAt.length ? pal.colors[keyAt[i]] : [0, 0, 0];
+    const o = (y * w + x) * 4;
+    px[o] = r; px[o + 1] = g; px[o + 2] = b; px[o + 3] = 255;
+  }
+  return px;
+}
+
+const to565 = (r, g, b) => ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
+const from565 = (c) => [((c >> 11) & 31) * 255 / 31, ((c >> 5) & 63) * 255 / 63, (c & 31) * 255 / 31];
+
+// DXT3 block compression of an RGBA image (w, h multiples of 4, or smaller mips padded).
+function dxt3(px, w, h) {
+  const bw = Math.max(1, Math.ceil(w / 4));
+  const bh = Math.max(1, Math.ceil(h / 4));
+  const out = Buffer.alloc(bw * bh * 16);
+  let o = 0;
+  for (let by = 0; by < bh; by++) for (let bx = 0; bx < bw; bx++) {
+    const blk = [];
+    for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) {
+      const sx = Math.min(w - 1, bx * 4 + x);
+      const sy = Math.min(h - 1, by * 4 + y);
+      const i = (sy * w + sx) * 4;
+      blk.push([px[i], px[i + 1], px[i + 2], px[i + 3]]);
     }
-  });
-  await sharp(px, { raw: { width: 64, height: 64, channels: 4 } }).png().toFile(file + '.png');
-  // "_s" copy: half size, uncompressed 32-bit DDS (B8G8R8A8).
-  const half = await sharp(px, { raw: { width: 64, height: 64, channels: 4 } }).resize(32, 32, { kernel: 'nearest' }).raw().toBuffer();
+    for (let k = 0; k < 16; k += 2) out[o + k / 2] = (blk[k][3] >> 4) | ((blk[k + 1][3] >> 4) << 4);
+    const lum = (c) => c[0] * 0.3 + c[1] * 0.59 + c[2] * 0.11;
+    let hi = blk[0];
+    let lo = blk[0];
+    for (const c of blk) { if (lum(c) > lum(hi)) hi = c; if (lum(c) < lum(lo)) lo = c; }
+    let c0 = to565(...hi);
+    let c1 = to565(...lo);
+    if (c0 < c1) [c0, c1] = [c1, c0];
+    const e0 = from565(c0);
+    const e1 = from565(c1);
+    const pal = [e0, e1, e0.map((v, k) => (2 * v + e1[k]) / 3), e0.map((v, k) => (v + 2 * e1[k]) / 3)];
+    let bits = 0;
+    blk.forEach((c, k) => {
+      let best = 0;
+      let bd = Infinity;
+      pal.forEach((q, j) => { const d = (q[0] - c[0]) ** 2 + (q[1] - c[1]) ** 2 + (q[2] - c[2]) ** 2; if (d < bd) { bd = d; best = j; } });
+      bits |= best << (2 * k);
+    });
+    out.writeUInt16LE(c0, o + 8);
+    out.writeUInt16LE(c1, o + 10);
+    out.writeUInt32LE(bits >>> 0, o + 12);
+    o += 16;
+  }
+  return out;
+}
+
+function ddsDXT3(pal, w, h) {
+  const levels = [];
+  for (let lw = w, lh = h; ; lw = Math.max(1, lw >> 1), lh = Math.max(1, lh >> 1)) {
+    levels.push(dxt3(palettePixels(pal, lw, lh), lw, lh));
+    if (lw === 1 && lh === 1) break;
+  }
   const hdr = Buffer.alloc(128);
   hdr.write('DDS ', 0, 'ascii');
   const u32 = (o, v) => hdr.writeUInt32LE(v >>> 0, o);
-  u32(4, 124); u32(8, 0x1 | 0x2 | 0x4 | 0x1000 | 0x8); u32(12, 32); u32(16, 32); u32(20, 32 * 4);
-  u32(76, 32); u32(80, 0x41); u32(88, 32); u32(92, 0x00ff0000); u32(96, 0x0000ff00); u32(100, 0x000000ff); u32(104, 0xff000000);
-  u32(108, 0x1000);
-  const bgra = Buffer.from(half);
-  for (let i = 0; i < bgra.length; i += 4) { const r = bgra[i]; bgra[i] = bgra[i + 2]; bgra[i + 2] = r; }
-  fs.writeFileSync(file + '_s.dds', Buffer.concat([hdr, bgra]));
+  u32(4, 124); u32(8, 0x21007); u32(12, h); u32(16, w); u32(28, levels.length);
+  u32(76, 32); u32(80, 0x4); hdr.write('DXT3', 84, 'ascii');
+  u32(108, 0x401008);
+  return Buffer.concat([hdr, ...levels]);
+}
+
+// Texture size of the template's file (PNG header), else the fallback.
+function pngSize(file, fallback) {
+  if (!fs.existsSync(file)) return fallback;
+  const b = fs.readFileSync(file);
+  return [b.readUInt32BE(16), b.readUInt32BE(20)];
+}
+
+async function writeTexture(pal, file, [w, h] = [64, 64]) {
+  await sharp(palettePixels(pal, w, h), { raw: { width: w, height: h, channels: 4 } }).png().toFile(file + '.png');
+  fs.writeFileSync(file + '_s.dds', ddsDXT3(pal, Math.max(1, w >> 1), Math.max(1, h >> 1)));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -606,9 +669,10 @@ function dropSmallPieces(pos, idx, minSize) {
 
 // Vertex clustering: snap vertices to a grid, drop collapsed triangles. Coarse but reaches any target,
 // used for inner panels where tiny pieces stop edge-collapse simplification.
-function clusterSimplify(pos, idx, targetTris) {
+function clusterSimplify(pos, idx, targetTris, coarse = false) {
   let best = idx;
-  for (const cell of [0.01, 0.015, 0.02, 0.025, 0.03]) { // capped so panels can't drift through the skin
+  // Capped so panels can't drift through the skin; under a --max-verts cap coarser cells are allowed.
+  for (const cell of [0.01, 0.015, 0.02, 0.025, 0.03, ...(coarse ? [0.04, 0.05, 0.065, 0.08] : [])]) {
     const map = new Map();
     const remap = new Uint32Array(pos.length / 3);
     for (let v = 0; v < pos.length / 3; v++) {
@@ -637,15 +701,17 @@ function simplifyGroup(list, targetTris, lod, interior = false, attempt = 0, two
   if (interior && LOD_ERR_INTERIOR[lod] === undefined) return { pos: new Float32Array(), idx: new Uint32Array() };
   const welded = weld(list);
   const pos = welded.pos;
-  const idx = RAW && lod === 2 && attempt === 0 ? welded.idx
-    : dropSmallPieces(pos, welded.idx, LOD_MIN_PIECE[lod] * (1 + attempt) * (RAW ? 0.5 : 1));
+  const dropped = RAW && lod === 2 && attempt === 0 ? welded.idx
+    : dropSmallPieces(pos, welded.idx, LOD_MIN_PIECE[lod] * (1 + Math.min(attempt, 4)) * (RAW ? 0.5 : 1));
+  const idx = dropped.length ? dropped : welded.idx; // a part made only of small pieces keeps them
   const err = interior ? LOD_ERR_INTERIOR[lod] * (1 + attempt) : LOD_ERR[lod];
   // After a few tries at .0m size limits, let borders collapse too (small cracks beat a failed build).
   const lock = (err === null && attempt < 3) || LOCK;
-  const errFree = err === null ? 0.004 * attempt : err;
+  // Under a --max-verts cap, later attempts drop the error limit so the triangle target decides.
+  const errFree = MAX_VERTS < 65000 && attempt >= 3 ? 1 : err === null ? 0.004 * attempt : err;
   let out = idx.length / 3 <= targetTris ? idx
     : MeshoptSimplifier.simplify(idx, pos, 3, Math.max(3, targetTris * 3), lock ? 1 : errFree, lock ? ['LockBorder'] : [])[0];
-  if (interior && out.length / 3 > targetTris) out = clusterSimplify(pos, out, Math.round(targetTris / (1 + attempt)));
+  if (interior && out.length / 3 > targetTris) out = clusterSimplify(pos, out, Math.round(targetTris / (1 + attempt)), MAX_VERTS < 65000 && attempt >= 3);
   if (!interior && !twoSided) return { pos, idx: out, ref: idx, vn: welded.vn };
   // Interior and ambiguous pieces are seen from any side: add the back faces after simplifying.
   const both = new Uint32Array(out.length * 2);
@@ -746,11 +812,15 @@ function withNormals(pos, idx, crease = 45, refIdx = null, authored = null) {
 // Simplify a slot's triangles to `budget` and return .0m parts (one submesh per material).
 // .0m files hold u16 counts: retry with coarser settings until the slot fits.
 function buildSlot(list, budget, pal, lod = 2) {
+  let last = null;
   for (let attempt = 0; ; attempt++) {
     const parts = buildSlotOnce(list, budget, pal, lod, attempt);
+    if (!parts.length && last) return last; // never shrink a part away completely
     const nv = parts.reduce((s, q) => s + q.positions.length / 3, 0);
     const ni = parts.reduce((s, q) => s + q.indices.length, 0);
-    if ((nv <= 65000 && ni <= 65000) || attempt >= 14) return parts;
+    if (process.env.DEBUG) console.log(`  lod${lod} attempt ${attempt}: ${nv} verts`);
+    if ((nv <= MAX_VERTS && ni <= 65000) || attempt >= 24) return parts;
+    if (nv <= 65000 && ni <= 65000) last = parts;
   }
 }
 
@@ -758,6 +828,7 @@ function buildSlotOnce(list, budgetIn, pal, lod, attempt) {
   // Once borders are allowed to collapse (attempt ≥ 3), aim just under the .0m limit instead of the
   // small LOD budget, so LOD 2 stays the most detailed.
   const budget = RAW ? budgetIn * 0.82 ** attempt // raw budgets start at the limit: shrink until it fits
+    : MAX_VERTS < 65000 ? budgetIn * 0.85 ** attempt // under a vertex cap: only ever shrink
     : attempt >= 3 ? Math.max(budgetIn, (19000 * 0.85 ** (attempt - 3)) / SCALE) : budgetIn;
   const byMat = new Map();
   for (const t of list) {
@@ -846,8 +917,8 @@ function writeLods(dir, mesh, tplMesh, partsByLod) {
 
 // Body
 writeLods('', 'body', 'body', [0, 1, 2].map((l) => buildSlot(slots.body, BUDGET.body[l], MASK, l)));
-await writeTexture(MASK, path.join(OUT, `${NAME}_base`));
-await writeTexture(MASK, path.join(OUT, `${NAME}_color`));
+await writeTexture(MASK, path.join(OUT, `${NAME}_base`), pngSize(path.join(TPL, `${tplName}_base.png`), [512, 512]));
+await writeTexture(MASK, path.join(OUT, `${NAME}_color`), pngSize(path.join(TPL, `${tplName}_color.png`), [128, 64]));
 
 for (const dir of SLOT_DIRS) {
   fs.mkdirSync(path.join(OUT, dir), { recursive: true });
@@ -855,7 +926,11 @@ for (const dir of SLOT_DIRS) {
   const variants = [...list.matchAll(/<part\b[^>]*name='([^']*)'[^>]*mesh='([^']*)'[^>]*>/g)].map((m) => ({ name: m[1], mesh: m[2] }));
   const tplMesh = fs.existsSync(path.join(TPL, dir, 'default_0.0m')) ? 'default' : variants[0].mesh;
   const isLightSlot = dir === 'headlight' || dir === 'rearlight';
-  const tex = isLightSlot ? `${NAME}_${dir}` : '';
+  // Every part folder gets <car>_<dir>.png/_s.dds, named in list.xml wherever the template names a
+  // texture (the template leaves some defaults empty, e.g. hood and roof; those stay empty).
+  const tex = `${NAME}_${dir}`;
+  const pal = isLightSlot ? LIGHT : MASK;
+  await writeTexture(pal, path.join(OUT, dir, tex), pngSize(path.join(TPL, dir, `${tplName}_${dir}.png`), [64, 64]));
   let meshFor;
   if (dir === 'mainspoiler') {
     const kinds = { pty_h300: 'lip', m10010: 'wing', h11000: 'gt', rbrc_001: 'twin', rbrc_002: 'wing' };
@@ -872,9 +947,7 @@ for (const dir of SLOT_DIRS) {
   } else {
     const src = slots[dir] || [];
     if (!src.length) { console.warn(`! no triangles for ${dir}`); continue; }
-    const pal = isLightSlot ? LIGHT : MASK;
     writeLods(dir, 'default', tplMesh, [0, 1, 2].map((l) => buildSlot(src, BUDGET[dir][l], pal, l)));
-    if (isLightSlot) await writeTexture(LIGHT, path.join(OUT, dir, tex));
     meshFor = () => 'default'; // every shop variant shows the stock part
   }
   // list.xml: keep the template's ids and names so tuning items still resolve.
@@ -884,7 +957,7 @@ for (const dir of SLOT_DIRS) {
     const v = variants.find((x) => x.name === name);
     let a = attrs;
     if (/mesh='/.test(a)) a = a.replace(/mesh='[^']*'/, `mesh='${meshFor(v)}'`);
-    if (/tex='/.test(a)) a = a.replace(/tex='[^']*'/, `tex='${tex}'`);
+    if (/tex='[^']+'/.test(a)) a = a.replace(/tex='[^']*'/, `tex='${tex}'`);
     return `<part${a}/>`;
   });
   fs.writeFileSync(path.join(OUT, dir, 'list.xml'), xmlUtf16(out));

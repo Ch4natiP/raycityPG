@@ -1,6 +1,6 @@
 // Builds a RayCity car folder (same layout as an original car) from a realistic glTF/GLB model.
 //
-//   node tools/build-car.mjs <model.glb> <template-car-folder> <out-dir> [--name rc_car] [--spec template.xml]
+//   node tools/build-car.mjs <model.glb> <template-car-folder> <out-dir> [--name rc_car] [--spec template.xml] [--keep-logos]
 //
 // - Splits the model into the game's tunable parts (body, hood, roof, bumpers, lights, skirt) by region
 //   and material, adds procedural rear wings for the spoiler slot.
@@ -16,6 +16,7 @@ import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import draco3d from 'draco3dgltf';
 import { MeshoptSimplifier } from 'meshoptimizer';
 import sharp from 'sharp';
+import { ShapeUtils, Vector2 } from 'three';
 import { parseOM, writeOM } from '../js/om.js';
 import { readSpec, writeSpec, encodeSpec, decodeSpec } from '../js/carSpec.js';
 
@@ -25,6 +26,7 @@ const NAME = opt('--name', 'rc_car');
 const SPEC = opt('--spec', '');
 const LOCK = opt('--lock', '0') === '1';
 const SCALE = Number(opt('--budget', '1'));
+const KEEP_LOGOS = args.includes('--keep-logos') && Boolean(args.splice(args.indexOf('--keep-logos'), 1));
 const [SRC, TPL, OUT] = args;
 if (!SRC || !TPL || !OUT) {
   console.error('usage: node tools/build-car.mjs <model.glb> <template-car-folder> <out-dir> [--name rc_car] [--spec x.xml]');
@@ -38,30 +40,62 @@ const io = new NodeIO().registerExtensions(ALL_EXTENSIONS)
   .registerDependencies({ 'draco3d.decoder': await draco3d.createDecoderModule() });
 const doc = await io.read(SRC);
 
-// Meshes we never export: wheels (shared in game) and badges. Inner panels (floor, dash, door cards,
-// wheel-arch liners, underbody) are kept: without them the car is see-through in game.
-const SKIP_NODE = /^(wheel|steering|blue|yellow_trim|centre)/i;
-const tris = []; // { a, b, c (float3 arrays), mat, inner }
+// Source materials are mapped to a few canonical categories, so any model works:
+//   paint, glass, head(light lens), tail(light), indicator, chrome, metal, trim (plastic/rubber),
+//   carbon, interior; logos/badges/plates and wheels/tires/brakes are skipped.
+// The canonical names below are what the rest of the builder works with.
+const CANON = [
+  [/^plate$|license/i, null], // the game draws its own number plate
+  [/logo|badge|emblem|costura|icons?$/i, KEEP_LOGOS ? 'metal_chrome' : null],
+  [/tyre|tire|break|brake|rim|wheel/i, null],
+  [/window|^glass(_t|_gray)?$|windshield/i, 'Glass_Gray'],
+  [/glass_light|projector|glass_fog|headl|fog/i, 'Projector_Glass'],
+  [/red_glass|taillight|tail_light|brakelight|rear.?light/i, 'Taillight_Glass'],
+  [/oraange|orange|amber|turn|indicator|led/i, 'Turn_Signal_LED'],
+  [/carpaint|car_paint|body_color|bodypaint|paint/i, 'Body_Color'],
+  [/leather|seat|floor|carpet|console|ceiling|speaker|bose|stitch|screen|^st_sw|interior|dash|headliner/i, 'Interior_dark'],
+  [/carbon/i, 'Carbon_Fiber'],
+  [/chrome|gold|mirror/i, 'metal_chrome'],
+  [/alum|metal|steel/i, 'metal_gray'],
+  [/.*/, 'plastic_gray'],
+];
+const canon = (name) => CANON.find(([re]) => re.test(name))[1];
+
+// Meshes we never export: wheels (shared in game) and badges. Inner panels (floor, dash, door cards)
+// are kept: without them the car is see-through in game.
+const SKIP_NODE = KEEP_LOGOS ? /^(wheel|rim_root|steering|centre)|plates?(\.|_|$)/i
+  : /^(wheel|rim_root|steering|blue|yellow_trim|centre)|logo|badge|emblem|plates?(\.|_|$)/i;
 const wheelCenters = [];
 let steeringPos = null; // used to place the gear lever
+const worldPos = (node) => { const m = node.getWorldMatrix(); return [-m[12], m[14], m[13]]; };
 doc.getRoot().getDefaultScene().traverse((node) => {
-  if (/^wheel_/i.test(node.getName())) {
-    const m = node.getWorldMatrix();
-    wheelCenters.push([-m[12], m[14], m[13]]);
-  }
-  if (/^steering_wheel$/i.test(node.getName())) {
-    const m = node.getWorldMatrix();
-    steeringPos = [-m[12], m[14], m[13]];
-  }
+  if (/^wheel_?[fr][lr]?$|^wheel_[fr]/i.test(node.getName())) wheelCenters.push({ name: node.getName(), p: worldPos(node) });
+  if (/^steering_wheel$/i.test(node.getName())) steeringPos = worldPos(node);
+});
+// Front of the car must be −Y: if the front wheels sit at +Y, turn the model around.
+const frontW = wheelCenters.filter((w) => /^wheel_?f/i.test(w.name));
+const rearW = wheelCenters.filter((w) => /^wheel_?r/i.test(w.name));
+const FLIP = frontW.length && rearW.length
+  && frontW.reduce((s, w) => s + w.p[1], 0) / frontW.length > rearW.reduce((s, w) => s + w.p[1], 0) / rearW.length;
+const orient = (p) => (FLIP ? [-p[0], -p[1], p[2]] : p);
+for (const w of wheelCenters) w.p = orient(w.p);
+if (steeringPos) steeringPos = orient(steeringPos);
+console.log(`wheels: ${wheelCenters.length}${FLIP ? ' (model turned around: front was +Y)' : ''}`);
+
+const tris = []; // { a, b, c (float3 arrays), mat (canonical), inner }
+const skipped = new Map();
+doc.getRoot().getDefaultScene().traverse((node) => {
   for (let n = node; n; n = n.getParentNode()) if (SKIP_NODE.test(n.getName())) return;
-  const inner = /^interior_(light|dark)/i.test(node.getName());
   const mesh = node.getMesh();
   if (!mesh) return;
   const m = node.getWorldMatrix();
   for (const prim of mesh.listPrimitives()) {
+    const srcMat = prim.getMaterial()?.getName() || 'default';
+    const mat = canon(srcMat);
+    if (!mat) { skipped.set(srcMat, (skipped.get(srcMat) || 0) + 1); continue; }
+    const inner = mat === 'Interior_dark';
     const pos = prim.getAttribute('POSITION');
     const idx = prim.getIndices();
-    const mat = prim.getMaterial()?.getName() || 'default';
     const v = [];
     const P = [];
     for (let i = 0; i < pos.getCount(); i++) {
@@ -69,12 +103,13 @@ doc.getRoot().getDefaultScene().traverse((node) => {
       const x = m[0] * v[0] + m[4] * v[1] + m[8] * v[2] + m[12];
       const y = m[1] * v[0] + m[5] * v[1] + m[9] * v[2] + m[13];
       const z = m[2] * v[0] + m[6] * v[1] + m[10] * v[2] + m[14];
-      P.push([-x, z, y]);
+      P.push(orient([-x, z, y]));
     }
     const I = idx ? idx.getArray() : P.map((_, i) => i);
     for (let t = 0; t + 2 < I.length; t += 3) tris.push({ a: P[I[t]], b: P[I[t + 1]], c: P[I[t + 2]], mat, inner });
   }
 });
+if (skipped.size) console.log(`skipped materials: ${[...skipped.keys()].join(', ')}`);
 console.log(`source: ${tris.length} triangles`);
 
 // ---------------------------------------------------------------------------------------------
@@ -91,17 +126,23 @@ const bodyTris = tris.filter((t) => t.mat === 'Body_Color');
 const ext = (list, k, f) => list.reduce((r, t) => f(r, t.c0[k]), f === Math.min ? Infinity : -Infinity);
 const yF = ext(bodyTris, 1, Math.min);
 const yR = ext(bodyTris, 1, Math.max);
-const glass = tris.filter((t) => /glass/i.test(t.mat) && !/light|projector/i.test(t.mat));
+// Everything below was tuned on a 4.5 m long, 1.24 m tall supercar: heights scale with the car's
+// height (zs), lengths with its length (ys), so SUVs and pickups split the same way.
+const H = ext(bodyTris, 2, Math.max);
+const zs = (v) => (v * H) / 1.24;
+const ys = (v) => (v * (yR - yF)) / 4.52;
+const W_R = wheelCenters.length ? wheelCenters.reduce((s, w) => s + w.p[2], 0) / wheelCenters.length : zs(0.36); // wheel radius ≈ axle height
+const glass = tris.filter((t) => t.mat === 'Glass_Gray');
 // Windshield base: front-most glass above the headlight covers.
-const wsBaseY = ext(glass.filter((t) => t.c0[1] < 0 && t.c0[2] > 0.88), 1, Math.min);
+const wsBaseY = ext(glass.filter((t) => t.c0[1] < (yF + yR) / 2 && t.c0[2] > zs(0.88)), 1, Math.min);
 const glassTop = ext(glass, 2, Math.max);
-const rearDeckZ = ext(bodyTris.filter((t) => t.c0[1] > yR - 0.5 && t.c0[1] < yR - 0.2), 2, Math.max);
-console.log(`length ${(yR - yF).toFixed(2)} m, windshield base y ${wsBaseY.toFixed(2)}, roof ${glassTop.toFixed(2)}, deck ${rearDeckZ.toFixed(2)}`);
+const rearDeckZ = ext(bodyTris.filter((t) => t.c0[1] > yR - ys(0.5) && t.c0[1] < yR - ys(0.2)), 2, Math.max);
+console.log(`length ${(yR - yF).toFixed(2)} m, height ${H.toFixed(2)} m, windshield base y ${wsBaseY.toFixed(2)}, roof ${glassTop.toFixed(2)}, deck ${rearDeckZ.toFixed(2)}`);
 
 // Outward direction at a point: gradient of an ellipsoid around the car (so the roof faces up,
 // the sides sideways and the nose forward).
-const CENTER = [0, (yF + yR) / 2, 0.55];
-const RADII = [1.0, (yR - yF) / 2, 0.6];
+const CENTER = [0, (yF + yR) / 2, zs(0.55)];
+const RADII = [1.0, (yR - yF) / 2, zs(0.6)];
 const outwardDot = (t) => [0, 1, 2].reduce((s, k) => s + t.n[k] * ((t.c0[k] - CENTER[k]) / (RADII[k] * RADII[k])), 0);
 
 const isLight = (t) => /projector|led|taillight/i.test(t.mat);
@@ -110,24 +151,30 @@ const tailBox = { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinit
 const grow = (bx, t) => { for (let k = 0; k < 3; k++) { bx.min[k] = Math.min(bx.min[k], t.c0[k]); bx.max[k] = Math.max(bx.max[k], t.c0[k]); } };
 const inBox = (bx, t, pad) => [0, 1, 2].every((k) => t.c0[k] >= bx.min[k] - pad && t.c0[k] <= bx.max[k] + pad);
 for (const t of tris) {
-  if (/projector|led/i.test(t.mat) && t.c0[1] < yF + 0.6) grow(headBox, t);
-  if (/taillight/i.test(t.mat) && t.c0[1] > yR - 0.5) grow(tailBox, t);
+  if (/projector|led/i.test(t.mat) && t.c0[1] < yF + ys(0.6)) grow(headBox, t);
+  if (/taillight/i.test(t.mat) && t.c0[1] > yR - ys(0.5)) grow(tailBox, t);
 }
+
+// Between the wheels (for side skirts).
+const axleYs = wheelCenters.map((w) => w.p[1]);
+const axleSpan = (y) => (axleYs.length
+  ? y > Math.min(...axleYs) + W_R * 1.2 && y < Math.max(...axleYs) - W_R * 1.2
+  : y > ys(-0.75) && y < ys(1.05));
 
 function slotOf(t) {
   const [x, y, z] = t.c0;
   const ax = Math.abs(x);
-  if (/projector|led/i.test(t.mat) && y < yF + 0.6) return 'headlight';
-  if (/taillight/i.test(t.mat) && y > yR - 0.5) return 'rearlight';
+  if (/projector|led/i.test(t.mat) && y < yF + ys(0.6)) return 'headlight';
+  if (/taillight/i.test(t.mat) && y > yR - ys(0.5)) return 'rearlight';
   if (/chrome|metal|plastic/i.test(t.mat) && inBox(headBox, t, 0.03)) return 'headlight';
   if (/chrome|metal|plastic/i.test(t.mat) && inBox(tailBox, t, 0.03)) return 'rearlight';
   if (isLight(t)) return 'body';
   if (/glass/i.test(t.mat)) return 'body';
-  if (t.mat === 'Body_Color' && y > wsBaseY + 0.25 && y < yR - 1.4 && z > glassTop - 0.14 && t.n[2] > 0.5) return 'roof';
-  if (t.mat === 'Body_Color' && y > yF + 0.5 && y < wsBaseY - 0.03 && ax < 0.6 && z > 0.55 && t.n[2] > 0.5) return 'hood';
-  if (y < yF + 0.5 && z < 0.78) return 'frontbumper';
-  if (y > yR - 0.42 && z < 0.82) return 'rearbumper';
-  if (z < 0.42 && ax > 0.78 && y > -0.75 && y < 1.05) return 'skirt';
+  if (t.mat === 'Body_Color' && y > wsBaseY + ys(0.25) && y < yR - ys(1.4) && z > glassTop - zs(0.14) && t.n[2] > 0.5) return 'roof';
+  if (t.mat === 'Body_Color' && y > yF + ys(0.5) && y < wsBaseY - 0.03 && ax < 0.6 && z > zs(0.55) && t.n[2] > 0.5) return 'hood';
+  if (y < yF + ys(0.5) && z < zs(0.78)) return 'frontbumper';
+  if (y > yR - ys(0.42) && z < zs(0.82)) return 'rearbumper';
+  if (z < zs(0.42) && ax > 0.78 && axleSpan(y)) return 'skirt';
   return 'body';
 }
 // Inner panels: keep only what closes visible holes — the cabin tub (floor, dash, door cards)
@@ -136,13 +183,13 @@ function slotOf(t) {
   const before = tris.length;
   const keepInner = (t) => {
     const [x, y, z] = t.c0;
-    if (y > wsBaseY - 0.25 && y < yR - 1.3 && Math.abs(x) < 0.85 && z < 1.15) return true;
+    if (y > wsBaseY - ys(0.25) && y < yR - ys(1.3) && Math.abs(x) < 0.85 && z < zs(1.15)) return true;
     // Wheel-arch liners come from the generated wheel wells below: the source liners sit right under
     // the fender skin and poke through it once simplified.
-    return z < 0.22;
+    return z < zs(0.22);
   };
   for (let i = tris.length - 1; i >= 0; i--) if (tris[i].inner && !keepInner(tris[i])) tris.splice(i, 1);
-  console.log(`inner panels: kept ${tris.filter((t) => t.inner).length}, dropped ${before - tris.length} (wheels at ${wheelCenters.map((w) => w.map((v) => v.toFixed(2)).join(',')).join(' / ')})`);
+  console.log(`inner panels: kept ${tris.filter((t) => t.inner).length}, dropped ${before - tris.length} (wheels at ${wheelCenters.map((w) => w.p.map((v) => v.toFixed(2)).join(',')).join(' / ')})`);
 }
 
 // Remove badges/lettering: small separate pieces near the centerline at the nose or tail.
@@ -168,11 +215,16 @@ function slotOf(t) {
     boxes.set(r, bx);
   }
   const badge = new Set();
+  if (KEEP_LOGOS) boxes.clear();
   for (const [r, bx] of boxes) {
     const size = Math.max(...[0, 1, 2].map((k) => bx.max[k] - bx.min[k]));
     const cx = (bx.min[0] + bx.max[0]) / 2;
     const cy = (bx.min[1] + bx.max[1]) / 2;
     if (size < 0.14 && Math.abs(cx) < 0.2 && (cy < yF + 0.35 || cy > yR - 0.35)) badge.add(r);
+    // Lettering stuck on the sides (model names on doors/fenders): very thin, short, on the flanks.
+    const thin = Math.min(...[0, 1, 2].map((k) => bx.max[k] - bx.min[k]));
+    const cz = (bx.min[2] + bx.max[2]) / 2;
+    if (thin < 0.015 && size < 0.4 && Math.abs(cx) > 0.75 && cz > zs(0.3) && cz < zs(0.8)) badge.add(r);
   }
   const before = tris.length;
   for (let i = tris.length - 1; i >= 0; i--) if (tris[i].comp && badge.has(tris[i].comp)) tris.splice(i, 1);
@@ -208,10 +260,31 @@ function slotOf(t) {
     sc[0] += d; sc[1] += Math.abs(d);
     score.set(piece, sc);
   }
+  // Closed pieces (mirror caps, light housings...) face every way, so the ellipsoid test can't tell;
+  // their signed volume can: positive = wound outward. Those get one side, flipped if needed.
+  const vol = new Map();
+  const bb = new Map();
+  for (const t of tris) {
+    const c = cross(t.b, t.c);
+    const v = (t.a[0] * c[0] + t.a[1] * c[1] + t.a[2] * c[2]) / 6;
+    vol.set(t.piece, (vol.get(t.piece) || 0) + v);
+    const b = bb.get(t.piece) || [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+    for (const p of [t.a, t.b, t.c]) for (let k = 0; k < 3; k++) { b[k] = Math.min(b[k], p[k]); b[k + 3] = Math.max(b[k + 3], p[k]); }
+    bb.set(t.piece, b);
+  }
+  const closedSign = (piece) => {
+    const b = bb.get(piece);
+    const box = (b[3] - b[0]) * (b[4] - b[1]) * (b[5] - b[2]);
+    const v = vol.get(piece) || 0;
+    return box > 1e-9 && Math.abs(v) > 0.15 * box ? Math.sign(v) : 0;
+  };
   let n = 0;
   for (const t of tris) {
     const [sum, abs] = score.get(t.piece);
-    t.twoSided = !t.inner && Math.abs(sum) < 0.6 * abs;
+    const ambiguous = Math.abs(sum) < 0.6 * abs;
+    const closed = ambiguous ? closedSign(t.piece) : 0;
+    if (closed < 0) { const a = t.b; t.b = t.c; t.c = a; t.n = t.n.map((x) => -x); } // inward-wound solid
+    t.twoSided = !t.inner && ambiguous && closed === 0;
     if (t.twoSided) n++;
   }
   console.log(`two-sided pieces: ${n} triangles`);
@@ -271,8 +344,8 @@ const added = [];
     const c = [0, 1, 2].map((k) => L.reduce((s, p) => s + p[k], 0) / L.length);
     const span = [0, 1, 2].map((k) => Math.max(...L.map((p) => p[k])) - Math.min(...L.map((p) => p[k])));
     if (per < 0.08 || per > 4) continue;
-    if (wheelCenters.some((w) => Math.abs(c[0]) > 0.45 && Math.hypot(c[1] - w[1], c[2] - w[2]) < 0.75)) continue;
-    if (c[2] > 0.8 && c[1] > wsBaseY - 0.1 && c[1] < yR - 1.0 && Math.abs(c[0]) < 0.9) continue; // cabin opening
+    if (wheelCenters.some(({ p: w }) => Math.abs(c[0]) > zs(0.45) && Math.hypot(c[1] - w[1], c[2] - w[2]) < W_R * 2.1)) continue;
+    if (c[2] > zs(0.8) && c[1] > wsBaseY - 0.1 && c[1] < yR - ys(1.0) && Math.abs(c[0]) < 0.9) continue; // cabin opening
     if (span[1] > 1.6) continue;
     // Opening facing: Newell normal of the loop. Top-facing loops are panel seams on the hood/deck;
     // filling those leaves dark patches on the paint, so only front/rear/side/bottom openings get panels.
@@ -282,13 +355,20 @@ const added = [];
       nl[0] += (p[1] - q[1]) * (p[2] + q[2]); nl[1] += (p[2] - q[2]) * (p[0] + q[0]); nl[2] += (p[0] - q[0]) * (p[1] + q[1]);
     }
     const nn = norm(nl);
-    if (Math.abs(nn[2]) > 0.6 && c[2] > 0.45) continue;
-    // Recess the panel 2.5 cm into the car.
+    if (Math.abs(nn[2]) > 0.6 && c[2] > zs(0.45)) continue;
+    if (process.env.NOFILL) continue;
+    // Triangulate the opening along its own outline (ear clipping in the loop's plane), so concave
+    // holes don't get fan triangles across the surrounding bars; sink it 1 cm into the car.
+    const ax = Math.abs(nn[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+    const u = norm(cross(nn, ax));
+    const w2 = cross(nn, u);
+    const pts2 = L.map((p) => new Vector2(p[0] * u[0] + p[1] * u[1] + p[2] * u[2], p[0] * w2[0] + p[1] * w2[1] + p[2] * w2[2]));
+    let faces2;
+    try { faces2 = ShapeUtils.triangulateShape(pts2, []); } catch { continue; }
     const o = [0, 1, 2].map((k) => (c[k] - CENTER[k]) / (RADII[k] * RADII[k]));
     const ol = Math.hypot(...o) || 1;
-    const mid = [0, 1, 2].map((k) => c[k] - (o[k] / ol) * 0.025);
-    if (process.env.NOFILL) continue;
-    for (let k = 0; k < L.length; k++) added.push(mkTri(mid, L[(k + 1) % L.length], L[k], 'Grille', { twoSided: true }));
+    const S = L.map((p) => [0, 1, 2].map((k) => p[k] - (o[k] / ol) * 0.01));
+    for (const [i0, i1, i2] of faces2) added.push(mkTri(S[i0], S[i1], S[i2], 'Grille', { twoSided: true }));
     filled++;
   }
   console.log(`openings closed: ${filled}`);
@@ -298,9 +378,9 @@ const added = [];
 // shows through around the game's wheels.
 {
   const seg = 14;
-  for (const w of wheelCenters) {
+  for (const { p: w } of wheelCenters) {
     const side = Math.sign(w[0]);
-    const r = 0.42;
+    const r = W_R * 1.17;
     const xOut = w[0] + side * 0.12;
     const xIn = w[0] - side * 0.3;
     const arc = [];
@@ -320,7 +400,7 @@ const added = [];
 
 // Underbody: a flat panel under the car, inside the outline of the low body.
 {
-  const low = tris.filter((t) => !t.inner && t.c0[2] < 0.4);
+  const low = tris.filter((t) => !t.inner && t.c0[2] < zs(0.4));
   const xy = low.flatMap((t) => [t.a, t.b, t.c]).map((p) => [p[0] * 0.97, p[1] * 0.98]);
   xy.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   const crossZ = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
@@ -341,8 +421,8 @@ const added = [];
 {
   // Between the seats: a little behind the steering wheel.
   const y = steeringPos ? steeringPos[1] + 0.42 : (yF + yR) / 2 - 0.3;
-  const tunnel = tris.filter((t) => t.inner && Math.abs(t.c0[0]) < 0.12 && Math.abs(t.c0[1] - y) < 0.12 && t.c0[2] < 0.85);
-  const z = tunnel.length ? ext(tunnel, 2, Math.max) : 0.55;
+  const tunnel = tris.filter((t) => t.inner && Math.abs(t.c0[0]) < 0.12 && Math.abs(t.c0[1] - y) < 0.12 && t.c0[2] < zs(0.85));
+  const z = tunnel.length ? ext(tunnel, 2, Math.max) : zs(0.55);
   const box = (cx, cy, cz, sx, sy, sz, mat) => {
     const v = [[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1], [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]]
       .map(([a, b, d]) => [cx + (a * sx) / 2, cy + (b * sy) / 2, cz + (d * sz) / 2]);
@@ -528,9 +608,11 @@ function simplifyGroup(list, targetTris, lod, interior = false, attempt = 0, two
   const pos = welded.pos;
   const idx = dropSmallPieces(pos, welded.idx, LOD_MIN_PIECE[lod] * (1 + attempt));
   const err = interior ? LOD_ERR_INTERIOR[lod] * (1 + attempt) : LOD_ERR[lod];
-  const lock = err === null || LOCK;
+  // After a few tries at .0m size limits, let borders collapse too (small cracks beat a failed build).
+  const lock = (err === null && attempt < 3) || LOCK;
+  const errFree = err === null ? 0.004 * attempt : err;
   let out = idx.length / 3 <= targetTris ? idx
-    : MeshoptSimplifier.simplify(idx, pos, 3, Math.max(3, targetTris * 3), lock ? 1 : err, lock ? ['LockBorder'] : [])[0];
+    : MeshoptSimplifier.simplify(idx, pos, 3, Math.max(3, targetTris * 3), lock ? 1 : errFree, lock ? ['LockBorder'] : [])[0];
   if (interior && out.length / 3 > targetTris) out = clusterSimplify(pos, out, Math.round(targetTris / (1 + attempt)));
   if (!interior && !twoSided) return { pos, idx: out, ref: idx };
   // Interior and ambiguous pieces are seen from any side: add the back faces after simplifying.
@@ -631,7 +713,10 @@ function buildSlot(list, budget, pal, lod = 2) {
   }
 }
 
-function buildSlotOnce(list, budget, pal, lod, attempt) {
+function buildSlotOnce(list, budgetIn, pal, lod, attempt) {
+  // Once borders are allowed to collapse (attempt ≥ 3), aim just under the .0m limit instead of the
+  // small LOD budget, so LOD 2 stays the most detailed.
+  const budget = attempt >= 3 ? Math.max(budgetIn, (19000 * 0.85 ** (attempt - 3)) / SCALE) : budgetIn;
   const byMat = new Map();
   for (const t of list) {
     const k = t.twoSided ? `${t.mat}|2s` : t.mat;

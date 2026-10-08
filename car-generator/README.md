@@ -162,7 +162,7 @@ escarabajo/
 ```bash
 cd car-generator
 npm install
-node tools/build-car.mjs model.glb path/to/car/escarabajo out/rc_mycar --name rc_mycar
+node tools/build-car.mjs model.glb path/to/car/escarabajo out/rc_mycar --name rc_mycar [--keep-logos]
 node tools/make-icons.mjs out/rc_mycar path/to/car/escarabajo      # ไอคอนร้านแต่ง 64×64 (ต้องมี Chromium)
 ```
 
@@ -179,4 +179,8 @@ node tools/make-icons.mjs out/rc_mycar path/to/car/escarabajo      # ไอค�
 - เขียน `.0m` โดยใช้ไฟล์ของรถแม่แบบ (ช่อง/LOD เดียวกัน) เป็นส่วนหัว, `list.xml` ใช้ id/ชื่อแบบเดิมทั้งหมด
   (ทุกแบบชี้ไปที่ชิ้น `default` เพื่อให้ไอเท็มในร้านยังใช้ได้), `mesh.xml` (กล่องชนยืดตามขนาดรถ), `dooropen`, ไฟล์สเปค
 
-ตัวอย่างที่สร้างแล้ว: `cars/rc_italia/` (และ `cars/rc_italia.zip`) — ดูเครดิตโมเดลใน `CREDITS.txt`
+ใช้ได้กับโมเดลทั่วไป: จัดกลุ่มวัสดุเองจากชื่อ (สีรถ/กระจก/ไฟหน้า/ไฟท้าย/ไฟเลี้ยว/โครเมียม/พลาสติก/ภายใน),
+หาหน้ารถจากตำแหน่งล้อหน้า-หลัง (หมุนให้เอง) และปรับระยะทุกค่าตามขนาดรถ (ซูเปอร์คาร์เตี้ย ถึงกระบะ)
+`--keep-logos` เก็บโลโก้/ตัวอักษรยี่ห้อไว้ (ไม่งั้นจะลบ ซึ่งอาจทิ้งรูไว้) · ป้ายทะเบียนลบเสมอ เพราะเกมใส่ป้ายเอง
+
+ตัวอย่างที่สร้างแล้ว: `cars/rc_italia/` และ `cars/rc_canyon/` (พร้อมไฟล์ .zip) — ดูเครดิตโมเดลใน `CREDITS.txt`

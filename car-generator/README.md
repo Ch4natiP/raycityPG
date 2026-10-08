@@ -183,7 +183,19 @@ node tools/fix-anim.mjs out/rc_mycar path/to/car/escarabajo        # แก้�
 4. ภาพเขียนแบบเดียวกับเกม: `<ชื่อรถ>_base.png` = มาสก์สีรถ (แดงทั้งภาพ), `<ชื่อรถ>_color.png` และ
    เท็กซ์เจอร์ชิ้นส่วน = ชั้นรายละเอียดซ้อนทับ (ตรงสีรถโปร่งใส ผู้เล่นเปลี่ยนสีได้) · LOD 0/1 ใช้สีพื้นจากแถบบนสุดของภาพ
 
-กะบะ `rc_canyon` สร้างด้วย `--bake`: LOD2 ทั้งคัน ~2,900 สามเหลี่ยม (escarabajo ~3,500) ไฟล์ใหญ่สุด ~2,000 จุด
+5. ทิศผิว (normal) ของเปลือกยืมจากโมเดลจริง แสงเงาเลยเนียนเหมือนผิวรถจริง และทุก LOD ใช้ชิ้นละเอียดชิ้นเดียวกัน
+   (เหมือน gtv98 · ปิดได้ด้วย `--same-lods 0`)
+
+**แม่แบบที่แนะนำ: gtv98** (`samples/gtv98.rar`) รถในเกมที่ `dooropen/default.xml` ว่าง ไม่มีชิ้นประตูที่ขยับ
+ใช้ poly ราวๆ ตัวถัง 1,740 จุด ทั้งคัน ~4,300 จุด / ~4,000 สามเหลี่ยม และใช้ไฟล์เดียวกันทุก LOD
+ไฟล์สเปคไม่ได้อยู่ในโฟลเดอร์รถ จึงต้องระบุ `--spec` เอง:
+
+```bash
+node tools/build-car.mjs model.glb path/to/car/gtv98 out/rc_mycar --name rc_mycar --bake --spec path/to/escarabajo.xml
+node tools/make-icons.mjs out/rc_mycar path/to/car/gtv98
+```
+
+กะบะ `rc_canyon` สร้างแบบนี้: LOD2 ทั้งคัน ~2,900 สามเหลี่ยม ไฟล์ใหญ่สุด ~1,940 จุด
 
 สิ่งที่ตัวแปลงทำ (โหมดปกติ / `--raw`):
 - แบ่งโมเดลตามตำแหน่ง/วัสดุเป็นชิ้น: `body`, `hood`, `roof`, `frontbumper`, `rearbumper`, `headlight`, `rearlight`, `skirt`

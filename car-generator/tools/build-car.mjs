@@ -18,7 +18,7 @@ import { MeshoptSimplifier } from 'meshoptimizer';
 import sharp from 'sharp';
 import { ShapeUtils, Vector2 } from 'three';
 import { parseOM, writeOM, matchTemplateSubmeshes } from '../js/om.js';
-import { unwrapParts, makeReference, bakeAtlas, materialAt } from './bake.mjs';
+import { unwrapParts, makeReference, bakeAtlas, materialAt, transferNormals } from './bake.mjs';
 import { buildHull } from './hull.mjs';
 import { readSpec, writeSpec, encodeSpec, decodeSpec } from '../js/carSpec.js';
 
@@ -37,6 +37,7 @@ const RAW = flag('--raw');
 // from the source model through the texture, so the meshes can be as light as the game's own cars.
 const BAKE = flag('--bake') && !RAW;
 const ATLAS = Number(opt('--atlas', '1024'));
+const SAME_LODS = BAKE && opt('--same-lods', '1') === '1';
 const KEEP_LOGOS = flag('--keep-logos') || RAW || BAKE;
 // --max-verts N: hard cap of vertices per .0m file (the game's own files stay under ~2,000).
 const MAX_VERTS = Math.min(65000, Number(opt('--max-verts', BAKE ? '2000' : '65000')));
@@ -172,7 +173,7 @@ if (skipped.size) console.log(`skipped materials: ${[...skipped.keys()].join(', 
 console.log(`source: ${tris.length} triangles`);
 // Bake reference: the whole source as loaded (badges, interior...); the low-poly car leaves the
 // small details out, they come back through the texture.
-const REF = BAKE ? tris.map((t) => ({ a: t.a, b: t.b, c: t.c, mat: t.mat, src: t.src, uv: t.uv })) : null;
+const REF = BAKE ? tris.map((t) => ({ a: t.a, b: t.b, c: t.c, mat: t.mat, src: t.src, uv: t.uv, vn: t.vn })) : null;
 if (BAKE) for (let i = tris.length - 1; i >= 0; i--) if (tris[i].detail) tris.splice(i, 1);
 
 // ---------------------------------------------------------------------------------------------
@@ -1009,7 +1010,7 @@ const REFM = BAKE ? makeReference(REF) : null;
 const hullSlots = {};
 if (BAKE) {
   const t0 = Date.now();
-  const hull = buildHull(REF, { voxel: Number(opt('--voxel', '0.02')) });
+  const hull = buildHull(REF, { voxel: Number(opt('--voxel', '0.015')) });
   console.log(`shell: ${hull.idx.length / 3} triangles (${hull.grid.join('×')} voxels, ${((Date.now() - t0) / 1000).toFixed(0)} s)`);
   // Everything is drawn as plain textured submeshes (kind 0): lamps, glass and trim are in the baked
   // texture; per-triangle lamp/glass kinds would follow the coarse triangles and look jagged.
@@ -1060,7 +1061,10 @@ const pending = []; // --bake: written after the atlas is baked
 function writeLods(dir, mesh, tplMesh, partsByLod) {
   if (BAKE && !pending.done) { pending.push([dir, mesh, tplMesh, partsByLod]); return; }
   for (let l = 0; l < 3; l++) {
-    const tpl = readOM(path.join(TPL, dir, `${tplMesh}_${l}.0m`));
+    // The template's file for this LOD; templates may name meshes they don't ship (gtv98's skirt).
+    let tf = path.join(TPL, dir, `${tplMesh}_${l}.0m`);
+    if (!fs.existsSync(tf)) tf = path.join(TPL, dir, fs.readdirSync(path.join(TPL, dir)).find((f) => f.endsWith(`_${l}.0m`)));
+    const tpl = readOM(tf);
     const bytes = writeOM(tpl, matchTemplateSubmeshes(tpl, partsByLod[l]));
     fs.writeFileSync(path.join(OUT, dir, `${mesh}_${l}.0m`), bytes);
   }
@@ -1130,7 +1134,10 @@ for (const dir of SLOT_DIRS) {
 // --bake: one atlas for every LOD 2 part (spoilers use the flat cells), then write all files.
 if (BAKE) {
   const lod2 = pending.filter(([dir]) => dir !== 'mainspoiler').flatMap(([, , , byLod]) => byLod[2]);
+  transferNormals(REFM, lod2);
   const ppm = unwrapParts(lod2, ATLAS, STRIP_CELL * 2);
+  // Like the game's newer cars (gtv98): every LOD uses the detailed mesh.
+  if (SAME_LODS) for (const job of pending) if (job[0] !== 'mainspoiler') job[3] = [job[3][2], job[3][2], job[3][2]];
   console.log(`atlas ${ATLAS}×${ATLAS}: ${ppm.toFixed(0)} px/m (${(1000 / ppm).toFixed(1)} mm per texel)`);
   const t0 = Date.now();
   const px = bakeAtlas(REFM, lod2, ATLAS);

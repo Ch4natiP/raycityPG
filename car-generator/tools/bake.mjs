@@ -325,3 +325,47 @@ export function materialAt(ref, p, n, reach = 0.12) {
   const hit = ref.bvh.raycastFirst(ray, THREE.DoubleSide);
   return hit && hit.distance <= reach * 2.5 ? ref.tris[hit.faceIndex].mat : null;
 }
+
+// Smooth shading from the source: every shell vertex takes the source surface's own normal under it
+// (interpolated vertex normals where the source has them), so low-poly panels shade like the real car.
+export function transferNormals(ref, parts, reach = 0.12) {
+  const ray = new THREE.Ray();
+  const bary = new THREE.Vector3();
+  const tri = new THREE.Triangle();
+  const A = new THREE.Vector3(); const B = new THREE.Vector3(); const C = new THREE.Vector3();
+  const cache = new Map();
+  for (const part of parts) {
+    const P = part.positions; const N = part.normals;
+    for (let v = 0; v < P.length / 3; v++) {
+      const p = [P[v * 3], P[v * 3 + 1], P[v * 3 + 2]];
+      const n = [N[v * 3], N[v * 3 + 1], N[v * 3 + 2]];
+      const key = `${p.map((x) => x.toFixed(4)).join(',')}|${n.map((x) => x.toFixed(1)).join(',')}`;
+      let out = cache.get(key);
+      if (!out) {
+        out = n;
+        ray.origin.set(p[0] + n[0] * reach, p[1] + n[1] * reach, p[2] + n[2] * reach);
+        ray.direction.set(-n[0], -n[1], -n[2]);
+        const hits = ref.bvh.raycast(ray, THREE.DoubleSide).filter((h) => h.distance <= reach * 2.5).sort((a, b) => a.distance - b.distance);
+        for (const h of hits) {
+          const st = ref.tris[h.faceIndex];
+          if (st.mat === 'Glass_Gray' && hits.length > 1) { /* windows: still a fine surface normal */ }
+          let hn;
+          if (st.vn) {
+            A.fromArray(st.a); B.fromArray(st.b); C.fromArray(st.c);
+            tri.set(A, B, C);
+            tri.getBarycoord(h.point, bary);
+            hn = norm([0, 1, 2].map((k) => st.vn[0][k] * bary.x + st.vn[1][k] * bary.y + st.vn[2][k] * bary.z));
+          } else {
+            hn = norm(cross(sub(st.b, st.a), sub(st.c, st.a)));
+          }
+          if (dot(hn, n) < 0) hn = hn.map((x) => -x);
+          // Only where the source surface roughly agrees with the shell (not across deep recesses).
+          if (dot(hn, n) > 0.6) out = norm([hn[0] * 0.8 + n[0] * 0.2, hn[1] * 0.8 + n[1] * 0.2, hn[2] * 0.8 + n[2] * 0.2]);
+          break;
+        }
+        cache.set(key, out);
+      }
+      N[v * 3] = out[0]; N[v * 3 + 1] = out[1]; N[v * 3 + 2] = out[2];
+    }
+  }
+}

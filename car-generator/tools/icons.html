@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>RayCity part icons</title></head>
+<body style="margin:0;background:#222">
+<!-- Renders 64×64 shop icons for a RayCity car folder. Driven by tools/make-icons.mjs:
+     window.renderIcon(arrayBuffer) → PNG data URL of the part, cyan like the game's icons. -->
+<script type="importmap">
+  { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { parseOM, omToObject } from '../js/om.js';
+
+const size = 128;
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setSize(size, size);
+renderer.setClearColor(0x000000, 0);
+const scene = new THREE.Scene();
+scene.add(new THREE.HemisphereLight('#ffffff', '#335555', 1.6));
+const sun = new THREE.DirectionalLight('#ffffff', 1.6);
+sun.position.set(2, 3, 2);
+scene.add(sun);
+const mat = new THREE.MeshStandardMaterial({ color: '#7fd0d0', roughness: 0.45, metalness: 0.1, side: THREE.DoubleSide });
+const camera = new THREE.PerspectiveCamera(30, 1, 0.01, 100);
+const out = document.createElement('canvas');
+out.width = out.height = 64;
+
+window.renderIcon = (bytes) => {
+  const obj = omToObject(parseOM(new Uint8Array(bytes).buffer), [mat]);
+  scene.add(obj);
+  const box = new THREE.Box3().setFromObject(obj);
+  const c = box.getCenter(new THREE.Vector3());
+  const r = box.getSize(new THREE.Vector3()).length() / 2;
+  // Three-quarter view from the front-left, like the original icons.
+  camera.position.copy(c).add(new THREE.Vector3(1.2, 0.8, 1.6).normalize().multiplyScalar(r / Math.sin(Math.PI / 12)));
+  camera.lookAt(c);
+  renderer.render(scene, camera);
+  scene.remove(obj);
+  obj.traverse((o) => o.geometry && o.geometry.dispose());
+  const g = out.getContext('2d');
+  g.clearRect(0, 0, 64, 64);
+  g.shadowColor = 'rgba(255,255,255,0.8)';
+  g.shadowBlur = 4;
+  g.drawImage(renderer.domElement, 0, 0, 64, 64);
+  return out.toDataURL('image/png');
+};
+window.ready = true;
+</script>
+</body>
+</html>

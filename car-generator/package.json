@@ -3,10 +3,18 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "build-car": "node tools/build-car.mjs",
+    "icons": "node tools/make-icons.mjs"
   },
   "devDependencies": {
     "esbuild": "0.24.0",
-    "three": "0.170.0"
+    "three": "0.170.0",
+    "@gltf-transform/core": "4.1.1",
+    "@gltf-transform/extensions": "4.1.1",
+    "draco3dgltf": "1.5.7",
+    "meshoptimizer": "0.22.0",
+    "sharp": "0.33.5",
+    "playwright-core": "1.64.0"
   }
 }

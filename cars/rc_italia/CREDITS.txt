@@ -1,0 +1,12 @@
+rc_italia — RayCity car package
+
+3D model: "Ferrari 458 Italia" by vicent091036
+https://sketchfab.com/models/57bf6cc56931426e87494f554df1dab6
+License: Creative Commons Attribution (CC BY 4.0) — credit the author when you use or share this car.
+Changes: converted to RayCity .0m format, split into tuning parts, simplified to 3 LODs,
+wheels/interior details removed, manufacturer badges removed, colors baked into palette textures.
+
+"Ferrari" and "458" are trademarks of Ferrari S.p.A. This package uses a neutral name (rc_italia)
+and has the badges removed; the body shape is still recognisable as that car.
+
+Built with car-generator/tools/build-car.mjs using the escarabajo car as the layout template.

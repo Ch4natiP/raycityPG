@@ -7,6 +7,7 @@ import { buildCar, disposeObject } from './carBuilder.js';
 import { parseOM, omToObject, writeOM, objectToParts, mergePartsByName } from './om.js';
 import { SPEC_TEMPLATE, SPEC_FIELDS, readSpec, writeSpec, encodeSpec, decodeSpec, suggestSpec } from './carSpec.js';
 import { makeZip } from './zip.js';
+import { IDENTITY, slotOfPath, bboxOf, editFile, editMeshXml, renamePath, countsOf, ready as editReady } from './carEdit.js';
 import { SCHEMA, PRESETS, presetParams, randomParams } from './params.js';
 
 const STORAGE_KEY = 'raycity-car-generator:params';
@@ -491,7 +492,14 @@ async function openCarFolder(entries) {
   f.specRel = f.files.has(`${f.name}.xml`) ? `${f.name}.xml`
     : [...f.files.keys()].find((r) => !r.includes('/') && /\.xml$/i.test(r) && r.toLowerCase() !== 'mesh.xml');
   if (f.specRel) loadSpecText(decodeSpec(await f.files.get(f.specRel).arrayBuffer()), f.name);
+  f.edits = new Map();
+  f.car = structuredClone(IDENTITY);
+  f.newName = f.name;
+  f.selected = '';
+  f.explode = false;
+  await computePivots(f);
   buildPartPickers();
+  buildEditPanel();
   await assembleFolder();
 }
 
@@ -631,7 +639,10 @@ async function assembleFolder() {
     const lods = [folder.lod, 2, 1, 0].filter((l, i, a) => a.indexOf(l) === i);
     const rel = lods.map((l) => `${prefix}${v.mesh}_${l}.0m`).find((r) => folder.files.has(r));
     try {
-      const om = parseOM(await folder.files.get(rel).arrayBuffer());
+      const raw = new Uint8Array(await folder.files.get(rel).arrayBuffer());
+      // The same edit the download writes (see carEdit.js), so the preview is the new car.
+      const edited = editFile(raw, folder.edits.get(slot.dir), folder.car, folder.pivots.get(slot.dir) || [0, 0, 0], folder.carPivot);
+      const om = parseOM((edited || raw).buffer.slice(0));
       // Paint mask recolored with the chosen paint, detail layer on top (see composeTexture).
       const findTex = (t) => t && (folder.files.get(`${prefix}${t}.png`)
         || [...folder.files].find(([r]) => r.split('/').pop().toLowerCase() === `${t}.png`.toLowerCase())?.[1]);
@@ -658,6 +669,7 @@ async function assembleFolder() {
       colorIndex += om.submeshes.length;
       const obj = omToObject(om, partMats);
       obj.name = rel.replace(/\//g, '_').replace(/\.0m$/i, '');
+      obj.userData.slot = slot.dir;
       group.add(obj);
       if (!slot.dir) template = { om, name: rel.split('/').pop() };
       notes.push(`✔ ${rel}: ${om.positions.length / 3} จุด`);
@@ -666,8 +678,168 @@ async function assembleFolder() {
     }
   }
   group.userData.files = `โฟลเดอร์ ${folder.name}`;
+  // Exploded view: every part pushed away from the car's centre; the selected part gets a box.
+  const carBox = new THREE.Box3().setFromObject(group);
+  const carCenter = carBox.getCenter(new THREE.Vector3());
+  for (const obj of [...group.children]) {
+    if (folder.explode && obj.userData.slot) {
+      const c = new THREE.Box3().setFromObject(obj).getCenter(new THREE.Vector3()).sub(carCenter);
+      c.y = Math.max(0, c.y);
+      obj.position.add(c.normalize().multiplyScalar(0.7));
+    }
+    if (obj.userData.slot === folder.selected && folder.selected !== null) {
+      const helper = new THREE.BoxHelper(obj, '#ffb020');
+      helper.userData.helper = true;
+      group.add(helper);
+    }
+  }
   showImported(group);
+  updateEditStats();
   setOmStatus(`${notes.join('\n')}\nแม่แบบสำหรับส่งออก: ${template ? template.name : '-'}`);
+}
+
+// --- New car from this folder ------------------------------------------------------------------
+// Pivots: each part scales around the centre of its stock LOD 2 mesh; the whole car around the body's
+// centre on the ground (x 0, z 0).
+async function computePivots(f) {
+  f.pivots = new Map();
+  for (const slot of f.slots) {
+    const v = slot.variants.find((x) => x.name === 'default') || slot.variants[0];
+    const prefix = slot.dir ? `${slot.dir}/` : '';
+    const rel = [2, 1, 0].map((l) => `${prefix}${v.mesh}_${l}.0m`).find((r) => f.files.has(r));
+    if (!rel) continue;
+    try { f.pivots.set(slot.dir, bboxOf(parseOM(await f.files.get(rel).arrayBuffer()).positions).center); } catch { /* unreadable */ }
+  }
+  const body = f.pivots.get('') || [0, 0, 0];
+  f.carPivot = [0, body[1], 0];
+  await editReady;
+}
+
+const editOf = (dir) => {
+  if (!folder.edits.has(dir)) folder.edits.set(dir, structuredClone(IDENTITY));
+  return folder.edits.get(dir);
+};
+
+function sliderRow(label, min, max, step, value, onInput, fmt = (v) => v.toFixed(2)) {
+  const row = document.createElement('label');
+  row.className = 'row';
+  const lbl = document.createElement('span');
+  lbl.className = 'lbl';
+  lbl.textContent = label;
+  const out = document.createElement('output');
+  out.textContent = fmt(value);
+  const input = document.createElement('input');
+  input.type = 'range';
+  input.min = min; input.max = max; input.step = step; input.value = value;
+  input.addEventListener('input', () => { out.textContent = fmt(Number(input.value)); onInput(Number(input.value)); });
+  row.append(lbl, out, input);
+  return row;
+}
+
+function buildEditPanel() {
+  const box = document.getElementById('car-edit');
+  box.hidden = !folder;
+  box.innerHTML = '';
+  if (!folder) return;
+  const h = document.createElement('h2');
+  h.textContent = 'สร้างรถคันใหม่จากโฟลเดอร์นี้';
+  box.appendChild(h);
+  const hint = document.createElement('p');
+  hint.className = 'hint';
+  hint.textContent = 'ไฟล์ทุกไฟล์เขียนจากไฟล์เดิมของรถคันนี้ ชิ้นที่ไม่แก้จะเหมือนเดิมทุกไบต์ · ยืดความยาวรถแล้วล้อในเกมอาจไม่ตรงซุ้มล้อ';
+  box.appendChild(hint);
+  // New name
+  const nameRow = document.createElement('label');
+  nameRow.className = 'row row-select';
+  const nl = document.createElement('span');
+  nl.className = 'lbl';
+  nl.textContent = 'ชื่อรถใหม่';
+  const ni = document.createElement('input');
+  ni.type = 'text';
+  ni.value = folder.newName;
+  ni.addEventListener('change', () => { folder.newName = ni.value.trim().replace(/[^a-z0-9_]/gi, '_').toLowerCase() || folder.name; ni.value = folder.newName; });
+  nameRow.append(nl, ni);
+  box.appendChild(nameRow);
+  // Whole car
+  const car = folder.car;
+  const sub = (t) => { const e = document.createElement('div'); e.className = 'edit-sub'; e.textContent = t; box.appendChild(e); };
+  sub('ทั้งคัน');
+  box.appendChild(sliderRow('กว้าง ×', 0.7, 1.4, 0.01, car.scale[0], (v) => { car.scale[0] = v; queueReassemble(); }));
+  box.appendChild(sliderRow('ยาว ×', 0.7, 1.4, 0.01, car.scale[1], (v) => { car.scale[1] = v; queueReassemble(); }));
+  box.appendChild(sliderRow('สูง ×', 0.7, 1.4, 0.01, car.scale[2], (v) => { car.scale[2] = v; queueReassemble(); }));
+  box.appendChild(sliderRow('เก็บ poly ทั้งคัน %', 5, 100, 1, car.keep * 100, (v) => { car.keep = v / 100; queueReassemble(); }, (v) => `${v.toFixed(0)}%`));
+  // One part
+  sub('ทีละชิ้น');
+  const opts = folder.slots.map((sl) => [sl.dir, sl.dir || 'body (ตัวถัง)']);
+  box.appendChild(pickerRow('ชิ้นที่แก้', opts, folder.selected, (v) => { folder.selected = v; buildEditPanel(); queueReassemble(); }));
+  const e = editOf(folder.selected);
+  box.appendChild(sliderRow('กว้าง ×', 0.5, 1.5, 0.01, e.scale[0], (v) => { e.scale[0] = v; queueReassemble(); }));
+  box.appendChild(sliderRow('ยาว ×', 0.5, 1.5, 0.01, e.scale[1], (v) => { e.scale[1] = v; queueReassemble(); }));
+  box.appendChild(sliderRow('สูง ×', 0.5, 1.5, 0.01, e.scale[2], (v) => { e.scale[2] = v; queueReassemble(); }));
+  box.appendChild(sliderRow('เลื่อน ซ้าย/ขวา (ม.)', -0.5, 0.5, 0.005, e.move[0], (v) => { e.move[0] = v; queueReassemble(); }));
+  box.appendChild(sliderRow('เลื่อน หน้า/หลัง (ม.)', -0.5, 0.5, 0.005, -e.move[1], (v) => { e.move[1] = -v; queueReassemble(); }));
+  box.appendChild(sliderRow('เลื่อน ขึ้น/ลง (ม.)', -0.3, 0.3, 0.005, e.move[2], (v) => { e.move[2] = v; queueReassemble(); }));
+  box.appendChild(sliderRow('เก็บ poly %', 5, 100, 1, e.keep * 100, (v) => { e.keep = v / 100; queueReassemble(); }, (v) => `${v.toFixed(0)}%`));
+  const btns = document.createElement('div');
+  btns.className = 'btns';
+  const mk = (text, fn, cls) => { const b = document.createElement('button'); b.textContent = text; if (cls) b.className = cls; b.addEventListener('click', fn); btns.appendChild(b); return b; };
+  mk('รีเซ็ตชิ้นนี้', () => { folder.edits.delete(folder.selected); buildEditPanel(); queueReassemble(); });
+  mk('รีเซ็ตทั้งหมด', () => { folder.edits.clear(); folder.car = structuredClone(IDENTITY); buildEditPanel(); queueReassemble(); });
+  mk(folder.explode ? 'รวมชิ้น' : 'แยกชิ้นให้ดู', () => { folder.explode = !folder.explode; buildEditPanel(); queueReassemble(); });
+  mk('⬇ ดาวน์โหลดรถคันใหม่ (.zip)', downloadNewCar, 'accent');
+  box.appendChild(btns);
+  const stats = document.createElement('pre');
+  stats.id = 'edit-stats';
+  stats.className = 'hint';
+  box.appendChild(stats);
+}
+
+// Vertex/triangle counts of every part's stock LOD 2 after the edits (the game's own cars stay
+// under ~2,000 vertices per file).
+let statsTimer = 0;
+function updateEditStats() {
+  clearTimeout(statsTimer);
+  statsTimer = setTimeout(async () => {
+    const el = document.getElementById('edit-stats');
+    if (!el || !folder?.edits) return;
+    const lines = ['ชิ้น            จุด (LOD2)  สามเหลี่ยม'];
+    for (const slot of folder.slots) {
+      const v = slot.variants.find((x) => x.name === folder.choice.get(slot.dir)) || slot.variants[0];
+      const rel = `${slot.dir ? `${slot.dir}/` : ''}${v.mesh}_2.0m`;
+      if (!folder.files.has(rel)) continue;
+      const raw = new Uint8Array(await folder.files.get(rel).arrayBuffer());
+      const out = editFile(raw, folder.edits.get(slot.dir), folder.car, folder.pivots.get(slot.dir) || [0, 0, 0], folder.carPivot) || raw;
+      const c = countsOf(out);
+      lines.push(`${(slot.dir || 'body').padEnd(15)} ${String(c.verts).padStart(6)}${c.verts > 2000 ? ' ⚠' : '  '}   ${String(c.tris).padStart(6)}`);
+    }
+    lines.push('⚠ = เกิน 2,000 จุด (รถในเกมไม่เกินนี้)');
+    el.textContent = lines.join('\n');
+  }, 200);
+}
+
+// The new car: every file of the folder, edited and renamed, as <new name>.zip.
+async function downloadNewCar() {
+  const oldName = folder.name;
+  const newName = folder.newName || oldName;
+  const files = [];
+  for (const [rel, file] of [...folder.files].sort((a, b) => a[0].localeCompare(b[0]))) {
+    let data = new Uint8Array(await file.arrayBuffer());
+    const lower = rel.toLowerCase();
+    if (lower.endsWith('.0m')) {
+      const dir = slotOfPath(rel);
+      data = editFile(data, folder.edits.get(dir), folder.car, folder.pivots.get(dir) || [0, 0, 0], folder.carPivot) || data;
+    } else if (lower === 'mesh.xml') {
+      const t = editMeshXml(decodeSpec(await file.arrayBuffer()), folder.car, folder.carPivot);
+      if (t) data = encodeSpec(t);
+    } else if (lower.endsWith('list.xml') && newName !== oldName) {
+      data = encodeSpec(decodeSpec(await file.arrayBuffer()).split(oldName).join(newName));
+    } else if (rel === folder.specRel) {
+      data = encodeSpec(writeSpec(spec.text, spec.values));
+    }
+    files.push({ path: `${newName}/${renamePath(rel, oldName, newName)}`, data: new Uint8Array(data) });
+  }
+  download(await makeZip(files), `${newName}.zip`);
+  setOmStatus(`ดาวน์โหลด ${newName}.zip: ${files.length} ไฟล์ (สร้างจาก ${oldName})`);
 }
 
 // One-click download of everything for the car on screen: the opened / embedded folder with all

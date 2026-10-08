@@ -1245,21 +1245,22 @@ for (const f of fs.readdirSync(path.join(TPL, 'dooropen'))) fs.copyFileSync(path
 // mesh.xml: the template's 14-vertex collision hull, stretched to this car's bounds.
 {
   const text = readXml(path.join(TPL, 'mesh.xml'));
-  const vs = [...text.matchAll(/pos="([^"]+)"/g)].map((m) => m[1].split(/\s+/).map(Number));
+  // (escarabajo writes pos="..", gtv98 pos='..')
+  const vs = [...text.matchAll(/pos=(["'])([^"']+)\1/g)].map((m) => m[2].trim().split(/\s+/).map(Number));
   const mn = [0, 1, 2].map((k) => Math.min(...vs.map((v) => v[k])));
   const mx = [0, 1, 2].map((k) => Math.max(...vs.map((v) => v[k])));
   const body = slots.body.concat(slots.frontbumper || [], slots.rearbumper || []);
   const bmn = [0, 1, 2].map((k) => ext(body, k, Math.min));
   const bmx = [0, 1, 2].map((k) => ext(body, k, Math.max));
   // The game hull sits ~0.2 m above the body's bottom; keep that gap.
-  const out = text.replace(/pos="([^"]+)"/g, (_, s) => {
+  const out = text.replace(/pos=(["'])([^"']+)\1/g, (_, q, s) => {
     const v = s.split(/\s+/).map(Number);
     const r = v.map((c, k) => {
       const f = (c - mn[k]) / (mx[k] - mn[k] || 1);
       const lo = k === 2 ? bmn[2] + 0.2 : bmn[k];
       return (lo + f * (bmx[k] - lo)).toFixed(10);
     });
-    return `pos="${r.join(' ')}"`;
+    return `pos=${q}${r.join(' ')}${q}`;
   });
   fs.writeFileSync(path.join(OUT, 'mesh.xml'), xmlUtf16(out));
 }

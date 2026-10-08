@@ -9,7 +9,8 @@
     {
       "imports": {
         "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+        "meshoptimizer": "./node_modules/meshoptimizer/index.module.js"
       }
     }
   </script>
@@ -49,6 +50,7 @@
       <p class="hint">เลือกโฟลเดอร์รถ (เช่น car/escarabajo) หรือลากโฟลเดอร์มาวางบนจอ 3D ได้เลย
         โปรแกรมจะประกอบตัวถัง + ชิ้นส่วนในโฟลเดอร์ย่อยให้ แล้วเลือกเปลี่ยนชิ้นได้ด้านล่าง</p>
       <div id="om-parts"></div>
+      <div id="car-edit" hidden></div>
       <pre id="om-status" class="hint"></pre>
     </section>
     <section class="block">

@@ -129,3 +129,8 @@ details[open] summary { border-bottom: 1px solid var(--line); }
 #drop-hint[hidden] { display: none; }
 #spec-fields .row { grid-template-columns: 1fr 150px; grid-template-areas: "lbl in"; }
 #spec-fields input { grid-area: in; width: 100%; }
+
+#car-edit { margin-top: 12px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px; }
+#car-edit .edit-sub { margin: 10px 0 4px; font-size: 12px; font-weight: 600; color: var(--accent-2); }
+#car-edit input[type="text"] { width: 100%; }
+#edit-stats { white-space: pre; font-family: ui-monospace, monospace; font-size: 11px; }

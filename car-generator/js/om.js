@@ -6,7 +6,8 @@
 //                (the last one is 25 bytes, the 3 bytes in between are copied from the template).
 //                Record fields: +1 u16 vertexCount, +3 u16 indexCount,
 //                +5/+9/+17 [u8 1, u8 pad, u16 vertexStart], +21 [u8 1, u8 pad, u16 indexStart],
-//                +13 unknown (kept from the template).
+//                +13 unknown (kept from the template). The 3 bytes before each record are
+//                submesh flags (flags[0] = render kind: 0 paint, 1 glass, 2 headlight, 3 taillight, 4 indicator).
 //   geometry     bbox min/max (6 × f32)
 //                u16 n, n × float3 position
 //                u16 n, n × float3 normal
@@ -56,7 +57,11 @@ function findSubmeshTable(dv, geomStart, vertexCount, indexCount) {
       const r = k + 6 + REC_STRIDE * j;
       const v = dv.getUint16(r + 1, true);
       const i = dv.getUint16(r + 3, true);
-      recs.push({ vertexCount: v, indexCount: i, vertexStart: sv, indexStart: si });
+      // The 3 bytes before each record are per-submesh flags. flags[0] is the render kind:
+      // 0 paint/texture, 1 glass, 2 headlight lens, 3 tail/brake light, 4 indicator/reverse light.
+      // flags[1..2] are set on moving pieces (e.g. hood 00 01 02) — meaning not decoded yet.
+      const flags = Array.from(new Uint8Array(dv.buffer, dv.byteOffset + r - 3, 3));
+      recs.push({ vertexCount: v, indexCount: i, vertexStart: sv, indexStart: si, flags });
       sv += v;
       si += i;
     }
@@ -93,6 +98,9 @@ export function parseOM(buffer) {
 }
 
 // Builds a THREE.Group (Y-up) with one mesh per submesh.
+export const SUBMESH_KIND = { PAINT: 0, GLASS: 1, HEADLIGHT: 2, TAILLIGHT: 3, INDICATOR: 4 };
+
+// materials: array (cycled per submesh) or function(kind, index) → material.
 export function omToObject(om, materials) {
   const group = new THREE.Group();
   om.submeshes.forEach((s, k) => {
@@ -111,7 +119,10 @@ export function omToObject(om, materials) {
       g.setAttribute('uv', new THREE.BufferAttribute(om.uvs.slice(vs * 2, (vs + s.vertexCount) * 2), 2));
     }
     g.setIndex(new THREE.BufferAttribute(om.indices.slice(s.indexStart, s.indexStart + s.indexCount), 1));
-    const mesh = new THREE.Mesh(g, materials[k % materials.length]);
+    const kind = s.flags ? s.flags[0] : 0;
+    const mat = typeof materials === 'function' ? materials(kind, k) : materials[k % materials.length];
+    const mesh = new THREE.Mesh(g, mat);
+    mesh.userData.kind = kind;
     mesh.name = `Submesh_${k}`;
     mesh.castShadow = true;
     group.add(mesh);
@@ -122,7 +133,7 @@ export function omToObject(om, materials) {
 /**
  * Writes a .0m file. The header and record bytes that are not understood yet are copied
  * from `template` (a parsed .0m), only counts, offsets and geometry are replaced.
- * parts: [{ positions, normals, uvs, indices }] in RayCity space (Z up).
+ * parts: [{ positions, normals, uvs, indices, kind? | flags? }] in RayCity space (Z up).
  */
 export function writeOM(template, parts) {
   if (template.tableOffset < 0) throw new Error('ไฟล์แม่แบบไม่มีตารางชิ้นส่วนที่อ่านได้');
@@ -151,6 +162,9 @@ export function writeOM(template, parts) {
   let is = 0;
   parts.forEach((part, j) => {
     if (j > 0) out.set(tplCount > 1 ? tplGap(Math.min(j, tplCount - 1)) : new Uint8Array(3), p - 3);
+    // Submesh flags: given by the part (kind = glass/light...) — never inherit the template's,
+    // which could turn a random piece into glass or a moving hood.
+    out.set(part.flags || [part.kind || 0, 0, 0], p - 3);
     const rec = tplRec(Math.min(j, tplCount - 1));
     out.set(rec, p);
     const v = part.positions.length / 3;

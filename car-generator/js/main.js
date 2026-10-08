@@ -478,9 +478,10 @@ async function openCarFolder(entries) {
   const f = await readFolder(entries);
   if (!f.slots.length) { alert('ไม่พบไฟล์ .0m ในโฟลเดอร์นี้'); return; }
   f.lod = 2;
+  // Stock car: 'default' variant of each part; slots without one (e.g. mainspoiler) stay empty.
   f.choice = new Map(f.slots.map((slot) => {
-    const def = slot.variants.find((v) => v.name === 'default') || slot.variants[0];
-    return [slot.dir, def.name];
+    const def = slot.variants.find((v) => v.name === 'default') || (slot.dir ? null : slot.variants[0]);
+    return [slot.dir, def ? def.name : ''];
   }));
   folder = f;
   const specFile = f.files.get(`${f.name}.xml`)
@@ -517,6 +518,32 @@ function buildPartPickers() {
   }
 }
 
+// Submesh kinds from the .0m flags: glass, lamp lenses and lights drawn like in game.
+const KIND_MATS = {
+  1: new THREE.MeshStandardMaterial({ name: 'RC_Glass', color: '#11161c', roughness: 0.05, metalness: 0.6, transparent: true, opacity: 0.72, depthWrite: false, side: THREE.DoubleSide }),
+  2: new THREE.MeshStandardMaterial({ name: 'RC_Headlight', color: '#dfe6ee', emissive: '#fff6e0', emissiveIntensity: 0.6, roughness: 0.05, transparent: true, opacity: 0.85, side: THREE.DoubleSide }),
+  3: new THREE.MeshStandardMaterial({ name: 'RC_Taillight', color: '#8a0d0d', emissive: '#ff2020', emissiveIntensity: 0.8, roughness: 0.2, side: THREE.DoubleSide }),
+  4: new THREE.MeshStandardMaterial({ name: 'RC_Indicator', color: '#c9862a', emissive: '#ffb347', emissiveIntensity: 0.4, roughness: 0.2, side: THREE.DoubleSide }),
+};
+
+// True when most vertices of submesh k sample opaque pixels of the texture.
+function opaqueAt(tex, om, k) {
+  const img = tex.image;
+  if (!img.__px) img.__px = img.getContext('2d').getImageData(0, 0, img.width, img.height).data;
+  const s = om.submeshes[k];
+  let hit = 0;
+  const step = Math.max(1, Math.floor(s.vertexCount / 64));
+  let n = 0;
+  for (let i = s.vertexStart; i < s.vertexStart + s.vertexCount; i += step, n++) {
+    const u = om.uvs[i * 2] % 1;
+    const v = om.uvs[i * 2 + 1] % 1;
+    const x = Math.min(img.width - 1, Math.floor((u < 0 ? u + 1 : u) * img.width));
+    const y = Math.min(img.height - 1, Math.floor((v < 0 ? v + 1 : v) * img.height));
+    if (img.__px[(y * img.width + x) * 4 + 3] > 128) hit++;
+  }
+  return hit > n * 0.6;
+}
+
 const textureCache = new Map();
 async function loadTexture(file, recolor) {
   const key = `${file.name}:${file.size}:${JSON.stringify(recolor)}`;
@@ -527,21 +554,7 @@ async function loadTexture(file, recolor) {
   c.height = bmp.height;
   const g = c.getContext('2d');
   g.drawImage(bmp, 0, 0);
-  if (recolor && recolor.decal) {
-    // Part textures: alpha is not transparency but a paint mask. Alpha 0 shows the car paint,
-    // alpha 255 shows the texture (grille, lamp, carbon...), like the game.
-    const img = g.getImageData(0, 0, c.width, c.height);
-    const pc = new THREE.Color(recolor.decal);
-    const d = img.data;
-    for (let i = 0; i < d.length; i += 4) {
-      const a = d[i + 3] / 255;
-      d[i] = d[i] * a + 255 * pc.r * (1 - a);
-      d[i + 1] = d[i + 1] * a + 255 * pc.g * (1 - a);
-      d[i + 2] = d[i + 2] * a + 255 * pc.b * (1 - a);
-      d[i + 3] = 255;
-    }
-    g.putImageData(img, 0, 0);
-  } else if (recolor) {
+  if (recolor) {
     // Body textures are paint masks: red = main paint, green/blue = second paint areas (e.g. the hood).
     const img = g.getImageData(0, 0, c.width, c.height);
     const pc = new THREE.Color(recolor.paint);
@@ -581,28 +594,29 @@ async function assembleFolder() {
     const rel = lods.map((l) => `${prefix}${v.mesh}_${l}.0m`).find((r) => folder.files.has(r));
     try {
       const om = parseOM(await folder.files.get(rel).arrayBuffer());
-      // Part texture: in its folder, anywhere in the car folder, or else the body's paint mask
-      // (parts with tex='' share the body texture).
+      // Paint comes from the body mask: part UVs point into the same 512×512 atlas (red = paint,
+      // green/blue = second paint areas). A part's own texture (tex in list.xml) is used for the
+      // submeshes whose UVs land on its opaque pixels (e.g. our light palettes); original cars'
+      // part textures carry lamp/grille art whose mapping isn't decoded yet, so they fall back to paint.
       const findTex = (t) => t && (folder.files.get(`${prefix}${t}.png`)
         || [...folder.files].find(([r]) => r.split('/').pop().toLowerCase() === `${t}.png`.toLowerCase())?.[1]);
-      let texFile = findTex(v.tex);
-      let isMask = !slot.dir;
-      if (!texFile) { texFile = findTex(bodyTexName()); isMask = true; }
-      let partMats;
-      if (texFile) {
-        // Green in the mask is the car's second paint area (e.g. the hood): same as the paint unless two-tone.
-        const second = params.twoTone ? params.secondColor : params.paintColor;
-        // Blue covers the hood in the original masks (glass uses red too): treat it like green.
-        const recolor = isMask ? { paint: params.paintColor, trim: second, glass: second }
-          : { decal: params.paintColor };
-        const map = await loadTexture(texFile, recolor);
-        partMats = [new THREE.MeshStandardMaterial({
-          name: `RC_${texFile.name.replace(/\.png$/i, '')}`, map, roughness: 0.4, metalness: isMask ? 0.5 : 0.2,
-          side: THREE.DoubleSide,
-        })];
-      } else {
-        partMats = om.submeshes.map(() => omColorMats[colorIndex++ % omColorMats.length]);
-      }
+      const second = params.twoTone ? params.secondColor : params.paintColor;
+      const bodyFile = findTex(bodyTexName());
+      const bodyMat = bodyFile && new THREE.MeshStandardMaterial({
+        name: 'RC_Body', roughness: 0.35, metalness: 0.5, side: THREE.DoubleSide,
+        map: await loadTexture(bodyFile, { paint: params.paintColor, trim: second, glass: second }),
+      });
+      const partFile = slot.dir ? findTex(v.tex) : null;
+      const partTex = partFile && await loadTexture(partFile, null);
+      const partMat = partTex && new THREE.MeshStandardMaterial({
+        name: `RC_${partFile.name.replace(/\.png$/i, '')}`, map: partTex, roughness: 0.4, metalness: 0.2, side: THREE.DoubleSide,
+      });
+      const partMats = (kind, k) => {
+        if (KIND_MATS[kind]) return KIND_MATS[kind];
+        if (partMat && opaqueAt(partTex, om, k)) return partMat;
+        return bodyMat || omColorMats[(colorIndex + k) % omColorMats.length];
+      };
+      colorIndex += om.submeshes.length;
       const obj = omToObject(om, partMats);
       obj.name = rel.replace(/\//g, '_').replace(/\.0m$/i, '');
       group.add(obj);

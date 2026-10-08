@@ -464,7 +464,9 @@ function buildSlotOnce(list, budget, pal, lod, attempt) {
     if (idx.length < 3) continue;
     const g = withNormals(pos, idx);
     const [u, v] = pal.uv(pal.colors[mat] ? mat : pal.keys[0]);
-    parts.push({ name: mat, ...g, uvs: g.positions.flatMap((_, i) => (i % 3 === 0 ? [u, v] : [])) });
+    // Submesh kind (flags[0]) tells the game to draw glass and lamps as such.
+    const kind = /^Glass/i.test(mat) ? 1 : /projector/i.test(mat) ? 2 : /taillight/i.test(mat) ? 3 : /led/i.test(mat) ? 4 : 0;
+    parts.push({ name: mat, kind, ...g, uvs: g.positions.flatMap((_, i) => (i % 3 === 0 ? [u, v] : [])) });
   }
   return parts;
 }

@@ -4,6 +4,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { OBJExporter } from 'three/addons/exporters/OBJExporter.js';
 import { buildCar, disposeObject } from './carBuilder.js';
+import { parseOM, omToObject, writeOM, objectToParts, mergePartsByName } from './om.js';
 import { SCHEMA, PRESETS, presetParams, randomParams } from './params.js';
 
 const STORAGE_KEY = 'raycity-car-generator:params';
@@ -109,10 +110,14 @@ function rebuild() {
   if (car) { rig.remove(car); disposeObject(car); }
   applyMaterials(params);
   car = buildCar(params, mats);
+  car.visible = !imported;
   rig.add(car);
   updateStats();
   save();
 }
+
+// The model on screen: the generated car, or RayCity files opened by the user.
+const viewed = () => imported || car;
 
 let rebuildQueued = false;
 function queueRebuild() {
@@ -124,19 +129,20 @@ function queueRebuild() {
 function updateStats() {
   let tris = 0;
   let meshes = 0;
-  car.traverse((o) => {
+  const root = viewed();
+  root.traverse((o) => {
     if (!o.isMesh) return;
     meshes++;
     const g = o.geometry;
     tris += (g.index ? g.index.count : g.attributes.position.count) / 3;
   });
-  const box = new THREE.Box3().setFromObject(car);
+  const box = new THREE.Box3().setFromObject(root);
   const s = box.getSize(new THREE.Vector3());
-  const u = car.userData;
+  const u = root.userData;
   document.getElementById('stats').innerHTML =
     `<b>${Math.round(tris).toLocaleString()}</b> tris · ${meshes} meshes<br>` +
     `${s.x.toFixed(2)} × ${s.y.toFixed(2)} × ${s.z.toFixed(2)} m (W×H×L)<br>` +
-    `ฐานล้อ ${u.wheelbase.toFixed(2)} m · ช่วงล้อ ${u.track.toFixed(2)} m`;
+    (imported ? `ไฟล์ RayCity: ${u.files}` : `ฐานล้อ ${u.wheelbase.toFixed(2)} m · ช่วงล้อ ${u.track.toFixed(2)} m`);
 }
 
 // --- UI ----------------------------------------------------------------------
@@ -242,7 +248,7 @@ function download(blob, filename) {
 
 function exportRoot() {
   // Export the car without the drive-mode transform.
-  const root = car.clone();
+  const root = viewed().clone();
   root.position.set(0, 0, 0);
   root.rotation.set(0, 0, 0);
   root.traverse((o) => {
@@ -266,8 +272,9 @@ export function exportOBJ() {
 
 function bindButtons() {
   const on = (id, fn) => document.getElementById(id).addEventListener('click', fn);
-  on('btn-glb', async () => download(await exportGLB(), `${params.name}.glb`));
-  on('btn-obj', () => download(exportOBJ(), `${params.name}.obj`));
+  const exportName = () => (imported ? imported.name : params.name);
+  on('btn-glb', async () => download(await exportGLB(), `${exportName()}.glb`));
+  on('btn-obj', () => download(exportOBJ(), `${exportName()}.obj`));
   on('btn-json', () => download(new Blob([JSON.stringify(params, null, 2)], { type: 'application/json' }), `${params.name}.json`));
   on('btn-load', () => document.getElementById('file-json').click());
   document.getElementById('file-json').addEventListener('change', async (e) => {
@@ -292,6 +299,102 @@ function bindButtons() {
   });
 }
 
+// --- RayCity .0m import / export ---------------------------------------------
+let imported = null; // THREE.Group of opened .0m files
+let template = null; // { om, name } first opened .0m, used as the header template for export
+const omPalette = ['#d9483b', '#3b8fd9', '#47c26f', '#e0b43a', '#a35bd6', '#3bc7c2', '#e07a3a', '#9aa3ad'];
+const omColorMats = omPalette.map((c, i) => new THREE.MeshStandardMaterial({
+  name: `RC_Submesh_${i}`, color: c, roughness: 0.5, side: THREE.DoubleSide,
+}));
+
+function setOmStatus(text) {
+  document.getElementById('om-status').textContent = text;
+}
+
+function showImported(group) {
+  if (imported) { scene.remove(imported); disposeObject(imported); }
+  imported = group;
+  if (imported) scene.add(imported);
+  car.visible = !imported;
+  document.getElementById('btn-om-back').hidden = !imported;
+  updateStats();
+}
+
+async function openOmFiles(fileList) {
+  const files = [...fileList];
+  const oms = files.filter((f) => /\.0m$/i.test(f.name)).sort((a, b) => a.name.localeCompare(b.name));
+  const tex = files.find((f) => /\.(png|jpe?g)$/i.test(f.name));
+  if (!oms.length) { alert('กรุณาเลือกไฟล์ .0m อย่างน้อย 1 ไฟล์'); return; }
+  let mats2 = omColorMats;
+  if (tex) {
+    const t = await new THREE.TextureLoader().loadAsync(URL.createObjectURL(tex));
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.flipY = false; // RayCity (Direct3D) UVs start at the top-left
+    mats2 = [new THREE.MeshStandardMaterial({ name: 'RC_Texture', map: t, roughness: 0.5, side: THREE.DoubleSide })];
+  }
+  const group = new THREE.Group();
+  group.name = oms[0].name.replace(/\.0m$/i, '');
+  const notes = [];
+  for (const [i, f] of oms.entries()) {
+    try {
+      const om = parseOM(await f.arrayBuffer());
+      const obj = omToObject(om, mats2);
+      obj.name = f.name.replace(/\.0m$/i, '');
+      obj.position.x = (i - (oms.length - 1) / 2) * 2.8;
+      group.add(obj);
+      if (!template) template = { om, name: f.name };
+      notes.push(`${f.name}: ${om.positions.length / 3} จุด, ${om.submeshes.length} ชิ้น`);
+    } catch (err) {
+      notes.push(`${f.name}: อ่านไม่ได้ (${err.message})`);
+    }
+  }
+  group.userData.files = oms.map((f) => f.name).join(', ');
+  if (group.children.length) showImported(group);
+  setOmStatus(`${notes.join('\n')}\nแม่แบบสำหรับส่งออก: ${template ? template.name : '-'}`);
+}
+
+// Converts the generated car body (no wheels — RayCity stores those separately) to a .0m.
+function exportOm() {
+  if (!template) {
+    alert('เปิดไฟล์ .0m ของรถในเกมก่อน 1 ไฟล์ (เช่น body_0.0m) เพื่อใช้เป็นแม่แบบ');
+    return;
+  }
+  const root = car.clone();
+  root.position.set(0, 0, 0);
+  root.rotation.set(0, 0, 0);
+  const parts = mergePartsByName(objectToParts(root, (m) => {
+    for (let o = m; o; o = o.parent) if (/^Wheel_|^Underglow$/.test(o.name)) return false;
+    return true;
+  }));
+  // Every vertex samples the same texel as the template's main body so the car takes the player's paint color.
+  const t = template.om;
+  const uv = [t.uvs[0], t.uvs[1]];
+  // Ground sits at RayCity z = 0 in both; center the new body where the template body is along Y.
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (let i = 1; i < t.positions.length; i += 3) { minY = Math.min(minY, t.positions[i]); maxY = Math.max(maxY, t.positions[i]); }
+  const ty = (minY + maxY) / 2;
+  for (const part of parts) {
+    for (let i = 0; i < part.uvs.length; i += 2) { part.uvs[i] = uv[0]; part.uvs[i + 1] = uv[1]; }
+    for (let i = 1; i < part.positions.length; i += 3) part.positions[i] += ty;
+  }
+  try {
+    const bytes = writeOM(t, parts);
+    download(new Blob([bytes], { type: 'application/octet-stream' }), template.name);
+    setOmStatus(`ส่งออก ${template.name}: ${parts.length} ชิ้น, ${parts.reduce((s, q) => s + q.positions.length / 3, 0)} จุด`);
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+function bindOmButtons() {
+  const input = document.getElementById('file-om');
+  document.getElementById('btn-om-open').addEventListener('click', () => input.click());
+  input.addEventListener('change', async (e) => { await openOmFiles(e.target.files); e.target.value = ''; });
+  document.getElementById('btn-om-back').addEventListener('click', () => showImported(null));
+  document.getElementById('btn-om-export').addEventListener('click', exportOm);
+}
+
 // --- Drive mode --------------------------------------------------------------
 const keys = new Set();
 const drive = { on: false, speed: 0, steer: 0, heading: 0, spin: 0 };
@@ -310,6 +413,10 @@ function resetDrive() {
 }
 
 function toggleDrive() {
+  if (imported && !drive.on) {
+    alert('โหมดทดลองขับใช้ได้กับรถจากตัวสร้างรถเท่านั้น (ไฟล์ .0m ไม่มีล้อ)');
+    return;
+  }
   drive.on = !drive.on;
   document.getElementById('btn-drive').classList.toggle('active', drive.on);
   document.getElementById('drive-help').hidden = !drive.on;
@@ -384,10 +491,11 @@ function tick() {
 buildUI();
 buildPresetBar();
 bindButtons();
+bindOmButtons();
 syncUI();
 rebuild();
 resize();
 tick();
 
 // Handy for scripting / automated tests.
-window.carGenerator = { setParams, getParams: () => ({ ...params }), exportGLB, exportOBJ, randomParams };
+window.carGenerator = { setParams, getParams: () => ({ ...params }), exportGLB, exportOBJ, randomParams, openOmFiles };

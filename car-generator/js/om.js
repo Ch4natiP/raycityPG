@@ -2,7 +2,7 @@
 //
 // Layout as understood so far (little endian):
 //   header       magic AA 47 47 03, then scene/transform data (not decoded; kept as-is when writing)
-//   submeshes    0xFF, u8 count, 4 zero bytes, then `count` records placed 28 bytes apart
+//   submeshes    0xFF, u8 count, 4 unknown bytes, then `count` records placed 28 bytes apart
 //                (the last one is 25 bytes, the 3 bytes in between are copied from the template).
 //                Record fields: +1 u16 vertexCount, +3 u16 indexCount,
 //                +5/+9/+17 [u8 1, u8 pad, u16 vertexStart], +21 [u8 1, u8 pad, u16 indexStart],
@@ -46,7 +46,7 @@ function findGeometry(dv) {
 
 function findSubmeshTable(dv, geomStart, vertexCount, indexCount) {
   for (let k = geomStart - 6; k >= 0; k--) {
-    if (dv.getUint8(k) !== 0xff || dv.getUint32(k + 2, true) !== 0) continue;
+    if (dv.getUint8(k) !== 0xff) continue;
     const count = dv.getUint8(k + 1);
     if (!count || k + 6 + REC_STRIDE * (count - 1) + REC_SIZE !== geomStart) continue;
     const recs = [];
@@ -144,7 +144,7 @@ export function writeOM(template, parts) {
   const dv = new DataView(out.buffer);
   out.set(src.slice(0, k), 0);
   let p = k;
-  out[p] = 0xff;
+  out.set(src.slice(k, k + 6), p);
   out[p + 1] = parts.length;
   p += 6;
   let vs = 0;

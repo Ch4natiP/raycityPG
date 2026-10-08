@@ -229,6 +229,13 @@ function syncUI() {
 function set(key, value) {
   params[key] = value;
   queueRebuild();
+  if (folder && imported && /^(paintColor|trimColor|glassColor)$/.test(key)) queueReassemble();
+}
+
+let reassembleTimer = 0;
+function queueReassemble() {
+  clearTimeout(reassembleTimer);
+  reassembleTimer = setTimeout(() => assembleFolder(), 150);
 }
 
 function setParams(p) {
@@ -402,90 +409,164 @@ function exportOm() {
 }
 
 // --- Whole car folder ----------------------------------------------------------
-// entries: [{ file, path }] with paths relative to the picked/dropped folder.
-let folder = null; // { name, groups: Map(dir -> [{file, path}]), texture, choice: Map(dir -> path|'') }
+// A RayCity car folder: body_<lod>.0m + <car>_base.png at the root, and one subfolder per part
+// type (hood, roof, ...). Each subfolder has list.xml naming its variants:
+//   <part id='0' name='default' mesh='default' tex='escarabajo_hood' />  →  default_<lod>.0m + escarabajo_hood.png
+// lod 0/1/2: 2 is the most detailed.
+let folder = null; // { name, files: Map(rel -> File), slots: [{ dir, variants: [{ name, mesh, tex }] }], choice, lod }
 
-function folderGroups(entries) {
-  // Drop the common first segment (the car folder itself) when every path has it.
+const xmlText = async (file) => {
+  const buf = new Uint8Array(await file.arrayBuffer());
+  const utf16 = (buf[0] === 0xff && buf[1] === 0xfe) || (buf[1] === 0 && buf[0] === 0x3c);
+  return new TextDecoder(utf16 ? 'utf-16le' : 'utf-8').decode(buf).replace(/^\uFEFF/, '').replace(/encoding=['"][^'"]*['"]/, '');
+};
+
+async function readFolder(entries) {
   const first = entries[0].path.split('/')[0];
   const strip = entries.every((e) => e.path.split('/').length > 1 && e.path.split('/')[0] === first);
-  const groups = new Map();
-  let texture = null;
-  for (const e of entries) {
-    const rel = strip ? e.path.split('/').slice(1).join('/') : e.path;
-    if (/\.0m$/i.test(rel)) {
-      const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '';
-      if (!groups.has(dir)) groups.set(dir, []);
-      groups.get(dir).push({ ...e, rel });
-    } else if (/_base\.png$/i.test(rel) && !rel.includes('/')) {
-      texture = e.file;
-    } else if (!texture && /\.png$/i.test(rel) && !rel.includes('/') && !/_s\.|icon/i.test(rel)) {
-      texture = e.file;
-    }
+  const files = new Map();
+  for (const e of entries) files.set(strip ? e.path.split('/').slice(1).join('/') : e.path, e.file);
+  const name = strip ? first : 'car';
+  const dirs = new Set();
+  for (const rel of files.keys()) if (rel.includes('/')) dirs.add(rel.slice(0, rel.indexOf('/')));
+  const meshNames = (prefix) => [...new Set([...files.keys()]
+    .filter((r) => r.startsWith(prefix) && /_\d\.0m$/i.test(r) && !r.slice(prefix.length).includes('/'))
+    .map((r) => r.slice(prefix.length).replace(/_\d\.0m$/i, '')))];
+  const slots = [];
+  const bodyTex = [...files.keys()].find((r) => !r.includes('/') && /_base\.png$/i.test(r));
+  if (meshNames('').length) {
+    slots.push({ dir: '', label: 'ตัวถัง (body)', variants: meshNames('').map((m) => ({ name: m, mesh: m, tex: bodyTex ? bodyTex.replace(/\.png$/i, '') : '' })) });
   }
-  for (const list of groups.values()) list.sort((a, b) => a.rel.localeCompare(b.rel, undefined, { numeric: true }));
-  return { name: strip ? first : 'car', groups, texture };
+  for (const dir of [...dirs].sort()) {
+    let variants = [];
+    const list = files.get(`${dir}/list.xml`);
+    if (list) {
+      const doc = new DOMParser().parseFromString(await xmlText(list), 'text/xml');
+      variants = [...doc.querySelectorAll('part')]
+        .filter((el) => el.getAttribute('mesh'))
+        .map((el) => ({ name: el.getAttribute('name'), mesh: el.getAttribute('mesh'), tex: el.getAttribute('tex') || '' }));
+    }
+    if (!variants.length) variants = meshNames(`${dir}/`).map((m) => ({ name: m, mesh: m, tex: '' }));
+    variants = variants.filter((v) => [0, 1, 2].some((l) => files.has(`${dir}/${v.mesh}_${l}.0m`)));
+    if (variants.length) slots.push({ dir, label: dir, variants });
+  }
+  return { name, files, slots };
 }
 
 async function openCarFolder(entries) {
   if (!entries.length) return;
-  const f = folderGroups(entries);
-  if (!f.groups.size) { alert('ไม่พบไฟล์ .0m ในโฟลเดอร์นี้'); return; }
-  f.choice = new Map();
-  for (const [dir, list] of f.groups) {
-    // Body: first file. Parts: first variant. Opened doors are an alternative state, off by default.
-    f.choice.set(dir, /door/i.test(dir) ? '' : list[0].rel);
-  }
+  const f = await readFolder(entries);
+  if (!f.slots.length) { alert('ไม่พบไฟล์ .0m ในโฟลเดอร์นี้'); return; }
+  f.lod = 2;
+  f.choice = new Map(f.slots.map((slot) => {
+    const def = slot.variants.find((v) => v.name === 'default') || slot.variants[0];
+    return [slot.dir, def.name];
+  }));
   folder = f;
-  template = null;
   buildPartPickers();
   await assembleFolder();
+}
+
+function pickerRow(label, options, value, onChange) {
+  const row = document.createElement('label');
+  row.className = 'row row-select';
+  const lbl = document.createElement('span');
+  lbl.className = 'lbl';
+  lbl.textContent = label;
+  const sel = document.createElement('select');
+  for (const [v, t] of options) sel.add(new Option(t, v));
+  sel.value = value;
+  sel.addEventListener('change', () => onChange(sel.value));
+  row.append(lbl, sel);
+  return row;
 }
 
 function buildPartPickers() {
   const box = document.getElementById('om-parts');
   box.innerHTML = '';
-  const dirs = [...folder.groups.keys()].sort((a, b) => (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b)));
-  for (const dir of dirs) {
-    const row = document.createElement('label');
-    row.className = 'row row-select';
-    const lbl = document.createElement('span');
-    lbl.className = 'lbl';
-    lbl.textContent = dir || 'ตัวถัง (body)';
-    const sel = document.createElement('select');
-    if (dir) sel.add(new Option('— ไม่ใส่ —', ''));
-    for (const e of folder.groups.get(dir)) sel.add(new Option(e.rel.split('/').pop(), e.rel));
-    sel.value = folder.choice.get(dir);
-    sel.addEventListener('change', () => { folder.choice.set(dir, sel.value); assembleFolder(); });
-    row.append(lbl, sel);
-    box.appendChild(row);
+  box.appendChild(pickerRow('ระดับรายละเอียด (LOD)', [['2', '2 (ละเอียดสุด)'], ['1', '1'], ['0', '0 (หยาบสุด)']], String(folder.lod),
+    (v) => { folder.lod = Number(v); assembleFolder(); }));
+  for (const slot of folder.slots) {
+    const opts = slot.variants.map((v) => [v.name, v.name]);
+    if (slot.dir) opts.unshift(['', '— ไม่ใส่ —']);
+    box.appendChild(pickerRow(slot.label, opts, folder.choice.get(slot.dir),
+      (v) => { folder.choice.set(slot.dir, v); assembleFolder(); }));
   }
 }
 
-async function assembleFolder() {
-  let mats2 = omColorMats;
-  if (folder.texture) {
-    const t = await new THREE.TextureLoader().loadAsync(URL.createObjectURL(folder.texture));
-    t.colorSpace = THREE.SRGBColorSpace;
-    t.flipY = false;
-    mats2 = [new THREE.MeshStandardMaterial({ name: 'RC_Texture', map: t, roughness: 0.45, metalness: 0.3, side: THREE.DoubleSide })];
+const textureCache = new Map();
+async function loadTexture(file, recolor) {
+  const key = `${file.name}:${file.size}:${recolor || ''}`;
+  if (textureCache.has(key)) return textureCache.get(key);
+  const bmp = await createImageBitmap(file);
+  const c = document.createElement('canvas');
+  c.width = bmp.width;
+  c.height = bmp.height;
+  const g = c.getContext('2d');
+  g.drawImage(bmp, 0, 0);
+  if (recolor) {
+    // Body textures are paint masks: red = main paint (guess: green = secondary/trim, blue = glass).
+    const img = g.getImageData(0, 0, c.width, c.height);
+    const pc = new THREE.Color(recolor.paint);
+    const tc = new THREE.Color(recolor.trim);
+    const gc = new THREE.Color(recolor.glass);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i] / 255;
+      const gg = d[i + 1] / 255;
+      const b = d[i + 2] / 255;
+      d[i] = 255 * Math.min(1, r * pc.r + gg * tc.r + b * gc.r);
+      d[i + 1] = 255 * Math.min(1, r * pc.g + gg * tc.g + b * gc.g);
+      d[i + 2] = 255 * Math.min(1, r * pc.b + gg * tc.b + b * gc.b);
+    }
+    g.putImageData(img, 0, 0);
   }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.flipY = false; // RayCity (Direct3D) UVs start at the top-left
+  textureCache.set(key, t);
+  return t;
+}
+
+const bodyTexName = () => folder.slots.find((sl) => !sl.dir)?.variants[0]?.tex || '';
+
+async function assembleFolder() {
   const group = new THREE.Group();
   group.name = folder.name;
   const notes = [];
   let colorIndex = 0;
-  for (const [dir, rel] of folder.choice) {
-    if (!rel) continue;
-    const e = folder.groups.get(dir).find((x) => x.rel === rel);
+  template = null;
+  for (const slot of folder.slots) {
+    const v = slot.variants.find((x) => x.name === folder.choice.get(slot.dir));
+    if (!v) continue;
+    const prefix = slot.dir ? `${slot.dir}/` : '';
+    const lods = [folder.lod, 2, 1, 0].filter((l, i, a) => a.indexOf(l) === i);
+    const rel = lods.map((l) => `${prefix}${v.mesh}_${l}.0m`).find((r) => folder.files.has(r));
     try {
-      const om = parseOM(await e.file.arrayBuffer());
-      // Without a texture, give every part its own color so the pieces are easy to tell apart.
-      const partMats = folder.texture ? mats2 : om.submeshes.map(() => mats2[colorIndex++ % mats2.length]);
+      const om = parseOM(await folder.files.get(rel).arrayBuffer());
+      // Part texture: in its folder, anywhere in the car folder, or else the body's paint mask
+      // (parts with tex='' share the body texture).
+      const findTex = (t) => t && (folder.files.get(`${prefix}${t}.png`)
+        || [...folder.files].find(([r]) => r.split('/').pop().toLowerCase() === `${t}.png`.toLowerCase())?.[1]);
+      let texFile = findTex(v.tex);
+      let isMask = !slot.dir;
+      if (!texFile) { texFile = findTex(bodyTexName()); isMask = true; }
+      let partMats;
+      if (texFile) {
+        const recolor = isMask ? { paint: params.paintColor, trim: params.trimColor, glass: params.glassColor } : null;
+        const map = await loadTexture(texFile, recolor);
+        partMats = [new THREE.MeshStandardMaterial({
+          name: `RC_${texFile.name.replace(/\.png$/i, '')}`, map, roughness: 0.4, metalness: isMask ? 0.5 : 0.2,
+          transparent: !isMask, alphaTest: 0.05, side: THREE.DoubleSide,
+        })];
+      } else {
+        partMats = om.submeshes.map(() => omColorMats[colorIndex++ % omColorMats.length]);
+      }
       const obj = omToObject(om, partMats);
       obj.name = rel.replace(/\//g, '_').replace(/\.0m$/i, '');
       group.add(obj);
-      if (!dir && !template) template = { om, name: rel.split('/').pop() };
-      notes.push(`✔ ${rel}: ${om.positions.length / 3} จุด, ${om.submeshes.length} ชิ้น`);
+      if (!slot.dir) template = { om, name: rel.split('/').pop() };
+      notes.push(`✔ ${rel}: ${om.positions.length / 3} จุด`);
     } catch (err) {
       notes.push(`✘ ${rel}: อ่านไม่ได้ (${err.message})`);
     }

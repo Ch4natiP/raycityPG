@@ -43,10 +43,15 @@ const doc = await io.read(SRC);
 const SKIP_NODE = /^(wheel|steering|blue|yellow_trim|centre)/i;
 const tris = []; // { a, b, c (float3 arrays), mat, inner }
 const wheelCenters = [];
+let steeringPos = null; // used to place the gear lever
 doc.getRoot().getDefaultScene().traverse((node) => {
   if (/^wheel_/i.test(node.getName())) {
     const m = node.getWorldMatrix();
     wheelCenters.push([-m[12], m[14], m[13]]);
+  }
+  if (/^steering_wheel$/i.test(node.getName())) {
+    const m = node.getWorldMatrix();
+    steeringPos = [-m[12], m[14], m[13]];
   }
   for (let n = node; n; n = n.getParentNode()) if (SKIP_NODE.test(n.getName())) return;
   const inner = /^interior_(light|dark)/i.test(node.getName());
@@ -125,15 +130,16 @@ function slotOf(t) {
   if (z < 0.42 && ax > 0.78 && y > -0.75 && y < 1.05) return 'skirt';
   return 'body';
 }
-// Inner panels: keep only what closes visible holes — the cabin tub (floor, dash, door cards),
-// wheel-arch liners and the underbody. Engine bay and bumper internals would poke through the skin.
+// Inner panels: keep only what closes visible holes — the cabin tub (floor, dash, door cards)
+// and the underbody. Engine bay and bumper internals would poke through the skin.
 {
   const before = tris.length;
   const keepInner = (t) => {
     const [x, y, z] = t.c0;
     if (y > wsBaseY - 0.25 && y < yR - 1.3 && Math.abs(x) < 0.85 && z < 1.15) return true;
-    if (z < 0.22) return true;
-    return wheelCenters.some((w) => Math.abs(x) > 0.45 && Math.hypot(y - w[1], z - w[2]) < 0.55);
+    // Wheel-arch liners come from the generated wheel wells below: the source liners sit right under
+    // the fender skin and poke through it once simplified.
+    return z < 0.22;
   };
   for (let i = tris.length - 1; i >= 0; i--) if (tris[i].inner && !keepInner(tris[i])) tris.splice(i, 1);
   console.log(`inner panels: kept ${tris.filter((t) => t.inner).length}, dropped ${before - tris.length} (wheels at ${wheelCenters.map((w) => w.map((v) => v.toFixed(2)).join(',')).join(' / ')})`);
@@ -211,6 +217,147 @@ function slotOf(t) {
   console.log(`two-sided pieces: ${n} triangles`);
 }
 
+// ---------------------------------------------------------------------------------------------
+// 2b. Close what the game would show as holes, add the underbody and a gear lever.
+
+const mkTri = (a, b, c, mat, extra = {}) => {
+  const t = { a, b, c, mat, ...extra };
+  t.c0 = [0, 1, 2].map((k) => (a[k] + b[k] + c[k]) / 3);
+  t.n = norm(cross(sub(b, a), sub(c, a)));
+  return t;
+};
+const added = [];
+
+// Openings (grille holes, intakes, panel gaps): boundary loops of the outer skin, filled with a
+// slightly recessed dark carbon/mesh panel. Wheel arches and the cabin opening stay open.
+{
+  const key = (p) => `${Math.round(p[0] * 1000)},${Math.round(p[1] * 1000)},${Math.round(p[2] * 1000)}`;
+  const pts = new Map();
+  const id = (p) => { const k = key(p); if (!pts.has(k)) pts.set(k, { i: pts.size, p }); return pts.get(k).i; };
+  const P = [];
+  const seen = new Set();
+  const faces = [];
+  for (const t of tris) {
+    if (t.inner) continue;
+    const ids = [t.a, t.b, t.c].map(id);
+    if (new Set(ids).size < 3) continue;
+    const tk = [...ids].sort((a, b) => a - b).join(',');
+    if (seen.has(tk)) continue; // double-sided copies
+    seen.add(tk);
+    faces.push(ids);
+  }
+  for (const { i, p } of pts.values()) P[i] = p;
+  const edges = new Map();
+  for (const f of faces) for (let k = 0; k < 3; k++) {
+    const a = f[k]; const b = f[(k + 1) % 3];
+    const ek = a < b ? `${a},${b}` : `${b},${a}`;
+    const e = edges.get(ek) || { n: 0, a, b };
+    e.n++;
+    edges.set(ek, e);
+  }
+  const next = new Map();
+  for (const e of edges.values()) if (e.n === 1) next.set(e.a, e.b);
+  const used = new Set();
+  let filled = 0;
+  for (const start of next.keys()) {
+    if (used.has(start)) continue;
+    const loop = [];
+    let v = start;
+    while (v !== undefined && !used.has(v) && loop.length < 5000) { used.add(v); loop.push(v); v = next.get(v); }
+    if (v !== start || loop.length < 3) continue;
+    const L = loop.map((i) => P[i]);
+    let per = 0;
+    for (let k = 0; k < L.length; k++) per += Math.hypot(...sub(L[(k + 1) % L.length], L[k]));
+    const c = [0, 1, 2].map((k) => L.reduce((s, p) => s + p[k], 0) / L.length);
+    const span = [0, 1, 2].map((k) => Math.max(...L.map((p) => p[k])) - Math.min(...L.map((p) => p[k])));
+    if (per < 0.08 || per > 4) continue;
+    if (wheelCenters.some((w) => Math.abs(c[0]) > 0.45 && Math.hypot(c[1] - w[1], c[2] - w[2]) < 0.75)) continue;
+    if (c[2] > 0.8 && c[1] > wsBaseY - 0.1 && c[1] < yR - 1.0 && Math.abs(c[0]) < 0.9) continue; // cabin opening
+    if (span[1] > 1.6) continue;
+    // Opening facing: Newell normal of the loop. Top-facing loops are panel seams on the hood/deck;
+    // filling those leaves dark patches on the paint, so only front/rear/side/bottom openings get panels.
+    const nl = [0, 0, 0];
+    for (let k = 0; k < L.length; k++) {
+      const p = L[k]; const q = L[(k + 1) % L.length];
+      nl[0] += (p[1] - q[1]) * (p[2] + q[2]); nl[1] += (p[2] - q[2]) * (p[0] + q[0]); nl[2] += (p[0] - q[0]) * (p[1] + q[1]);
+    }
+    const nn = norm(nl);
+    if (Math.abs(nn[2]) > 0.6 && c[2] > 0.45) continue;
+    // Recess the panel 2.5 cm into the car.
+    const o = [0, 1, 2].map((k) => (c[k] - CENTER[k]) / (RADII[k] * RADII[k]));
+    const ol = Math.hypot(...o) || 1;
+    const mid = [0, 1, 2].map((k) => c[k] - (o[k] / ol) * 0.025);
+    if (process.env.NOFILL) continue;
+    for (let k = 0; k < L.length; k++) added.push(mkTri(mid, L[(k + 1) % L.length], L[k], 'Grille', { twoSided: true }));
+    filled++;
+  }
+  console.log(`openings closed: ${filled}`);
+}
+
+// Wheel wells: a closed half-drum over each wheel (open to the outside and the road), so nothing
+// shows through around the game's wheels.
+{
+  const seg = 14;
+  for (const w of wheelCenters) {
+    const side = Math.sign(w[0]);
+    const r = 0.42;
+    const xOut = w[0] + side * 0.12;
+    const xIn = w[0] - side * 0.3;
+    const arc = [];
+    for (let i = 0; i <= seg; i++) {
+      const a = (i / seg) * Math.PI; // 0 = front, π = back, over the top
+      arc.push([w[1] - Math.cos(a) * r, w[2] + Math.sin(a) * r]);
+    }
+    for (let i = 0; i < seg; i++) {
+      const [y0, z0] = arc[i]; const [y1, z1] = arc[i + 1];
+      const a = [xIn, y0, z0]; const b = [xOut, y0, z0]; const c = [xOut, y1, z1]; const d = [xIn, y1, z1];
+      added.push(mkTri(a, b, c, 'Underbody', { twoSided: true, inner: true }), mkTri(a, c, d, 'Underbody', { twoSided: true, inner: true }));
+      added.push(mkTri([xIn, w[1], w[2] - 0.05], [xIn, y0, z0], [xIn, y1, z1], 'Underbody', { twoSided: true, inner: true }));
+    }
+  }
+  console.log(`wheel wells closed: ${wheelCenters.length}`);
+}
+
+// Underbody: a flat panel under the car, inside the outline of the low body.
+{
+  const low = tris.filter((t) => !t.inner && t.c0[2] < 0.4);
+  const xy = low.flatMap((t) => [t.a, t.b, t.c]).map((p) => [p[0] * 0.97, p[1] * 0.98]);
+  xy.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const crossZ = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower = []; const upper = [];
+  for (const p of xy) { while (lower.length > 1 && crossZ(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop(); lower.push(p); }
+  for (const p of [...xy].reverse()) { while (upper.length > 1 && crossZ(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop(); upper.push(p); }
+  const hull = lower.slice(0, -1).concat(upper.slice(0, -1));
+  const z = Math.min(...low.map((t) => t.c0[2])) + 0.03;
+  const c = [hull.reduce((s, p) => s + p[0], 0) / hull.length, hull.reduce((s, p) => s + p[1], 0) / hull.length, z];
+  for (let k = 0; k < hull.length; k++) {
+    const a = [...hull[k], z]; const b = [...hull[(k + 1) % hull.length], z];
+    added.push(mkTri(c, b, a, 'Underbody', { twoSided: true }));
+  }
+  console.log(`underbody: ${hull.length}-sided panel at z ${z.toFixed(2)}`);
+}
+
+// Gear lever on the center tunnel between the seats.
+{
+  // Between the seats: a little behind the steering wheel.
+  const y = steeringPos ? steeringPos[1] + 0.42 : (yF + yR) / 2 - 0.3;
+  const tunnel = tris.filter((t) => t.inner && Math.abs(t.c0[0]) < 0.12 && Math.abs(t.c0[1] - y) < 0.12 && t.c0[2] < 0.85);
+  const z = tunnel.length ? ext(tunnel, 2, Math.max) : 0.55;
+  const box = (cx, cy, cz, sx, sy, sz, mat) => {
+    const v = [[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1], [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]]
+      .map(([a, b, d]) => [cx + (a * sx) / 2, cy + (b * sy) / 2, cz + (d * sz) / 2]);
+    for (const [a, b, d, e] of [[0, 3, 2, 1], [4, 5, 6, 7], [0, 1, 5, 4], [2, 3, 7, 6], [1, 2, 6, 5], [0, 4, 7, 3]]) {
+      added.push(mkTri(v[a], v[b], v[d], mat, { inner: true }), mkTri(v[a], v[d], v[e], mat, { inner: true }));
+    }
+  };
+  box(0, y, z + 0.015, 0.16, 0.26, 0.03, 'Carbon_Fiber'); // console plate
+  box(0, y + 0.03, z + 0.035, 0.07, 0.12, 0.012, 'metal_chrome'); // shift gate
+  box(0, y + 0.03, z + 0.1, 0.014, 0.014, 0.13, 'metal_chrome'); // lever
+  box(0, y + 0.03, z + 0.18, 0.045, 0.045, 0.045, 'Leather'); // knob
+  console.log(`gear lever at y ${y.toFixed(2)}, z ${z.toFixed(2)}`);
+}
+tris.push(...added);
+
 const slots = {};
 for (const t of tris) (slots[slotOf(t)] ||= []).push(t);
 for (const [k, v] of Object.entries(slots)) console.log(`  ${k.padEnd(12)} ${v.length} tris`);
@@ -232,12 +379,14 @@ if (process.env.DUMP_OBJ) {
 // ---------------------------------------------------------------------------------------------
 // 3. Palettes. Paint parts share the body "mask" palette (red = paint in game), lights get real colors.
 
+// Body-mask palette. The game tints mask colors by the player's paint (red channel = paint), so
+// anything that must stay dark (grilles, carbon, tires, underbody, interior) is pure black here;
+// chrome keeps a little value so it reads as metal.
 const MASK_COLORS = {
-  Body_Color: [255, 0, 0], Glass_Gray: [18, 24, 30], Tires: [14, 14, 14], plastic_gray: [40, 40, 42],
-  metal_gray: [70, 70, 74], metal_chrome: [110, 110, 115], Carbon_Fiber: [28, 28, 30], Leather: [34, 26, 22],
-  Leather_red: [90, 12, 12], Carpet: [24, 22, 20], Interior_dark: [22, 22, 24], Interior_light: [50, 50, 52],
-  Taillight_Glass: [120, 10, 10], Projector_Glass: [150, 150, 150], Turn_Signal_LED: [150, 100, 20], Wing: [255, 0, 0],
-  WingDark: [24, 24, 26],
+  Body_Color: [255, 0, 0], Wing: [255, 0, 0], Glass_Gray: [0, 0, 0], Grille: [0, 0, 0], Underbody: [0, 0, 0],
+  Tires: [0, 0, 0], plastic_gray: [0, 0, 0], metal_gray: [28, 28, 28], metal_chrome: [56, 56, 56], Carbon_Fiber: [0, 0, 0],
+  Leather: [0, 0, 0], Leather_red: [0, 0, 0], Carpet: [0, 0, 0], Interior_dark: [0, 0, 0], Interior_light: [0, 0, 0],
+  Taillight_Glass: [0, 0, 0], Projector_Glass: [0, 0, 0], Turn_Signal_LED: [0, 0, 0], WingDark: [0, 0, 0],
 };
 const LIGHT_COLORS = {
   Projector_Glass: [232, 238, 244], Turn_Signal_LED: [255, 168, 40], metal_chrome: [205, 208, 214],

@@ -38,11 +38,18 @@ const io = new NodeIO().registerExtensions(ALL_EXTENSIONS)
   .registerDependencies({ 'draco3d.decoder': await draco3d.createDecoderModule() });
 const doc = await io.read(SRC);
 
-// Meshes we never export: wheels (shared in game), badges, cabin internals that the dark glass hides.
-const SKIP_NODE = /^(wheel|steering|interior_light|interior_dark|blue|yellow_trim|centre)/i;
-const tris = []; // { a, b, c (float3 arrays), mat }
+// Meshes we never export: wheels (shared in game) and badges. Inner panels (floor, dash, door cards,
+// wheel-arch liners, underbody) are kept: without them the car is see-through in game.
+const SKIP_NODE = /^(wheel|steering|blue|yellow_trim|centre)/i;
+const tris = []; // { a, b, c (float3 arrays), mat, inner }
+const wheelCenters = [];
 doc.getRoot().getDefaultScene().traverse((node) => {
+  if (/^wheel_/i.test(node.getName())) {
+    const m = node.getWorldMatrix();
+    wheelCenters.push([-m[12], m[14], m[13]]);
+  }
   for (let n = node; n; n = n.getParentNode()) if (SKIP_NODE.test(n.getName())) return;
+  const inner = /^interior_(light|dark)/i.test(node.getName());
   const mesh = node.getMesh();
   if (!mesh) return;
   const m = node.getWorldMatrix();
@@ -60,7 +67,7 @@ doc.getRoot().getDefaultScene().traverse((node) => {
       P.push([-x, z, y]);
     }
     const I = idx ? idx.getArray() : P.map((_, i) => i);
-    for (let t = 0; t + 2 < I.length; t += 3) tris.push({ a: P[I[t]], b: P[I[t + 1]], c: P[I[t + 2]], mat });
+    for (let t = 0; t + 2 < I.length; t += 3) tris.push({ a: P[I[t]], b: P[I[t + 1]], c: P[I[t + 2]], mat, inner });
   }
 });
 console.log(`source: ${tris.length} triangles`);
@@ -85,6 +92,12 @@ const wsBaseY = ext(glass.filter((t) => t.c0[1] < 0 && t.c0[2] > 0.88), 1, Math.
 const glassTop = ext(glass, 2, Math.max);
 const rearDeckZ = ext(bodyTris.filter((t) => t.c0[1] > yR - 0.5 && t.c0[1] < yR - 0.2), 2, Math.max);
 console.log(`length ${(yR - yF).toFixed(2)} m, windshield base y ${wsBaseY.toFixed(2)}, roof ${glassTop.toFixed(2)}, deck ${rearDeckZ.toFixed(2)}`);
+
+// Outward direction at a point: gradient of an ellipsoid around the car (so the roof faces up,
+// the sides sideways and the nose forward).
+const CENTER = [0, (yF + yR) / 2, 0.55];
+const RADII = [1.0, (yR - yF) / 2, 0.6];
+const outwardDot = (t) => [0, 1, 2].reduce((s, k) => s + t.n[k] * ((t.c0[k] - CENTER[k]) / (RADII[k] * RADII[k])), 0);
 
 const isLight = (t) => /projector|led|taillight/i.test(t.mat);
 const headBox = { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] };
@@ -112,6 +125,20 @@ function slotOf(t) {
   if (z < 0.42 && ax > 0.78 && y > -0.75 && y < 1.05) return 'skirt';
   return 'body';
 }
+// Inner panels: keep only what closes visible holes — the cabin tub (floor, dash, door cards),
+// wheel-arch liners and the underbody. Engine bay and bumper internals would poke through the skin.
+{
+  const before = tris.length;
+  const keepInner = (t) => {
+    const [x, y, z] = t.c0;
+    if (y > wsBaseY - 0.25 && y < yR - 1.3 && Math.abs(x) < 0.85 && z < 1.15) return true;
+    if (z < 0.22) return true;
+    return wheelCenters.some((w) => Math.abs(x) > 0.45 && Math.hypot(y - w[1], z - w[2]) < 0.55);
+  };
+  for (let i = tris.length - 1; i >= 0; i--) if (tris[i].inner && !keepInner(tris[i])) tris.splice(i, 1);
+  console.log(`inner panels: kept ${tris.filter((t) => t.inner).length}, dropped ${before - tris.length} (wheels at ${wheelCenters.map((w) => w.map((v) => v.toFixed(2)).join(',')).join(' / ')})`);
+}
+
 // Remove badges/lettering: small separate pieces near the centerline at the nose or tail.
 {
   const key = (p) => `${Math.round(p[0] * 2000)},${Math.round(p[1] * 2000)},${Math.round(p[2] * 2000)}`;
@@ -144,6 +171,44 @@ function slotOf(t) {
   const before = tris.length;
   for (let i = tris.length - 1; i >= 0; i--) if (tris[i].comp && badge.has(tris[i].comp)) tris.splice(i, 1);
   console.log(`badges removed: ${badge.size} pieces, ${before - tris.length} triangles`);
+}
+
+// Pieces whose faces point both into and out of the car (curved lamp surrounds, lips, fins) get
+// drawn from both sides; for the rest one outward-facing side is enough.
+{
+  const key = (p) => `${Math.round(p[0] * 2000)},${Math.round(p[1] * 2000)},${Math.round(p[2] * 2000)}`;
+  const parent = new Map();
+  const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+  for (const t of tris) {
+    const ks = [t.a, t.b, t.c].map((p) => `${t.mat}|${key(p)}`);
+    for (const k of ks) if (!parent.has(k)) parent.set(k, k);
+    parent.set(find(ks[0]), find(ks[1]));
+    parent.set(find(ks[2]), find(ks[1]));
+    t.piece = ks[0];
+  }
+  // Opposite-winding duplicates (the double-sided source layers) count once, by their outward copy.
+  const best = new Map();
+  for (const t of tris) {
+    t.piece = find(t.piece);
+    const area = Math.hypot(...cross(sub(t.b, t.a), sub(t.c, t.a)));
+    const d = outwardDot(t) * area;
+    const tk = `${t.mat}|${[t.a, t.b, t.c].map(key).sort().join('|')}`;
+    const prev = best.get(tk);
+    if (!prev || d > prev.d) best.set(tk, { d, piece: t.piece });
+  }
+  const score = new Map();
+  for (const { d, piece } of best.values()) {
+    const sc = score.get(piece) || [0, 0];
+    sc[0] += d; sc[1] += Math.abs(d);
+    score.set(piece, sc);
+  }
+  let n = 0;
+  for (const t of tris) {
+    const [sum, abs] = score.get(t.piece);
+    t.twoSided = !t.inner && Math.abs(sum) < 0.6 * abs;
+    if (t.twoSided) n++;
+  }
+  console.log(`two-sided pieces: ${n} triangles`);
 }
 
 const slots = {};
@@ -214,11 +279,6 @@ async function writeTexture(pal, file) {
 
 await MeshoptSimplifier.ready;
 
-// Outward direction at a point: gradient of an ellipsoid around the car (so the roof faces up,
-// the sides sideways and the nose forward).
-const CENTER = [0, (yF + yR) / 2, 0.55];
-const RADII = [1.0, (yR - yF) / 2, 0.6];
-const outwardDot = (t) => [0, 1, 2].reduce((s, k) => s + t.n[k] * ((t.c0[k] - CENTER[k]) / (RADII[k] * RADII[k])), 0);
 
 function weld(list) {
   const map = new Map();
@@ -259,8 +319,8 @@ function weld(list) {
 // bound (relative to the part size), small cracks are acceptable at distance.
 // Error bounds per LOD (null = locked borders). Interior materials are seen through tinted glass only.
 const LOD_ERR = [null, null, null];
-const LOD_ERR_INTERIOR = [undefined, 0.05, 0.025]; // undefined = dropped
-const INTERIOR = /leather|carpet|carbon/i;
+const LOD_ERR_INTERIOR = [0.1, 0.05, 0.025]; // undefined = dropped
+const INTERIOR = /leather|carpet|carbon|interior/i;
 const LOD_MIN_PIECE = [0.2, 0.05, 0.015]; // drop separate pieces smaller than this (m) per LOD
 
 // Removes connected pieces whose bounding box is smaller than `minSize` (bolts, LEDs, stitching...).
@@ -284,17 +344,47 @@ function dropSmallPieces(pos, idx, minSize) {
   return new Uint32Array(out);
 }
 
-function simplifyGroup(list, targetTris, lod, interior = false, attempt = 0) {
+// Vertex clustering: snap vertices to a grid, drop collapsed triangles. Coarse but reaches any target,
+// used for inner panels where tiny pieces stop edge-collapse simplification.
+function clusterSimplify(pos, idx, targetTris) {
+  let best = idx;
+  for (const cell of [0.01, 0.015, 0.02, 0.025, 0.03]) { // capped so panels can't drift through the skin
+    const map = new Map();
+    const remap = new Uint32Array(pos.length / 3);
+    for (let v = 0; v < pos.length / 3; v++) {
+      const k = `${Math.round(pos[v * 3] / cell)},${Math.round(pos[v * 3 + 1] / cell)},${Math.round(pos[v * 3 + 2] / cell)}`;
+      let r = map.get(k);
+      if (r === undefined) { r = v; map.set(k, v); }
+      remap[v] = r;
+    }
+    const seen = new Set();
+    const out = [];
+    for (let t = 0; t < idx.length; t += 3) {
+      const a = remap[idx[t]]; const b = remap[idx[t + 1]]; const c = remap[idx[t + 2]];
+      if (a === b || b === c || a === c) continue;
+      const key = [a, b, c].sort((x, y) => x - y).join(',');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(a, b, c);
+    }
+    best = new Uint32Array(out);
+    if (best.length / 3 <= targetTris) break;
+  }
+  return best;
+}
+
+function simplifyGroup(list, targetTris, lod, interior = false, attempt = 0, twoSided = false) {
   if (interior && LOD_ERR_INTERIOR[lod] === undefined) return { pos: new Float32Array(), idx: new Uint32Array() };
   const welded = weld(list);
   const pos = welded.pos;
   const idx = dropSmallPieces(pos, welded.idx, LOD_MIN_PIECE[lod] * (1 + attempt));
   const err = interior ? LOD_ERR_INTERIOR[lod] * (1 + attempt) : LOD_ERR[lod];
   const lock = err === null || LOCK;
-  const out = idx.length / 3 <= targetTris ? idx
+  let out = idx.length / 3 <= targetTris ? idx
     : MeshoptSimplifier.simplify(idx, pos, 3, Math.max(3, targetTris * 3), lock ? 1 : err, lock ? ['LockBorder'] : [])[0];
-  if (!interior) return { pos, idx: out };
-  // Interior (seats, dash) is seen from any side: add the back faces after simplifying.
+  if (interior && out.length / 3 > targetTris) out = clusterSimplify(pos, out, Math.round(targetTris / (1 + attempt)));
+  if (!interior && !twoSided) return { pos, idx: out };
+  // Interior and ambiguous pieces are seen from any side: add the back faces after simplifying.
   const both = new Uint32Array(out.length * 2);
   both.set(out);
   for (let t = 0; t < out.length; t += 3) both.set([out[t], out[t + 2], out[t + 1]], out.length + t);
@@ -358,12 +448,18 @@ function buildSlot(list, budget, pal, lod = 2) {
 
 function buildSlotOnce(list, budget, pal, lod, attempt) {
   const byMat = new Map();
-  for (const t of list) { if (!byMat.has(t.mat)) byMat.set(t.mat, []); byMat.get(t.mat).push(t); }
+  for (const t of list) {
+    const k = t.twoSided ? `${t.mat}|2s` : t.mat;
+    if (!byMat.has(k)) byMat.set(k, []);
+    byMat.get(k).push(t);
+  }
   const total = list.length;
   const parts = [];
-  for (const [mat, group] of byMat) {
+  for (const [key, group] of byMat) {
+    const mat = key.replace(/\|2s$/, '');
+    const twoSided = key.endsWith('|2s');
     const target = Math.max(4, Math.round((budget * SCALE * group.length) / total));
-    const { pos, idx } = simplifyGroup(group, target, lod, INTERIOR.test(mat), attempt);
+    const { pos, idx } = simplifyGroup(group, target, lod, INTERIOR.test(mat), attempt, twoSided);
     if (process.env.DEBUG) console.log(`    lod${lod} ${mat.padEnd(16)} src ${group.length} target ${target} got ${idx.length / 3}`);
     if (idx.length < 3) continue;
     const g = withNormals(pos, idx);

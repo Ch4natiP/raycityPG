@@ -317,6 +317,11 @@ function bindButtons() {
   });
   on('btn-seed', () => setParams(randomParams(parseInt(document.getElementById('seed').value, 10) || 1)));
   on('btn-drive', toggleDrive);
+  on('btn-ingame', () => {
+    inGameView = !inGameView;
+    document.getElementById('btn-ingame').classList.toggle('active', inGameView);
+    applySides(imported);
+  });
   on('btn-wire', () => {
     for (const m of Object.values(mats)) m.wireframe = !m.wireframe;
   });
@@ -334,10 +339,21 @@ function setOmStatus(text) {
   document.getElementById('om-status').textContent = text;
 }
 
+// "In-game view": RayCity draws one side of each face. Showing RayCity cars single-sided reveals
+// the holes a player would see; the default double-sided view hides them.
+let inGameView = false;
+function applySides(root) {
+  if (!root) return;
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    for (const m of [].concat(o.material)) { m.side = inGameView ? THREE.FrontSide : THREE.DoubleSide; m.needsUpdate = true; }
+  });
+}
+
 function showImported(group) {
   if (imported) { scene.remove(imported); disposeObject(imported); }
   imported = group;
-  if (imported) scene.add(imported);
+  if (imported) { applySides(imported); scene.add(imported); }
   car.visible = !imported;
   document.getElementById('btn-om-back').hidden = !imported;
   updateStats();

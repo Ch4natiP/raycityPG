@@ -4,13 +4,17 @@
 
 ## วิธีเปิดใช้งาน
 
-โปรแกรมเป็นหน้าเว็บล้วน ไม่ต้องติดตั้งอะไร แต่ต้องเปิดผ่าน local web server (เปิดไฟล์ตรงๆ ด้วย `file://` ไม่ได้ เพราะ ES modules):
+**Windows:** ดับเบิลคลิก `start.bat` ในโฟลเดอร์ `car-generator` (ต้องมี Python) โปรแกรมจะเปิดในเบราว์เซอร์ให้เอง
+
+**วิธีพิมพ์คำสั่งเอง:** ต้อง `cd` เข้าโฟลเดอร์ `car-generator` ก่อน ไม่อย่างนั้นจะเห็นแค่รายชื่อไฟล์ (Directory listing)
 
 ```bash
-cd car-generator
-python3 -m http.server 8000
+cd path/to/raycityPG/car-generator
+python -m http.server 8000 --bind 127.0.0.1
 # แล้วเปิด http://localhost:8000
 ```
+
+(เปิดไฟล์ `index.html` ตรงๆ ด้วยการดับเบิลคลิกไม่ได้ เพราะเบราว์เซอร์ไม่โหลด ES modules จาก `file://`)
 
 หรือ `npx serve car-generator` ก็ได้ (ต้องต่ออินเทอร์เน็ต เพราะโหลด three.js จาก CDN)
 

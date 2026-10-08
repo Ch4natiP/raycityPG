@@ -127,3 +127,5 @@ details[open] summary { border-bottom: 1px solid var(--line); }
   pointer-events: none;
 }
 #drop-hint[hidden] { display: none; }
+#spec-fields .row { grid-template-columns: 1fr 150px; grid-template-areas: "lbl in"; }
+#spec-fields input { grid-area: in; width: 100%; }

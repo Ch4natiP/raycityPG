@@ -5,6 +5,7 @@ import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { OBJExporter } from 'three/addons/exporters/OBJExporter.js';
 import { buildCar, disposeObject } from './carBuilder.js';
 import { parseOM, omToObject, writeOM, objectToParts, mergePartsByName } from './om.js';
+import { SPEC_TEMPLATE, SPEC_FIELDS, readSpec, writeSpec, encodeSpec, decodeSpec, suggestSpec } from './carSpec.js';
 import { SCHEMA, PRESETS, presetParams, randomParams } from './params.js';
 
 const STORAGE_KEY = 'raycity-car-generator:params';
@@ -463,6 +464,9 @@ async function openCarFolder(entries) {
     return [slot.dir, def.name];
   }));
   folder = f;
+  const specFile = f.files.get(`${f.name}.xml`)
+    || [...f.files].find(([r]) => !r.includes('/') && /\.xml$/i.test(r) && r.toLowerCase() !== 'mesh.xml')?.[1];
+  if (specFile) loadSpecText(decodeSpec(await specFile.arrayBuffer()), f.name);
   buildPartPickers();
   await assembleFolder();
 }
@@ -623,6 +627,54 @@ function bindOmButtons() {
   document.getElementById('btn-om-export').addEventListener('click', exportOm);
 }
 
+// --- Car spec (.xml) -------------------------------------------------------------
+let spec = { text: SPEC_TEMPLATE, values: readSpec(SPEC_TEMPLATE), name: '' };
+
+function buildSpecFields() {
+  const box = document.getElementById('spec-fields');
+  box.innerHTML = '';
+  for (const f of SPEC_FIELDS) {
+    if (!(f.tag in spec.values)) continue;
+    const row = document.createElement('label');
+    row.className = 'row';
+    const lbl = document.createElement('span');
+    lbl.className = 'lbl';
+    lbl.textContent = f.label;
+    lbl.title = f.tag;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = spec.values[f.tag];
+    input.addEventListener('change', () => { spec.values[f.tag] = input.value.trim(); });
+    row.append(lbl, input);
+    box.appendChild(row);
+  }
+}
+
+function loadSpecText(text, name) {
+  spec = { text, values: readSpec(text), name };
+  buildSpecFields();
+}
+
+function bindSpecButtons() {
+  const input = document.getElementById('file-spec');
+  document.getElementById('btn-spec-open').addEventListener('click', () => input.click());
+  input.addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    if (f) loadSpecText(decodeSpec(await f.arrayBuffer()), f.name.replace(/\.xml$/i, ''));
+    e.target.value = '';
+  });
+  document.getElementById('btn-spec-suggest').addEventListener('click', () => {
+    Object.assign(spec.values, suggestSpec(params));
+    buildSpecFields();
+    document.getElementById('spec-box').open = true;
+  });
+  document.getElementById('btn-spec-export').addEventListener('click', () => {
+    const name = imported && folder ? folder.name : spec.name || params.name;
+    download(new Blob([encodeSpec(writeSpec(spec.text, spec.values))], { type: 'application/xml' }), `${name}.xml`);
+  });
+  buildSpecFields();
+}
+
 // --- Drive mode --------------------------------------------------------------
 const keys = new Set();
 const drive = { on: false, speed: 0, steer: 0, heading: 0, spin: 0 };
@@ -720,6 +772,7 @@ buildUI();
 buildPresetBar();
 bindButtons();
 bindOmButtons();
+bindSpecButtons();
 syncUI();
 rebuild();
 resize();

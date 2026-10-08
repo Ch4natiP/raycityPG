@@ -44,7 +44,7 @@ export const SCHEMA = [
       ['rect', 'เหลี่ยม'], ['bar', 'แถบยาว'], ['round', 'กลม'],
     ] },
     { key: 'grille', label: 'กระจังหน้า', type: 'select', options: [
-      ['normal', 'ปกติ'], ['wide', 'กว้าง'], ['none', 'ไม่มี'],
+      ['normal', 'ซี่นอน'], ['wide', 'ตาข่ายกว้าง'], ['kidney', 'ไตคู่ (สไตล์ BMW)'], ['none', 'ไม่มี'],
     ] },
     { key: 'spoiler', label: 'สปอยเลอร์', type: 'select', options: [
       ['none', 'ไม่มี'], ['ducktail', 'หางเป็ด'], ['wing', 'วิง'], ['gt', 'GT Wing'],
@@ -54,6 +54,10 @@ export const SCHEMA = [
       ['none', 'ไม่มี'], ['center', 'แถบเดี่ยว'], ['double', 'แถบคู่'],
     ] },
     { key: 'stripeWidth', label: 'ความกว้างแถบ', min: 0.1, max: 0.8, step: 0.01 },
+    { key: 'fogLights', label: 'ไฟตัดหมอก', type: 'check' },
+    { key: 'panelLines', label: 'ร่องประตู + มือจับ', type: 'check' },
+    { key: 'interior', label: 'ภายใน (เบาะ, พวงมาลัย)', type: 'check' },
+    { key: 'driveSide', label: 'ตำแหน่งพวงมาลัย', type: 'select', options: [['left', 'ซ้าย'], ['right', 'ขวา']] },
     { key: 'splitter', label: 'ลิ้นหน้า', type: 'check' },
     { key: 'diffuser', label: 'ดิฟฟิวเซอร์', type: 'check' },
     { key: 'sideSkirts', label: 'สเกิร์ตข้าง', type: 'check' },
@@ -70,10 +74,13 @@ export const SCHEMA = [
     { key: 'rimColor', label: 'สีแม็ก', type: 'color' },
     { key: 'glassColor', label: 'สีกระจก', type: 'color' },
     { key: 'trimColor', label: 'สีพลาสติก/คิ้ว', type: 'color' },
+    { key: 'interiorColor', label: 'สีภายใน', type: 'color' },
     { key: 'caliperColor', label: 'สีคาลิปเปอร์', type: 'color' },
     { key: 'underglowColor', label: 'สีไฟใต้ท้อง', type: 'color' },
     { key: 'metalness', label: 'ความเมทัลลิก', min: 0, max: 1, step: 0.01 },
     { key: 'roughness', label: 'ความด้าน', min: 0, max: 1, step: 0.01 },
+    { key: 'clearcoat', label: 'เคลือบเงา (Clearcoat)', min: 0, max: 1, step: 0.01 },
+    { key: 'glassOpacity', label: 'ความทึบกระจก', min: 0.2, max: 1, step: 0.01 },
   ] },
   { group: 'ส่งออก · Export', items: [
     { key: 'name', label: 'ชื่อโมเดล', type: 'text' },
@@ -97,14 +104,25 @@ export const DEFAULTS = {
   stripeStyle: 'none', stripeWidth: 0.3,
   splitter: false, diffuser: false, sideSkirts: false, hoodScoop: false, roofRack: false,
   mirrors: true, plates: true, bedCover: false, underglow: false,
+  fogLights: false, panelLines: true, interior: true, driveSide: 'left',
   paintColor: '#c4172c', stripeColor: '#f2f2f2', rimColor: '#c9ccd1', glassColor: '#16202b',
-  trimColor: '#151617', caliperColor: '#d4231d', underglowColor: '#29b6ff',
-  metalness: 0.55, roughness: 0.32,
+  trimColor: '#151617', caliperColor: '#d4231d', underglowColor: '#29b6ff', interiorColor: '#2b2622',
+  metalness: 0.55, roughness: 0.32, clearcoat: 1, glassOpacity: 0.7,
   detail: 'medium', flatShading: false,
 };
 
 export const PRESETS = {
   sedan: { label: 'ซีดาน', params: {} },
+  luxsuv: { label: 'SUV คูเป้หรู', params: {
+    name: 'RC_LuxSUV', length: 4.9, width: 1.99, clearance: 0.21,
+    noseHeight: 0.86, hoodHeight: 1.04, beltHeight: 1.08, trunkHeight: 1.06, tailHeight: 1.02,
+    roofHeight: 1.69, windshieldBase: 0.3, roofFront: 0.43, roofRear: 0.6, rearWindowBase: 0.88,
+    cabinTopWidth: 0.76, wheelRadius: 0.37, wheelWidth: 0.27, rimRatio: 0.68, frontOverhang: 0.93,
+    rearOverhang: 1.0, grille: 'kidney', headlightStyle: 'rect', taillightStyle: 'rect', fogLights: true,
+    exhaust: 2, paintColor: '#d9d3cc', rimColor: '#c9ccd1', rimStyle: 'spoke', spokeCount: 5,
+    metalness: 0.75, roughness: 0.28, cornerRadius: 0.4, edgeRadius: 0.11, crown: 0.05, endTaper: 0.16,
+    interiorColor: '#5a3b2a',
+  } },
   sports: { label: 'สปอร์ต', params: {
     name: 'RC_Sports', length: 4.4, width: 1.88, clearance: 0.11,
     noseHeight: 0.48, hoodHeight: 0.72, beltHeight: 0.8, trunkHeight: 0.86, tailHeight: 0.84,
@@ -126,7 +144,7 @@ export const PRESETS = {
     noseHeight: 0.85, hoodHeight: 1.08, beltHeight: 1.12, trunkHeight: 1.16, tailHeight: 1.12,
     roofHeight: 1.78, windshieldBase: 0.28, roofFront: 0.4, roofRear: 0.88, rearWindowBase: 0.96,
     cabinTopWidth: 0.82, wheelRadius: 0.38, wheelWidth: 0.26, frontOverhang: 0.9, rearOverhang: 0.95,
-    grille: 'wide', roofRack: true, paintColor: '#3b4a3f', rimColor: '#8a8f96', exhaust: 2,
+    grille: 'wide', roofRack: true, fogLights: true, paintColor: '#3b4a3f', rimColor: '#8a8f96', exhaust: 2,
     cornerRadius: 0.3, edgeRadius: 0.1, rimStyle: 'spoke', spokeCount: 6,
   } },
   pickup: { label: 'กระบะ', params: {
@@ -205,7 +223,8 @@ export function randomParams(seed) {
   p.taillightStyle = pick(['rect', 'bar', 'round']);
   p.spoiler = pick(['none', 'none', 'ducktail', 'wing', 'gt']);
   p.stripeStyle = pick(['none', 'none', 'center', 'double']);
-  for (const k of ['splitter', 'diffuser', 'sideSkirts']) p[k] = rnd() < 0.4;
+  for (const k of ['splitter', 'diffuser', 'sideSkirts', 'fogLights']) p[k] = rnd() < 0.4;
+  p.grille = pick(['normal', 'wide', 'kidney', 'normal']);
   p.hoodScoop = rnd() < 0.2;
   p.underglow = rnd() < 0.25;
   p.paintColor = pick(PAINTS);

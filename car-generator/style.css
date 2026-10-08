@@ -109,3 +109,21 @@ details[open] summary { border-bottom: 1px solid var(--line); }
   #sidebar { width: 100%; border-right: none; border-top: 1px solid var(--line); overflow: visible; }
   #viewport { height: 55vh; flex: none; }
 }
+#om-parts .row { padding: 4px 0; }
+#om-parts select { max-width: 170px; }
+#drop-hint {
+  position: absolute;
+  inset: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 3px dashed var(--accent-2);
+  border-radius: 12px;
+  background: rgba(18, 20, 26, 0.75);
+  color: var(--accent-2);
+  font-size: 22px;
+  font-weight: 700;
+  z-index: 5;
+  pointer-events: none;
+}
+#drop-hint[hidden] { display: none; }

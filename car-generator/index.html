@@ -33,13 +33,16 @@
     <section class="block">
       <h2>RayCity (.0m)</h2>
       <div class="btns">
-        <button id="btn-om-open" class="accent">เปิดรถ RayCity (.0m)</button>
+        <button id="btn-om-folder" class="accent">📂 เปิดทั้งโฟลเดอร์รถ</button>
+        <button id="btn-om-open">เปิดไฟล์ .0m</button>
         <button id="btn-om-back" hidden>กลับไปตัวสร้างรถ</button>
         <button id="btn-om-export">ส่งออก .0m (ทดลอง)</button>
         <input id="file-om" type="file" accept=".0m,.png,.jpg" multiple hidden>
+        <input id="file-om-dir" type="file" webkitdirectory multiple hidden>
       </div>
-      <p class="hint">เลือก body_*.0m ได้หลายไฟล์พร้อมกัน (ใส่ไฟล์ .png ลายรถมาด้วยก็ได้)
-        ไฟล์ .0m ไฟล์แรกที่เปิดจะเป็นแม่แบบตอนส่งออกรถใหม่เป็น .0m</p>
+      <p class="hint">เลือกโฟลเดอร์รถ (เช่น car/escarabajo) หรือลากโฟลเดอร์มาวางบนจอ 3D ได้เลย
+        โปรแกรมจะประกอบตัวถัง + ชิ้นส่วนในโฟลเดอร์ย่อยให้ แล้วเลือกเปลี่ยนชิ้นได้ด้านล่าง</p>
+      <div id="om-parts"></div>
       <pre id="om-status" class="hint"></pre>
     </section>
     <section class="block">
@@ -55,6 +58,7 @@
     </section>
   </aside>
   <main id="viewport">
+    <div id="drop-hint" hidden>วางโฟลเดอร์รถ RayCity ที่นี่</div>
     <div id="hud">
       <div id="stats"></div>
       <div class="btns">

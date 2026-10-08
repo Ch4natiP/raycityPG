@@ -59,10 +59,19 @@ for (let i = 0; i < 40; i++) {
 
 // --- Materials (shared, updated from the color params) ------------------------
 const mats = {
-  paint: new THREE.MeshStandardMaterial({ name: 'Paint' }),
+  paint: new THREE.MeshPhysicalMaterial({ name: 'Paint', clearcoatRoughness: 0.04, side: THREE.DoubleSide }),
   stripe: new THREE.MeshStandardMaterial({ name: 'Stripe' }),
-  trim: new THREE.MeshStandardMaterial({ name: 'Trim', roughness: 0.6, metalness: 0.1 }),
-  glass: new THREE.MeshStandardMaterial({ name: 'Glass', roughness: 0.05, metalness: 0.9 }),
+  trim: new THREE.MeshStandardMaterial({ name: 'Trim', roughness: 0.6, metalness: 0.1, side: THREE.DoubleSide }),
+  glass: new THREE.MeshPhysicalMaterial({
+    name: 'Glass', roughness: 0.03, metalness: 0.2, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+  }),
+  chromeDark: new THREE.MeshStandardMaterial({ name: 'ChromeDark', color: '#2a2d31', roughness: 0.2, metalness: 1 }),
+  lens: new THREE.MeshPhysicalMaterial({ name: 'Lens', color: '#ffffff', emissive: '#e8f1ff', emissiveIntensity: 1.6, roughness: 0.05 }),
+  indicator: new THREE.MeshStandardMaterial({ name: 'Indicator', color: '#ffb000', emissive: '#ff8a00', emissiveIntensity: 0.4 }),
+  reverse: new THREE.MeshStandardMaterial({ name: 'ReverseLight', color: '#f2f2f2', emissive: '#ffffff', emissiveIntensity: 0.2 }),
+  fog: new THREE.MeshStandardMaterial({ name: 'FogLight', color: '#ffffff', emissive: '#fff6d8', emissiveIntensity: 1.2 }),
+  seam: new THREE.MeshStandardMaterial({ name: 'PanelSeam', color: '#050505', roughness: 0.9 }),
+  interior: new THREE.MeshStandardMaterial({ name: 'Interior', roughness: 0.85 }),
   rim: new THREE.MeshStandardMaterial({ name: 'Rim', roughness: 0.25, metalness: 0.9, side: THREE.DoubleSide }),
   rimDark: new THREE.MeshStandardMaterial({ name: 'RimInner', color: '#121314', roughness: 0.8 }),
   tire: new THREE.MeshStandardMaterial({ name: 'Tire', color: '#1a1a1a', roughness: 0.92 }),
@@ -79,6 +88,9 @@ function applyMaterials(p) {
   mats.paint.color.set(p.paintColor);
   mats.paint.metalness = p.metalness;
   mats.paint.roughness = p.roughness;
+  mats.paint.clearcoat = p.clearcoat;
+  mats.glass.opacity = p.glassOpacity;
+  mats.interior.color.set(p.interiorColor);
   mats.stripe.color.set(p.stripeColor);
   mats.stripe.metalness = p.metalness * 0.6;
   mats.stripe.roughness = p.roughness;
@@ -322,6 +334,8 @@ function showImported(group) {
 
 async function openOmFiles(fileList) {
   const files = [...fileList];
+  folder = null;
+  document.getElementById('om-parts').innerHTML = '';
   const oms = files.filter((f) => /\.0m$/i.test(f.name)).sort((a, b) => a.name.localeCompare(b.name));
   const tex = files.find((f) => /\.(png|jpe?g)$/i.test(f.name));
   if (!oms.length) { alert('กรุณาเลือกไฟล์ .0m อย่างน้อย 1 ไฟล์'); return; }
@@ -387,7 +401,140 @@ function exportOm() {
   }
 }
 
+// --- Whole car folder ----------------------------------------------------------
+// entries: [{ file, path }] with paths relative to the picked/dropped folder.
+let folder = null; // { name, groups: Map(dir -> [{file, path}]), texture, choice: Map(dir -> path|'') }
+
+function folderGroups(entries) {
+  // Drop the common first segment (the car folder itself) when every path has it.
+  const first = entries[0].path.split('/')[0];
+  const strip = entries.every((e) => e.path.split('/').length > 1 && e.path.split('/')[0] === first);
+  const groups = new Map();
+  let texture = null;
+  for (const e of entries) {
+    const rel = strip ? e.path.split('/').slice(1).join('/') : e.path;
+    if (/\.0m$/i.test(rel)) {
+      const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '';
+      if (!groups.has(dir)) groups.set(dir, []);
+      groups.get(dir).push({ ...e, rel });
+    } else if (/_base\.png$/i.test(rel) && !rel.includes('/')) {
+      texture = e.file;
+    } else if (!texture && /\.png$/i.test(rel) && !rel.includes('/') && !/_s\.|icon/i.test(rel)) {
+      texture = e.file;
+    }
+  }
+  for (const list of groups.values()) list.sort((a, b) => a.rel.localeCompare(b.rel, undefined, { numeric: true }));
+  return { name: strip ? first : 'car', groups, texture };
+}
+
+async function openCarFolder(entries) {
+  if (!entries.length) return;
+  const f = folderGroups(entries);
+  if (!f.groups.size) { alert('ไม่พบไฟล์ .0m ในโฟลเดอร์นี้'); return; }
+  f.choice = new Map();
+  for (const [dir, list] of f.groups) {
+    // Body: first file. Parts: first variant. Opened doors are an alternative state, off by default.
+    f.choice.set(dir, /door/i.test(dir) ? '' : list[0].rel);
+  }
+  folder = f;
+  template = null;
+  buildPartPickers();
+  await assembleFolder();
+}
+
+function buildPartPickers() {
+  const box = document.getElementById('om-parts');
+  box.innerHTML = '';
+  const dirs = [...folder.groups.keys()].sort((a, b) => (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b)));
+  for (const dir of dirs) {
+    const row = document.createElement('label');
+    row.className = 'row row-select';
+    const lbl = document.createElement('span');
+    lbl.className = 'lbl';
+    lbl.textContent = dir || 'ตัวถัง (body)';
+    const sel = document.createElement('select');
+    if (dir) sel.add(new Option('— ไม่ใส่ —', ''));
+    for (const e of folder.groups.get(dir)) sel.add(new Option(e.rel.split('/').pop(), e.rel));
+    sel.value = folder.choice.get(dir);
+    sel.addEventListener('change', () => { folder.choice.set(dir, sel.value); assembleFolder(); });
+    row.append(lbl, sel);
+    box.appendChild(row);
+  }
+}
+
+async function assembleFolder() {
+  let mats2 = omColorMats;
+  if (folder.texture) {
+    const t = await new THREE.TextureLoader().loadAsync(URL.createObjectURL(folder.texture));
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.flipY = false;
+    mats2 = [new THREE.MeshStandardMaterial({ name: 'RC_Texture', map: t, roughness: 0.45, metalness: 0.3, side: THREE.DoubleSide })];
+  }
+  const group = new THREE.Group();
+  group.name = folder.name;
+  const notes = [];
+  let colorIndex = 0;
+  for (const [dir, rel] of folder.choice) {
+    if (!rel) continue;
+    const e = folder.groups.get(dir).find((x) => x.rel === rel);
+    try {
+      const om = parseOM(await e.file.arrayBuffer());
+      // Without a texture, give every part its own color so the pieces are easy to tell apart.
+      const partMats = folder.texture ? mats2 : om.submeshes.map(() => mats2[colorIndex++ % mats2.length]);
+      const obj = omToObject(om, partMats);
+      obj.name = rel.replace(/\//g, '_').replace(/\.0m$/i, '');
+      group.add(obj);
+      if (!dir && !template) template = { om, name: rel.split('/').pop() };
+      notes.push(`✔ ${rel}: ${om.positions.length / 3} จุด, ${om.submeshes.length} ชิ้น`);
+    } catch (err) {
+      notes.push(`✘ ${rel}: อ่านไม่ได้ (${err.message})`);
+    }
+  }
+  group.userData.files = `โฟลเดอร์ ${folder.name}`;
+  showImported(group);
+  setOmStatus(`${notes.join('\n')}\nแม่แบบสำหรับส่งออก: ${template ? template.name : '-'}`);
+}
+
+// Collects files from a drag-and-drop, walking into folders.
+async function droppedEntries(dt) {
+  const out = [];
+  const walk = async (entry, prefix) => {
+    if (entry.isFile) {
+      const file = await new Promise((res, rej) => entry.file(res, rej));
+      out.push({ file, path: prefix + entry.name });
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      let batch;
+      do {
+        batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+        for (const child of batch) await walk(child, `${prefix}${entry.name}/`);
+      } while (batch.length);
+    }
+  };
+  const roots = [...dt.items].map((it) => it.webkitGetAsEntry && it.webkitGetAsEntry()).filter(Boolean);
+  for (const r of roots) await walk(r, '');
+  return out;
+}
+
 function bindOmButtons() {
+  const dirInput = document.getElementById('file-om-dir');
+  document.getElementById('btn-om-folder').addEventListener('click', () => dirInput.click());
+  dirInput.addEventListener('change', async (e) => {
+    await openCarFolder([...e.target.files].map((file) => ({ file, path: file.webkitRelativePath || file.name })));
+    e.target.value = '';
+  });
+  const hint = document.getElementById('drop-hint');
+  viewport.addEventListener('dragover', (e) => { e.preventDefault(); hint.hidden = false; });
+  viewport.addEventListener('dragleave', (e) => { if (e.target === viewport || e.target === renderer.domElement) hint.hidden = true; });
+  // Dropping outside the 3D view should not make the browser open the file.
+  window.addEventListener('dragover', (e) => e.preventDefault());
+  window.addEventListener('drop', (e) => e.preventDefault());
+  viewport.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    hint.hidden = true;
+    const entries = await droppedEntries(e.dataTransfer);
+    if (entries.length) await openCarFolder(entries);
+  });
   const input = document.getElementById('file-om');
   document.getElementById('btn-om-open').addEventListener('click', () => input.click());
   input.addEventListener('change', async (e) => { await openOmFiles(e.target.files); e.target.value = ''; });
@@ -498,4 +645,4 @@ resize();
 tick();
 
 // Handy for scripting / automated tests.
-window.carGenerator = { setParams, getParams: () => ({ ...params }), exportGLB, exportOBJ, randomParams, openOmFiles };
+window.carGenerator = { setParams, getParams: () => ({ ...params }), exportGLB, exportOBJ, randomParams, openOmFiles, openCarFolder };

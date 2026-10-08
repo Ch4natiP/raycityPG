@@ -287,6 +287,27 @@ function buildBody(p, prof) {
   });
 }
 
+// Cabin cross-section at t: side widths at the belt (wb) and roof (wt), belt height and roof height.
+function cabinSection(p, prof, t) {
+  const hb = prof.halfW(t);
+  const wb = Math.min(hb * 0.9, prof.shoulderX(t));
+  const wt = Math.min(hb * p.cabinTopWidth, wb);
+  const base = prof.surfaceY(t, wb) - 0.015;
+  const { windshieldBase: tW, roofFront: tRF, roofRear: tRR, rearWindowBase: tR } = p;
+  let roofY;
+  if (t <= tRF) {
+    const s = clamp((t - tW) / (tRF - tW), 0, 1);
+    roofY = base + (p.roofHeight - base) * Math.sin((s * Math.PI) / 2);
+  } else if (t <= tRR) {
+    const s = (t - tRF) / (tRR - tRF);
+    roofY = p.roofHeight + 0.025 * Math.sin(Math.PI * s);
+  } else {
+    const s = clamp((t - tRR) / (tR - tRR), 0, 1);
+    roofY = base + (p.roofHeight - base) * Math.cos((s * Math.PI) / 2);
+  }
+  return { wb, wt, base, roofY: Math.max(roofY, base) };
+}
+
 function buildCabin(p, prof) {
   const tW = p.windshieldBase;
   const tRF = p.roofFront;
@@ -306,22 +327,7 @@ function buildCabin(p, prof) {
   const zs = [];
   let stripeSeg = -1;
   for (const t of tl) {
-    const hb = prof.halfW(t);
-    const wb = Math.min(hb * 0.9, prof.shoulderX(t));
-    const wt = Math.min(hb * p.cabinTopWidth, wb);
-    const base = prof.surfaceY(t, wb) - 0.015;
-    let roofY;
-    if (t <= tRF) {
-      const s = (t - tW) / (tRF - tW);
-      roofY = base + (p.roofHeight - base) * Math.sin((s * Math.PI) / 2);
-    } else if (t <= tRR) {
-      const s = (t - tRF) / (tRR - tRF);
-      roofY = p.roofHeight + 0.025 * Math.sin(Math.PI * s);
-    } else {
-      const s = (t - tRR) / (tR - tRR);
-      roofY = base + (p.roofHeight - base) * Math.cos((s * Math.PI) / 2);
-    }
-    roofY = Math.max(roofY, base);
+    const { wb, wt, base, roofY } = cabinSection(p, prof, t);
     const h = roofY - base;
     const radc = Math.min(0.09, h * 0.45, wt * 0.5);
     const half = [];
@@ -391,7 +397,9 @@ function buildWheelGeometries(p) {
   const spokeLen = rimR * 0.92 - hubR * 0.8;
   const addSpoke = (angle, width, offset = 0) => {
     const g = new THREE.BoxGeometry(0.03, spokeLen, width);
-    g.translate(face - 0.015, hubR * 0.8 + spokeLen / 2, offset);
+    g.translate(0, spokeLen / 2, offset);
+    g.rotateZ(0.12); // concave rim: spokes lean in towards the hub
+    g.translate(face - 0.015 - Math.sin(0.12) * spokeLen, hubR * 0.8, 0);
     g.rotateX(angle);
     rimParts.push(g);
   };
@@ -409,6 +417,13 @@ function buildWheelGeometries(p) {
     for (let i = 0; i < n * 2; i++) addSpoke((i / (n * 2)) * Math.PI * 2, sw * 0.4);
   } else {
     for (let i = 0; i < n; i++) addSpoke((i / n) * Math.PI * 2, sw);
+  }
+  // Center cap and lug nuts
+  rimParts.push(toXAxis(new THREE.CylinderGeometry(hubR * 0.55, hubR * 0.6, 0.02, 12)).translate(face + 0.02, 0, 0));
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * Math.PI * 2;
+    rimParts.push(toXAxis(new THREE.CylinderGeometry(0.011, 0.011, 0.02, 6))
+      .translate(face + 0.02, Math.cos(a) * hubR * 0.75, Math.sin(a) * hubR * 0.75));
   }
   const rim = mergeGeometries(rimParts, false);
 
@@ -468,6 +483,213 @@ function cylZ(r, len, mat, name, seg = 16) {
   return m;
 }
 
+function headlightAssembly(p, W, mats, name, side) {
+  const g = new THREE.Group();
+  g.name = name;
+  const style = p.headlightStyle;
+  if (style === 'round') {
+    g.add(cylZ(0.095, 0.1, mats.chromeDark, `${name}_Housing`, 24));
+    const lens = cylZ(0.06, 0.04, mats.chrome, `${name}_Reflector`, 20);
+    lens.position.z = 0.045;
+    g.add(lens);
+    const bulb = cylZ(0.035, 0.05, mats.headlight, `${name}_Lamp`, 16);
+    bulb.position.z = 0.05;
+    g.add(bulb);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.095, 0.01, 8, 24), mats.chrome);
+    ring.name = `${name}_Ring`;
+    ring.position.z = 0.05;
+    g.add(ring);
+    return g;
+  }
+  const slim = style === 'slim';
+  const w = slim ? W * 0.24 : W * 0.19;
+  const h = slim ? 0.07 : 0.12;
+  g.add(box(w, h, 0.1, mats.chromeDark, `${name}_Housing`));
+  // Projector lenses: chrome bowl + glowing lens, the outer one larger.
+  const r = Math.min(h * 0.34, 0.042);
+  [0.28, -0.12].forEach((f, i) => {
+    const lr = i === 0 ? r : r * 0.85;
+    const bowl = cylZ(lr * 1.25, 0.03, mats.chrome, `${name}_Bowl`, 20);
+    bowl.position.set(side * w * f, slim ? 0 : -h * 0.08, 0.04);
+    g.add(bowl);
+    const lens = new THREE.Mesh(new THREE.SphereGeometry(lr, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2).rotateX(Math.PI / 2), mats.lens);
+    lens.name = `${name}_Lens`;
+    lens.position.set(side * w * f, slim ? 0 : -h * 0.08, 0.05);
+    g.add(lens);
+  });
+  // Daytime running light strip
+  const drl = box(w * 0.9, 0.014, 0.02, mats.headlight, `${name}_DRL`);
+  drl.position.set(0, h / 2 - 0.016, 0.045);
+  g.add(drl);
+  if (!slim) {
+    const ind = box(w * 0.22, 0.03, 0.02, mats.indicator, `${name}_Indicator`);
+    ind.position.set(-side * w * 0.36, -h * 0.25, 0.045);
+    g.add(ind);
+  }
+  return g;
+}
+
+function buildGrille(p, prof, mats) {
+  const { W } = prof;
+  const g = new THREE.Group();
+  g.name = 'Grille';
+  const gh = Math.max(0.07, (p.noseHeight - prof.bottom(0)) * 0.34);
+  const gy = lerp(prof.bottom(0.01), p.noseHeight, 0.45);
+  const frame = (w, h, x, name) => {
+    const f = new THREE.Group();
+    f.name = name;
+    f.add(box(w, h, 0.05, mats.trim, `${name}_Back`));
+    for (const [fw, fh, fx, fy] of [[w, 0.012, 0, h / 2], [w, 0.012, 0, -h / 2], [0.012, h, w / 2, 0], [0.012, h, -w / 2, 0]]) {
+      const b = box(fw + 0.012, fh, 0.02, mats.chrome, `${name}_Frame`);
+      b.position.set(fx, fy, 0.03);
+      f.add(b);
+    }
+    f.position.x = x;
+    return f;
+  };
+  let gw;
+  if (p.grille === 'kidney') {
+    const kw = W * 0.12;
+    const kh = gh * 1.25;
+    gw = kw * 2 + 0.05;
+    for (const side of [1, -1]) {
+      const k = frame(kw, kh, side * (kw / 2 + 0.025), side > 0 ? 'Kidney_L' : 'Kidney_R');
+      for (let i = 1; i < 8; i++) {
+        const slat = box(0.012, kh * 0.94, 0.03, mats.chrome, 'KidneySlat');
+        slat.position.set(-kw / 2 + (kw * i) / 8, 0, 0.015);
+        k.add(slat);
+      }
+      g.add(k);
+    }
+  } else if (p.grille === 'wide') {
+    gw = W * 0.6;
+    const f = frame(gw, gh, 0, 'GrilleMesh');
+    for (let r = 0; r < 4; r++) {
+      for (let c = 0; c < 14; c++) {
+        const cell = box(gw / 16, gh / 6, 0.02, mats.chromeDark, 'GrilleCell');
+        cell.position.set(-gw / 2 + ((c + 0.5 + (r % 2) * 0.5) * gw) / 14.5, -gh / 2 + ((r + 0.5) * gh) / 4, 0.02);
+        f.add(cell);
+      }
+    }
+    g.add(f);
+  } else {
+    gw = W * 0.36;
+    const f = frame(gw, gh, 0, 'GrilleSlats');
+    for (let i = 1; i < 5; i++) {
+      const slat = box(gw * 0.98, 0.014, 0.03, mats.chrome, 'GrilleSlat');
+      slat.position.set(0, -gh / 2 + (gh * i) / 5, 0.015);
+      f.add(slat);
+    }
+    g.add(f);
+  }
+  g.position.set(0, gy, surfaceZ(prof, gw / 2, gy, true) - 0.015);
+  return g;
+}
+
+// Door seams and handles on both sides.
+function buildPanelLines(p, prof, mats) {
+  const g = new THREE.Group();
+  g.name = 'PanelLines';
+  const tB = lerp(p.roofFront, p.roofRear, 0.45);
+  const zFront = prof.axles[0] - prof.archR - 0.1;
+  const zB = prof.zOf(tB);
+  const zRearEnd = prof.axles[1] + prof.archR + 0.08;
+  const seams = [zFront, zB];
+  const doors = [[zFront, zB]];
+  if (zB - zRearEnd > 0.6) { seams.push(zRearEnd); doors.push([zB, zRearEnd]); }
+  for (const side of [1, -1]) {
+    for (const z of seams) {
+      const t = (prof.L / 2 - z) / prof.L;
+      const y0 = Math.max(prof.bottom(t), prof.arch(t)) + 0.06;
+      const y1 = prof.sideTop(t) - prof.edgeRadius(t) - 0.02;
+      if (y1 - y0 < 0.1) continue;
+      const seam = box(0.012, y1 - y0, 0.007, mats.seam, 'DoorSeam');
+      seam.castShadow = false;
+      seam.position.set(prof.halfW(t) * side, (y0 + y1) / 2, z);
+      g.add(seam);
+    }
+    for (const [z0, z1] of doors) {
+      const z = z1 + 0.16;
+      const t = (prof.L / 2 - z) / prof.L;
+      const y = prof.sideTop(t) - prof.edgeRadius(t) - 0.1;
+      const handle = box(0.03, 0.028, 0.13, mats.chrome, 'DoorHandle');
+      handle.position.set((prof.halfW(t) + 0.008) * side, y, z);
+      g.add(handle);
+    }
+  }
+  return g;
+}
+
+// Seats, dashboard and steering wheel: visible through the glass.
+function buildInterior(p, prof, mats) {
+  const g = new THREE.Group();
+  g.name = 'Interior';
+  const tW = p.windshieldBase;
+  const tR = p.rearWindowBase;
+  const tB = lerp(p.roofFront, p.roofRear, 0.45);
+  const mid = cabinSection(p, prof, tB);
+  // Floor covering the body's top surface inside the cabin, in segments that follow the body
+  // and stay where the cabin is tall enough to hide them.
+  const segs = 12;
+  for (let i = 0; i < segs; i++) {
+    const t0 = lerp(tW, tR, i / segs);
+    const t1 = lerp(tW, tR, (i + 1) / segs);
+    const tm = (t0 + t1) / 2;
+    const sec = cabinSection(p, prof, tm);
+    if (Math.min(cabinSection(p, prof, t0).roofY - cabinSection(p, prof, t0).base,
+      cabinSection(p, prof, t1).roofY - cabinSection(p, prof, t1).base) < 0.2) continue;
+    const y = Math.max(prof.surfaceY(t0, 0), prof.surfaceY(t1, 0)) + 0.01;
+    const seg = box(sec.wb * 1.85, 0.02, (t1 - t0) * prof.L + 0.01, mats.interior, 'InteriorFloor');
+    seg.position.set(0, y, prof.zOf(tm));
+    seg.castShadow = false;
+    g.add(seg);
+  }
+  const seat = (x, z, name, width = 0.5) => {
+    const t = (prof.L / 2 - z) / prof.L;
+    const sec = cabinSection(p, prof, t);
+    const top = Math.min(sec.roofY - 0.32, sec.base + 0.42);
+    if (top < sec.base + 0.05) return new THREE.Group();
+    const s = new THREE.Group();
+    s.name = name;
+    const back = box(width, top - sec.base + 0.25, 0.12, mats.interior, `${name}_Back`);
+    back.position.set(0, (top + sec.base - 0.25) / 2, 0);
+    back.rotation.x = -0.12;
+    s.add(back);
+    if (width < 1) {
+      const head = box(width * 0.5, 0.16, 0.1, mats.interior, `${name}_Headrest`);
+      head.position.set(0, top + 0.1, -0.03);
+      s.add(head);
+    }
+    s.position.set(x, 0, z);
+    return s;
+  };
+  const seatX = mid.wb * 0.48;
+  const zSeat = prof.zOf(tB) + 0.08;
+  g.add(seat(seatX, zSeat, 'Seat_L'), seat(-seatX, zSeat, 'Seat_R'));
+  const zRear = zSeat - 0.85;
+  if (zRear > prof.zOf(tR) + 0.2) g.add(seat(0, zRear, 'RearBench', mid.wb * 1.7));
+  // Dashboard under the windshield
+  const tD = tW + 0.05;
+  const dSec = cabinSection(p, prof, tD);
+  const tD2 = tW + 0.35 / prof.L;
+  const dSec2 = cabinSection(p, prof, tD2);
+  const dh = Math.max(0.03, Math.min(0.12, (dSec.roofY - dSec.base) * 0.6));
+  const dash = box(dSec2.wb * 1.6, dh, 0.35, mats.interior, 'Dashboard');
+  dash.position.set(0, dSec2.base + dh / 2 - 0.01, prof.zOf(tD2));
+  g.add(dash);
+  // Steering wheel in front of the driver
+  const sx = p.driveSide === 'right' ? -seatX : seatX;
+  const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.022, 8, 24), mats.trim);
+  wheel.name = 'SteeringWheel';
+  const zw = zSeat + 0.5;
+  const tw = (prof.L / 2 - zw) / prof.L;
+  const wSec = cabinSection(p, prof, tw);
+  wheel.position.set(sx, Math.min(wSec.base + 0.2, wSec.roofY - 0.25), zw);
+  wheel.rotation.x = -0.35;
+  g.add(wheel);
+  return g;
+}
+
 function buildDetails(p, prof, mats) {
   const group = new THREE.Group();
   group.name = 'Details';
@@ -481,14 +703,7 @@ function buildDetails(p, prof, mats) {
   for (const side of [1, -1]) {
     const x = hlX * side;
     const name = side > 0 ? 'Headlight_L' : 'Headlight_R';
-    let m;
-    if (p.headlightStyle === 'round') {
-      m = cylZ(0.085, 0.12, mats.headlight, name, 20);
-    } else if (p.headlightStyle === 'slim') {
-      m = box(W * 0.24, 0.05, 0.12, mats.headlight, name);
-    } else {
-      m = box(W * 0.18, 0.1, 0.12, mats.headlight, name);
-    }
+    const m = headlightAssembly(p, W, mats, name, side);
     const z = surfaceZ(prof, x + side * W * 0.06, yF, true);
     m.position.set(x, yF, z - 0.035);
     lights.add(m);
@@ -501,6 +716,9 @@ function buildDetails(p, prof, mats) {
     const z = surfaceZ(prof, prof.halfW(1) * 0.75, yT, false);
     const m = box(prof.halfW(1) * 1.8, 0.07, 0.1, mats.taillight, 'Taillight_Bar');
     m.position.set(0, yT, z + 0.03);
+    const strip = box(prof.halfW(1) * 1.7, 0.012, 0.02, mats.reverse, 'ReverseLight');
+    strip.position.set(0, -0.022, -0.05);
+    m.add(strip);
     lights.add(m);
   } else {
     for (const side of [1, -1]) {
@@ -511,20 +729,42 @@ function buildDetails(p, prof, mats) {
         : box(W * 0.2, 0.09, 0.12, mats.taillight, name);
       const z = surfaceZ(prof, x + side * W * 0.07, yT, false);
       m.position.set(x, yT, z + 0.035);
+      const rev = box(0.06, 0.03, 0.02, mats.reverse, 'ReverseLight');
+      rev.position.set(-side * W * 0.05, -0.012, -0.055);
+      m.add(rev);
       lights.add(m);
     }
   }
   group.add(lights);
 
   // Grille
-  if (p.grille !== 'none') {
-    const gw = p.grille === 'wide' ? W * 0.62 : W * 0.34;
-    const gh = Math.max(0.06, (p.noseHeight - prof.bottom(0)) * 0.35);
-    const gy = lerp(prof.bottom(0.01), p.noseHeight, 0.42);
-    const m = box(gw, gh, 0.08, mats.trim, 'Grille');
-    m.position.set(0, gy, surfaceZ(prof, gw / 2, gy, true) - 0.03);
-    group.add(m);
+  if (p.grille !== 'none') group.add(buildGrille(p, prof, mats));
+
+  // Lower intake and fog lights
+  const yLow = lerp(prof.bottom(0.01), p.noseHeight, 0.2);
+  if (p.noseHeight - prof.bottom(0) > 0.25) {
+    const iw = W * 0.42;
+    const intake = box(iw, 0.07, 0.06, mats.trim, 'LowerIntake');
+    intake.position.set(0, yLow - 0.02, surfaceZ(prof, iw / 2, yLow, true) - 0.02);
+    group.add(intake);
   }
+  if (p.fogLights) {
+    for (const side of [1, -1]) {
+      const x = prof.halfW(0.02) * 0.7 * side;
+      const housing = box(0.16, 0.08, 0.06, mats.trim, side > 0 ? 'FogLight_L' : 'FogLight_R');
+      housing.position.set(x, yLow, surfaceZ(prof, x + side * 0.08, yLow, true) - 0.02);
+      const lamp = cylZ(0.03, 0.02, mats.fog, 'FogLamp', 16);
+      lamp.position.set(0, 0, 0.025);
+      housing.add(lamp);
+      const ring = cylZ(0.038, 0.012, mats.chrome, 'FogRing', 16);
+      ring.position.set(0, 0, 0.022);
+      housing.add(ring);
+      group.add(housing);
+    }
+  }
+
+  if (p.panelLines) group.add(buildPanelLines(p, prof, mats));
+  if (p.interior) group.add(buildInterior(p, prof, mats));
 
   // License plates
   if (p.plates) {

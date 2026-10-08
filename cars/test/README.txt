@@ -8,3 +8,9 @@ test1_escarabajo_as_rc_canyon.zip
 test2_rc_canyon_old.zip
   The previous rc_canyon, the one that could be spawned before.
   Crashes now as well → something outside the car folder changed since then.
+
+test3_rc_canyon_as_escarabajo.zip
+  The new rc_canyon renamed to escarabajo (unpacks to a folder named escarabajo, spec xml left out).
+  Back up the game's escarabajo folder, put this one in its place, then open an escarabajo in the
+  garage. Works → our files are fine and the crash comes from registering a new car name
+  (client-side car data). Crashes → the files themselves are the problem.

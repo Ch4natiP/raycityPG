@@ -250,7 +250,10 @@ function buildPresetBar() {
   for (const [key, preset] of Object.entries(PRESETS)) {
     const b = document.createElement('button');
     b.textContent = preset.label;
-    b.addEventListener('click', () => setParams(presetParams(key)));
+    b.addEventListener('click', () => {
+      if (imported) showImported(null); // back from a RayCity car to the generator
+      setParams(presetParams(key));
+    });
     bar.appendChild(b);
   }
 }
@@ -619,7 +622,32 @@ async function droppedEntries(dt) {
   return out;
 }
 
+// Cars embedded at build time (../cars/<name>): one button each, opened like a dropped folder.
+async function openEmbeddedCar(name) {
+  const b64 = (window.RC_EMBEDDED_CARS || {})[name];
+  const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const json = await new Response(new Blob([bin]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  const entries = Object.entries(JSON.parse(json)).map(([p, data]) => ({
+    path: p,
+    file: new File([Uint8Array.from(atob(data), (c) => c.charCodeAt(0))], p.split('/').pop()),
+  }));
+  await openCarFolder(entries);
+}
+
+function bindEmbeddedCars() {
+  const box = document.getElementById('embedded-cars');
+  for (const name of Object.keys(window.RC_EMBEDDED_CARS || {})) {
+    const b = document.createElement('button');
+    b.className = 'accent';
+    b.textContent = `🏎 ${name}`;
+    b.title = 'เปิดรถ RayCity ที่ทำไว้แล้ว';
+    b.addEventListener('click', () => openEmbeddedCar(name));
+    box.appendChild(b);
+  }
+}
+
 function bindOmButtons() {
+  bindEmbeddedCars();
   const dirInput = document.getElementById('file-om-dir');
   document.getElementById('btn-om-folder').addEventListener('click', () => dirInput.click());
   dirInput.addEventListener('change', async (e) => {

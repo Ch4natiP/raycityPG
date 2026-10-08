@@ -24,8 +24,8 @@ fs.writeFileSync('RayCity-Car-Generator.html', html);
 fs.writeFileSync('js/embedded-cars.js', `${embedCars()}\n`); // same data for the dev page (index.html)
 console.log(`RayCity-Car-Generator.html: ${(html.length / 1024).toFixed(0)} KB`);
 
-// Built cars in ../cars/<name>/ are embedded so they open with one click: LOD 2 meshes, list.xml,
-// textures and spec, as gzip + base64 of a JSON { path: base64 } map.
+// Built cars in ../cars/<name>/ are embedded whole (every file, so the page can open them with one
+// click and download the complete folder), as gzip + base64 of a JSON { path: base64 } map.
 function embedCars() {
   const dir = path.resolve('../cars');
   const cars = {};
@@ -38,8 +38,8 @@ function embedCars() {
         for (const e of fs.readdirSync(d, { withFileTypes: true })) {
           const f = path.join(d, e.name);
           const rel = path.relative(root, f).split(path.sep).join('/');
-          if (e.isDirectory()) { if (e.name !== 'icon') walk(f); continue; }
-          if (/_2\.0m$|list\.xml$|\.png$/i.test(rel) || rel === `${name}.xml`) files[`${name}/${rel}`] = fs.readFileSync(f).toString('base64');
+          if (e.isDirectory()) { walk(f); continue; }
+          files[`${name}/${rel}`] = fs.readFileSync(f).toString('base64');
         }
       };
       walk(root);

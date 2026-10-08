@@ -6,6 +6,7 @@ import { OBJExporter } from 'three/addons/exporters/OBJExporter.js';
 import { buildCar, disposeObject } from './carBuilder.js';
 import { parseOM, omToObject, writeOM, objectToParts, mergePartsByName } from './om.js';
 import { SPEC_TEMPLATE, SPEC_FIELDS, readSpec, writeSpec, encodeSpec, decodeSpec, suggestSpec } from './carSpec.js';
+import { makeZip } from './zip.js';
 import { SCHEMA, PRESETS, presetParams, randomParams } from './params.js';
 
 const STORAGE_KEY = 'raycity-car-generator:params';
@@ -362,6 +363,7 @@ function showImported(group) {
 async function openOmFiles(fileList) {
   const files = [...fileList];
   folder = null;
+  looseFiles = files;
   document.getElementById('om-parts').innerHTML = '';
   const oms = files.filter((f) => /\.0m$/i.test(f.name)).sort((a, b) => a.name.localeCompare(b.name));
   const tex = files.find((f) => /\.(png|jpe?g)$/i.test(f.name));
@@ -433,6 +435,7 @@ function exportOm() {
 // type (hood, roof, ...). Each subfolder has list.xml naming its variants:
 //   <part id='0' name='default' mesh='default' tex='escarabajo_hood' />  →  default_<lod>.0m + escarabajo_hood.png
 // lod 0/1/2: 2 is the most detailed.
+let looseFiles = null; // files from "open .0m" (no folder)
 let folder = null; // { name, files: Map(rel -> File), slots: [{ dir, variants: [{ name, mesh, tex }] }], choice, lod }
 
 const xmlText = async (file) => {
@@ -484,9 +487,10 @@ async function openCarFolder(entries) {
     return [slot.dir, def ? def.name : ''];
   }));
   folder = f;
-  const specFile = f.files.get(`${f.name}.xml`)
-    || [...f.files].find(([r]) => !r.includes('/') && /\.xml$/i.test(r) && r.toLowerCase() !== 'mesh.xml')?.[1];
-  if (specFile) loadSpecText(decodeSpec(await specFile.arrayBuffer()), f.name);
+  looseFiles = null;
+  f.specRel = f.files.has(`${f.name}.xml`) ? `${f.name}.xml`
+    : [...f.files.keys()].find((r) => !r.includes('/') && /\.xml$/i.test(r) && r.toLowerCase() !== 'mesh.xml');
+  if (f.specRel) loadSpecText(decodeSpec(await f.files.get(f.specRel).arrayBuffer()), f.name);
   buildPartPickers();
   await assembleFolder();
 }
@@ -631,6 +635,32 @@ async function assembleFolder() {
   setOmStatus(`${notes.join('\n')}\nแม่แบบสำหรับส่งออก: ${template ? template.name : '-'}`);
 }
 
+// One-click download of everything for the car on screen: the opened / embedded folder with all
+// LODs, textures, list.xml, dooropen, icons and the spec (with the edits made in the spec section).
+async function downloadCarZip() {
+  if (!imported || (!folder && !looseFiles)) {
+    alert('เลือกรถ RayCity ด้านบน หรือเปิดโฟลเดอร์รถ / ไฟล์ .0m ก่อน แล้วค่อยกดดาวน์โหลด');
+    return;
+  }
+  const btn = document.getElementById('btn-car-zip');
+  btn.disabled = true;
+  try {
+    const name = folder ? folder.name : imported.name;
+    const files = [];
+    const entries = folder ? [...folder.files] : looseFiles.map((f) => [f.name, f]);
+    for (const [rel, file] of entries.sort((a, b) => a[0].localeCompare(b[0]))) {
+      const data = folder && rel === folder.specRel
+        ? encodeSpec(writeSpec(spec.text, spec.values))
+        : new Uint8Array(await file.arrayBuffer());
+      files.push({ path: `${name}/${rel}`, data: new Uint8Array(data) });
+    }
+    download(await makeZip(files), `${name}.zip`);
+    setOmStatus(`ดาวน์โหลด ${name}.zip: ${files.length} ไฟล์ (แตกไฟล์แล้วได้โฟลเดอร์ ${name}/ พร้อมวางในโฟลเดอร์ car ของเกม)`);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // Collects files from a drag-and-drop, walking into folders.
 async function droppedEntries(dt) {
   const out = [];
@@ -701,6 +731,7 @@ function bindOmButtons() {
   input.addEventListener('change', async (e) => { await openOmFiles(e.target.files); e.target.value = ''; });
   document.getElementById('btn-om-back').addEventListener('click', () => showImported(null));
   document.getElementById('btn-om-export').addEventListener('click', exportOm);
+  document.getElementById('btn-car-zip').addEventListener('click', downloadCarZip);
 }
 
 // --- Car spec (.xml) -------------------------------------------------------------

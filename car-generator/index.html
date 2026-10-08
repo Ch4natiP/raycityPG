@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RayCity Car Generator</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <aside id="sidebar">
+    <header>
+      <h1>RayCity <span>Car Generator</span></h1>
+      <p class="sub">ปรับรูปทรงรถ แล้วส่งออกเป็น .glb ไปใส่ในเกม</p>
+    </header>
+    <section class="block">
+      <h2>แบบรถสำเร็จรูป</h2>
+      <div id="presets" class="btns"></div>
+      <div class="btns seed-row">
+        <button id="btn-random" class="accent">🎲 สุ่มรถ</button>
+        <input id="seed" type="number" value="1" title="Seed">
+        <button id="btn-seed" title="สร้างจาก seed นี้">ใช้ Seed</button>
+      </div>
+    </section>
+    <div id="controls"></div>
+    <section class="block">
+      <h2>ส่งออก / บันทึก</h2>
+      <div class="btns">
+        <button id="btn-glb" class="accent">ส่งออก .GLB</button>
+        <button id="btn-obj">ส่งออก .OBJ</button>
+        <button id="btn-png">ภาพ .PNG</button>
+        <button id="btn-json">บันทึก .JSON</button>
+        <button id="btn-load">โหลด .JSON</button>
+        <input id="file-json" type="file" accept=".json,application/json" hidden>
+      </div>
+    </section>
+  </aside>
+  <main id="viewport">
+    <div id="hud">
+      <div id="stats"></div>
+      <div class="btns">
+        <button id="btn-drive">🚗 ทดลองขับ</button>
+        <button id="btn-wire">Wireframe</button>
+      </div>
+      <div id="drive-help" hidden>
+        <div id="speed">0 km/h</div>
+        W/↑ เร่ง · S/↓ ถอย · A D/← → เลี้ยว · Space เบรก · R รีเซ็ต
+      </div>
+    </div>
+  </main>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

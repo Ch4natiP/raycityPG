@@ -520,7 +520,7 @@ function buildPartPickers() {
 
 // Submesh kinds from the .0m flags: glass, lamp lenses and lights drawn like in game.
 const KIND_MATS = {
-  1: new THREE.MeshStandardMaterial({ name: 'RC_Glass', color: '#11161c', roughness: 0.05, metalness: 0.6, transparent: true, opacity: 0.72, depthWrite: false, side: THREE.DoubleSide }),
+  1: new THREE.MeshStandardMaterial({ name: 'RC_Glass', color: '#24160d', roughness: 0.05, metalness: 0.5, transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide }),
   2: new THREE.MeshStandardMaterial({ name: 'RC_Headlight', color: '#dfe6ee', emissive: '#fff6e0', emissiveIntensity: 0.6, roughness: 0.05, transparent: true, opacity: 0.85, side: THREE.DoubleSide }),
   3: new THREE.MeshStandardMaterial({ name: 'RC_Taillight', color: '#8a0d0d', emissive: '#ff2020', emissiveIntensity: 0.8, roughness: 0.2, side: THREE.DoubleSide }),
   4: new THREE.MeshStandardMaterial({ name: 'RC_Indicator', color: '#c9862a', emissive: '#ffb347', emissiveIntensity: 0.4, roughness: 0.2, side: THREE.DoubleSide }),

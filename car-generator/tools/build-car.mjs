@@ -383,16 +383,40 @@ function simplifyGroup(list, targetTris, lod, interior = false, attempt = 0, two
   let out = idx.length / 3 <= targetTris ? idx
     : MeshoptSimplifier.simplify(idx, pos, 3, Math.max(3, targetTris * 3), lock ? 1 : err, lock ? ['LockBorder'] : [])[0];
   if (interior && out.length / 3 > targetTris) out = clusterSimplify(pos, out, Math.round(targetTris / (1 + attempt)));
-  if (!interior && !twoSided) return { pos, idx: out };
+  if (!interior && !twoSided) return { pos, idx: out, ref: idx };
   // Interior and ambiguous pieces are seen from any side: add the back faces after simplifying.
   const both = new Uint32Array(out.length * 2);
   both.set(out);
   for (let t = 0; t < out.length; t += 3) both.set([out[t], out[t + 2], out[t + 1]], out.length + t);
-  return { pos, idx: both };
+  return { pos, idx: both, ref: idx };
 }
 
 // Smooth normals, but split vertices where faces meet at more than `crease` degrees.
-function withNormals(pos, idx, crease = 45) {
+// Normals from the detailed source surface: for every vertex, the source faces around it are grouped
+// into smoothing groups (split at hard edges); each corner of the simplified mesh takes the group
+// closest to its face. The low-poly mesh then shades like the original instead of showing facets.
+function sourceNormals(pos, refIdx, crease = 50) {
+  const groups = new Map(); // vertex -> [{ n: [x,y,z] (area-weighted sum) }]
+  const cos = Math.cos((crease * Math.PI) / 180);
+  for (let t = 0; t < refIdx.length; t += 3) {
+    const a = refIdx[t] * 3; const b = refIdx[t + 1] * 3; const c = refIdx[t + 2] * 3;
+    const n = cross([pos[b] - pos[a], pos[b + 1] - pos[a + 1], pos[b + 2] - pos[a + 2]],
+      [pos[c] - pos[a], pos[c + 1] - pos[a + 1], pos[c + 2] - pos[a + 2]]);
+    const u = norm(n);
+    for (let k = 0; k < 3; k++) {
+      const v = refIdx[t + k];
+      let list = groups.get(v);
+      if (!list) groups.set(v, (list = []));
+      const g = list.find((x) => { const m = norm(x); return m[0] * u[0] + m[1] * u[1] + m[2] * u[2] >= cos; });
+      if (g) { g[0] += n[0]; g[1] += n[1]; g[2] += n[2]; } else list.push([...n]);
+    }
+  }
+  return groups;
+}
+
+function withNormals(pos, idx, crease = 45, refIdx = null) {
+  const ref = refIdx ? sourceNormals(pos, refIdx) : null;
+  const refCos = Math.cos((30 * Math.PI) / 180);
   const nt = idx.length / 3;
   const fn = new Float32Array(nt * 3);
   for (let t = 0; t < nt; t++) {
@@ -417,10 +441,22 @@ function withNormals(pos, idx, crease = 45) {
     const ft = fnUnit(t);
     for (let k = 0; k < 3; k++) {
       const v = idx[t * 3 + k];
-      const group = faces.get(v).filter((o) => { const fo = fnUnit(o); return fo[0] * ft[0] + fo[1] * ft[1] + fo[2] * ft[2] >= cos; });
-      let s = [0, 0, 0];
-      for (const o of group) s = [s[0] + fn[o * 3], s[1] + fn[o * 3 + 1], s[2] + fn[o * 3 + 2]];
-      const n = norm(s);
+      let n = null;
+      if (ref && ref.has(v)) {
+        let best = -2;
+        for (const g of ref.get(v)) {
+          const m = norm(g);
+          const d = m[0] * ft[0] + m[1] * ft[1] + m[2] * ft[2];
+          if (d > best) { best = d; n = m; }
+        }
+        if (best < refCos) n = null;
+      }
+      if (!n) {
+        const group = faces.get(v).filter((o) => { const fo = fnUnit(o); return fo[0] * ft[0] + fo[1] * ft[1] + fo[2] * ft[2] >= cos; });
+        let s = [0, 0, 0];
+        for (const o of group) s = [s[0] + fn[o * 3], s[1] + fn[o * 3 + 1], s[2] + fn[o * 3 + 2]];
+        n = norm(s);
+      }
       const key = `${v}|${n.map((x) => x.toFixed(2)).join(',')}`;
       let ni = cache.get(key);
       if (ni === undefined) {
@@ -459,10 +495,10 @@ function buildSlotOnce(list, budget, pal, lod, attempt) {
     const mat = key.replace(/\|2s$/, '');
     const twoSided = key.endsWith('|2s');
     const target = Math.max(4, Math.round((budget * SCALE * group.length) / total));
-    const { pos, idx } = simplifyGroup(group, target, lod, INTERIOR.test(mat), attempt, twoSided);
+    const { pos, idx, ref } = simplifyGroup(group, target, lod, INTERIOR.test(mat), attempt, twoSided);
     if (process.env.DEBUG) console.log(`    lod${lod} ${mat.padEnd(16)} src ${group.length} target ${target} got ${idx.length / 3}`);
     if (idx.length < 3) continue;
-    const g = withNormals(pos, idx);
+    const g = withNormals(pos, idx, 45, ref);
     const [u, v] = pal.uv(pal.colors[mat] ? mat : pal.keys[0]);
     // Submesh kind (flags[0]) tells the game to draw glass and lamps as such.
     const kind = /^Glass/i.test(mat) ? 1 : /projector/i.test(mat) ? 2 : /taillight/i.test(mat) ? 3 : /led/i.test(mat) ? 4 : 0;

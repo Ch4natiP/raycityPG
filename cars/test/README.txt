@@ -14,3 +14,13 @@ test3_rc_canyon_as_escarabajo.zip
   Back up the game's escarabajo folder, put this one in its place, then open an escarabajo in the
   garage. Works → our files are fine and the crash comes from registering a new car name
   (client-side car data). Crashes → the files themselves are the problem.
+
+Known so far: the old rc_canyon (test2) spawns but crashes in the garage; the new rc_canyon
+(cars/rc_canyon) crashes already when spawned.
+
+test4_new_mesh_old_textures.zip
+  New .0m meshes with the old textures and list.xml. Crashes on spawn → the new meshes are the cause.
+
+test5_old_mesh_new_textures.zip
+  Old .0m meshes with the new textures (DXT3) and list.xml. Crashes on spawn → the new textures or
+  list.xml are the cause.

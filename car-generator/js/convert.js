@@ -209,8 +209,16 @@ export async function loadModel(file) {
     for (let i = 0; i < model.P.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], model.P[i + k]); mx[k] = Math.max(mx[k], model.P[i + k]); }
     return { mn, mx };
   };
-  // Lying sideways (long along x): turn a quarter.
+  // Z-up files (scans, CAD exports): taller than long as read → height and length swapped (x negated
+  // too, so it is a turn, not a mirror image).
   let e = ext();
+  if (e.mx[2] - e.mn[2] > Math.max(e.mx[1] - e.mn[1], e.mx[0] - e.mn[0]) * 1.1) {
+    const upZ = (A) => { for (let i = 0; i < A.length; i += 3) { const y = A[i + 1]; A[i] = -A[i]; A[i + 1] = A[i + 2]; A[i + 2] = y; } };
+    upZ(model.P); upZ(model.N);
+    for (const w of wheelNodes) w.p = [-w.p[0], w.p[2], w.p[1]];
+    e = ext();
+  }
+  // Lying sideways (long along x): turn a quarter.
   if (e.mx[0] - e.mn[0] > (e.mx[1] - e.mn[1]) * 1.15) {
     const turnQ = (A) => { for (let i = 0; i < A.length; i += 3) { const x = A[i]; A[i] = -A[i + 1]; A[i + 1] = x; } };
     turnQ(model.P); turnQ(model.N);
@@ -681,7 +689,6 @@ export async function removeHidden(tris, log = () => {}, passThrough = null) {
 // reduced only as far as `cap` and the .0m format (65,535 vertices / indices) require. Material
 // borders stay the model's own edges, so colours don't zigzag.
 async function fitRaw(tris, m, cap, log) {
-  const WELD = Math.cos((35 * Math.PI) / 180);
   const bySlot = new Map();
   for (const t of tris) {
     const slot = m.slotOf(t.c0, t.n, t.mat);
@@ -691,7 +698,8 @@ async function fitRaw(tris, m, cap, log) {
     g.get(t.mat).push(t);
   }
   const out = {};
-  for (const [slot, g] of bySlot) {
+  // weldCos: points at one spot share a vertex when their normals are within this (sharp edges kept).
+  const buildParts = (g, weldCos) => {
     const parts = [];
     for (const [mat, list] of g) {
       const P = []; const N = []; const I = [];
@@ -708,7 +716,7 @@ async function fitRaw(tris, m, cap, log) {
           const n = t.vn ? norm(t.vn[j]) : t.n;
           const key = `${Math.round(p[0] * 1e4)},${Math.round(p[1] * 1e4)},${Math.round(p[2] * 1e4)}`;
           const cands = keys.get(key) || [];
-          let v = cands.find((c) => N[c * 3] * n[0] + N[c * 3 + 1] * n[1] + N[c * 3 + 2] * n[2] >= WELD);
+          let v = cands.find((c) => N[c * 3] * n[0] + N[c * 3 + 1] * n[1] + N[c * 3 + 2] * n[2] >= weldCos);
           if (v === undefined) { v = P.length / 3; P.push(...p); N.push(...n); cands.push(v); keys.set(key, cands); }
           I.push(v);
         });
@@ -721,8 +729,18 @@ async function fitRaw(tris, m, cap, log) {
         uvs: new Float32Array((P.length / 3) * 2).map((_, i) => (i % 2 ? vv : u)), indices: Uint32Array.from(I),
       });
     }
+    return parts;
+  };
+  for (const [slot, g] of bySlot) {
+    const parts = buildParts(g, Math.cos((35 * Math.PI) / 180));
     const before = parts.reduce((s, q) => s + q.positions.length / 3, 0);
-    const fit = fitParts(parts, 1, cap, 64000); // room for the template's stand-in pieces
+    let fit = fitParts(parts, 1, cap, 64000); // room for the template's stand-in pieces
+    if ((cap && fit.verts > cap) || fit.verts > 64000) {
+      // Noisy surfaces (3D scans): the sharp-edge splits leave thousands of loose islands the reducer
+      // cannot join. Welded by position only, normals smoothed afterwards.
+      const smooth = fitParts(buildParts(g, -2), 1, cap, 64000);
+      if (smooth.verts < fit.verts) { fit = smooth; log(`${slot}: ผิวขรุขระ (แบบสแกน) เชื่อมจุดทั้งหมดก่อนลด`); }
+    }
     out[slot] = fit.parts;
     log(fit.verts < before ? `${slot}: ${before.toLocaleString()} → ${fit.verts.toLocaleString()} จุด (ลดเท่าที่ต้องให้ไม่เกินเพดาน)` : `${slot}: ${before.toLocaleString()} จุด (ไม่ได้ลด)`);
     await tick();

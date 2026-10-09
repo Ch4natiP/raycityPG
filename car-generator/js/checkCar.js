@@ -185,7 +185,9 @@ export async function checkCar(files, name, template = null) {
         const u = om.uvs[i]; const v = om.uvs[i + 1];
         const x = Math.min(img.w - 1, Math.max(0, Math.floor((((u % 1) + 1) % 1) * img.w)));
         const y = Math.min(img.h - 1, Math.max(0, Math.floor((((v % 1) + 1) % 1) * img.h)));
-        if (img.data[(y * img.w + x) * 4] > 128) red++;
+        // Any of the three garage colours (red 1, green 2, blue 3) is paint.
+        const o = (y * img.w + x) * 4;
+        if (img.data[o] > 128 || img.data[o + 1] > 128 || img.data[o + 2] > 128) red++;
         if (v < 1 / 32) strip++;
         n++;
       }

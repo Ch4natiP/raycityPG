@@ -151,3 +151,9 @@ In game 49: white all over including the nose and the lower sides; the rear deck
 and the glass milky white (glass on red mask, colour layer rgb 0).
 50_canyon_49_fixed_deck_and_glass.zip  49 with every UV in v 0.42-0.70 (the band that came out white) and the
                          colour layer under the glass column at gtv98's value under its windows (56,59,59, a 0).
+In game 50: white all over, no black anywhere; glass now tinted with the paint; colour 1 repaints everything.
+Game cars use three colours (gtv98's mask: red body, green trim, blue hood), all white at first.
+51_canyon_three_colours.zip  50 with three colours like gtv98: colour 1 (red) body + glass, colour 2 (green)
+                         the model's trim / plastic / chrome materials, colour 3 (blue) the paint where gtv98
+                         has its hood. The web's ⚡ build now does 50 / 51 (choice: three colours or one colour
+                         for the whole car, McQueen-like); rc_mcqueen rebuilt with one colour.

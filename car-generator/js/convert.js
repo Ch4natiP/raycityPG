@@ -70,7 +70,7 @@ const CELLS = ['Body_Color', 'Glass_Gray', 'Grille', 'Underbody', 'plastic_gray'
 // material, paint red, the rest black. A tiny cell strip (the old layout, 32 px high) came out black
 // in game (the garage could not repaint it); full-height columns survive any resize or flip.
 const ZONES = ['Body_Color', 'Wing', 'Glass_Gray', 'Grille', 'Underbody', 'plastic_gray', 'metal_gray', 'metal_chrome', 'Carbon_Fiber',
-  'Leather', 'Interior_dark', 'Taillight_Glass', 'Projector_Glass', 'Turn_Signal_LED', 'WingDark'];
+  'Leather', 'Interior_dark', 'Taillight_Glass', 'Projector_Glass', 'Turn_Signal_LED', 'WingDark', 'Hood_Paint'];
 const cellUV = (mat) => { const i = Math.max(0, ZONES.indexOf(ZONES.includes(mat) ? mat : 'plastic_gray')); return [(i + 0.5) / 16, 0.5]; };
 // Material of a UV written by this tool: its zone column (any height), or the old top-row cell.
 export function matOfUV(u, v) {
@@ -103,11 +103,19 @@ export function zoneUVs(mat, P, N) {
 // paintAll: every zone takes the garage colour except glass, lamps and the cabin (the car repainted
 // whole in game); otherwise only the model's own paint.
 const NOT_PAINT = new Set(['Glass_Gray', 'Projector_Glass', 'Taillight_Glass', 'Turn_Signal_LED', 'Interior_dark']);
-export function maskPixels(w, h, paintAll = false) {
+// slots: the garage's three colours like gtv98's mask — colour 1 (red) body and glass, colour 2 (green)
+// trim / plastic / bumpers' unpainted parts, colour 3 (blue) the hood.
+const SLOT1 = new Set(['Body_Color', 'Wing', 'Glass_Gray']);
+export function maskPixels(w, h, paintAll = false, slots = false) {
   const px = new Uint8ClampedArray(w * h * 4);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const mat = ZONES[Math.floor((x / w) * 16)];
+      if (slots) {
+        const c = NOT_PAINT.has(mat) && mat !== 'Glass_Gray' ? [0, 0, 0] : mat === 'Hood_Paint' ? [0, 0, 255] : SLOT1.has(mat) ? [255, 0, 0] : [0, 255, 0];
+        px.set([...c, 255], (y * w + x) * 4);
+        continue;
+      }
       // Glass sits on red like gtv98's windows (its glass UVs: mask red); on black it came out fully
       // clear in game (pack 48).
       const paint = mat === 'Glass_Gray' || (paintAll ? !NOT_PAINT.has(mat) : isPaint(mat));
@@ -1101,7 +1109,7 @@ function renderIcon(bytes) {
 // ---------------------------------------------------------------------------------------------
 // The whole conversion. template: { name, files: Map(rel → Uint8Array) }. Returns Map(rel → Uint8Array).
 
-export async function convert(model, { name, template, categories = new Map(), maxVerts = 3500, voxel = 0.015, raw = false, smooth = true, hideInterior = true, paintAll = true, layout = 'template', partTextures = false, log = () => {} }) {
+export async function convert(model, { name, template, categories = new Map(), maxVerts = 3500, voxel = 0.015, raw = false, smooth = true, hideInterior = true, paintAll = true, slots = false, layout = 'template', partTextures = false, log = () => {} }) {
   await MeshoptSimplifier.ready;
   log('อ่านโมเดล…');
   const src = collect(model, categories);
@@ -1114,7 +1122,8 @@ export async function convert(model, { name, template, categories = new Map(), m
   await tick();
   const m = metrics(src.tris, src.wheels);
   let bent = null;
-  if (layout === 'template') {
+  // Both layouts put every piece into the template's file for that spot (doors in roof like gtv98).
+  if (layout === 'template' || layout === 'zones') {
     // The template bent onto this car first: every triangle goes into the file the template has at that
     // spot (gtv98's doors are in its roof file, not the body) so the UVs copied later come from the
     // same file and never jump across the texture (pack 44 / 45: black doors).
@@ -1130,6 +1139,10 @@ export async function convert(model, { name, template, categories = new Map(), m
       const s = s0 === 'headlight' || s0 === 'rearlight' ? s0 : near(c0, /glass/i.test(mat) ? 1 : 0) || s0;
       return INTO_DRAWN[s] || s;
     };
+    // Three garage colours: the paint where the template has its hood becomes colour 3 (gtv98's blue).
+    if (slots && layout === 'zones') {
+      for (const t of src.tris) if ((t.mat === 'Body_Color' || t.mat === 'Wing') && near(t.c0, 0) === 'hood') t.mat = 'Hood_Paint';
+    }
   }
   let lod;
   if (raw) {
@@ -1160,13 +1173,13 @@ export async function convert(model, { name, template, categories = new Map(), m
     await tick();
     uvsFromTemplate(lod, bent);
   }
-  return writeCar(lod, { name, template, bounds, paintAll, partTextures, layout, log });
+  return writeCar(lod, { name, template, bounds, paintAll, slots, partTextures, layout, log });
 }
 
 // A car folder in the template's layout from finished geometry. lod: { slot ('body', 'hood', ...):
 // [parts with positions, normals, uvs, indices] }; bounds: [min, max] of the body (mesh.xml).
 // Returns Map(rel → Uint8Array).
-export async function writeCar(lod, { name, template, bounds, paintAll = true, partTextures = false, layout = 'zones', log = () => {} }) {
+export async function writeCar(lod, { name, template, bounds, paintAll = true, slots = false, partTextures = false, layout = 'zones', log = () => {} }) {
   const tpl = template.files;
   const tplName = template.name;
   // layout 'template': the pieces already carry the template's UV layout (uvsFromTemplate), so the
@@ -1186,10 +1199,13 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, p
   }
   // paintAll: everything but glass / lamps / cabin samples the paint column. In game the colour follows
   // the UV column (a car with the whole mask red still showed its trim black and the hood brown).
-  for (const parts of Object.values(lod)) {
+  for (const [slot, parts] of Object.entries(lod)) {
     for (const p of parts) {
       if (asTemplate || !ZONES.includes(p.name)) continue;
-      p.uvs = zoneUVs(paintAll && !NOT_PAINT.has(p.name) ? 'Body_Color' : p.name, p.positions, p.normals);
+      // slots: each material on its own column (colour 1 / 2 / 3 by the mask; the hood's paint was
+      // named Hood_Paint where the template's hood is).
+      const mat = slots ? p.name : paintAll && !NOT_PAINT.has(p.name) ? 'Body_Color' : p.name;
+      p.uvs = zoneUVs(mat, p.positions, p.normals);
     }
   }
   const out = new Map();
@@ -1282,7 +1298,7 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, p
     }
   } else {
     const [w, h] = pngSize(tpl.get(`${tplName}_base.png`), [512, 512]);
-    const px = maskPixels(w, h, paintAll);
+    const px = maskPixels(w, h, paintAll, slots);
     out.set(`${name}_base.png`, await png(px, w, h));
     out.set(`${name}_base_s.dds`, dds(px, w, h, 'full'));
     const [cw2, ch2] = pngSize(tpl.get(`${tplName}_color.png`), [128, 64]);

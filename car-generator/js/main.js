@@ -914,7 +914,8 @@ async function openEmbeddedCar(name) {
 
 // Test packs (../cars/test/*.zip, embedded at build time): one download button each.
 const TEST_PACK_INFO = {
-  '50_canyon_49_fixed_deck_and_glass.zip': ['ชุด 50: แบบ 49 + แก้ฝาท้ายดำ + กระจกเข้มแบบ gtv98 ⭐ ลองอันนี้', 'ลายทุกจุดอยู่ช่วงกลางรูปที่ออกมาขาว · ใต้กระจกใช้ค่าสีแบบที่ gtv98 มีใต้กระจก'],
+  '51_canyon_three_colours.zip': ['ชุด 51: แบบ 50 + แยก 3 สีแบบรถในเกม ⭐ ลองอันนี้', 'สี 1 ตัวถัง · สี 2 ขอบล่าง/กันชน/ซุ้มล้อ/ขอบกระจก (วัสดุพลาสติก-โครเมียมของโมเดล) · สี 3 ฝากระโปรง · เริ่มขาวทั้งคัน'],
+  '50_canyon_49_fixed_deck_and_glass.zip': ['ชุด 50: แบบ 49 + แก้ฝาท้ายดำ (ขาวทั้งคัน สีเดียวเปลี่ยนทั้งคัน)', 'ลายทุกจุดอยู่ช่วงกลางรูปที่ออกมาขาว · ใต้กระจกใช้ค่าสีแบบที่ gtv98 มีใต้กระจก'],
   '49_canyon_48_fixed_low_and_glass.zip': ['ชุด 49: แบบ 48 + แก้แถบล่าง/หน้าดำ (ขาวเกือบหมด ฝาท้ายดำ กระจกขาวขุ่น)', 'ลายทุกจุดย้ายพ้นส่วนบนของรูป (ส่วนที่ทำให้ดำ) · ใต้กระจกเป็นสีแดงในมาสก์แบบ gtv98 (48 เป็นดำ → ใสเกิน)'],
   '48_canyon_like_40_all_white.zip': ['ชุด 48: สีแบบชุด 40 แต่ขาวทั้งคัน (ขาวทั้งคัน เปลี่ยนสีได้ แต่แถบล่างดำ กระจกใส)', 'UV/มาสก์ของเราเอง (แบบ 39/40 ที่ไม่มีสามเหลี่ยมดำ) + หน้ารถ/สเกิร์ตย้ายเข้าไฟล์ที่ทาสีได้ + ประตูใน roof + กระจกใส · ลายในร้านจะไม่ตรงแบบ gtv98'],
   '47_canyon_uv_on_islands.zip': ['ชุด 47: แบบ 46 + ลายทุกสามเหลี่ยมอยู่บนเกาะลายของ gtv98 (ยังมีสามเหลี่ยมดำ)', 'สามเหลี่ยมที่ลายตกที่ว่างระหว่างเกาะ: ตัวถัง 5% → 0.4%, หลังคา/ประตู 9% → 2%, กันชนหลัง 16% → 3.5%'],
@@ -1349,7 +1350,7 @@ function buildModelPanel() {
   const quick = document.createElement('div');
   quick.className = 'quick-box';
   quick.innerHTML = `<div class="quick-title">⚡ ทางลัด: เข้าเกมในคลิกเดียว</div>
-    <div class="hint">ถอดล้อ ✔ · ปรับให้ตรงล้อเกม ✔ · ผิวจริงของโมเดล ✔ · UV แบบ gtv98 (ใส่ลายได้) ✔ · กระจกใส ✔ · เปลี่ยนสีได้ทั้งคัน ✔ · ตรวจ + ซ่อมอัตโนมัติ ✔</div>`;
+    <div class="hint">ถอดล้อ ✔ · ปรับให้ตรงล้อเกม ✔ · ผิวจริงของโมเดล ✔ · ทุกชิ้นอยู่ไฟล์เดียวกับ gtv98 ✔ · ขาวทั้งคัน ไม่มีดำ (ชุด 50/51) ✔ · กระจกแบบ gtv98 ✔ · เลือกแยก 3 สี หรือสีเดียว ✔ · ตรวจ + ซ่อมอัตโนมัติ ✔</div>`;
   const qrow = document.createElement('div');
   qrow.className = 'btns';
   const qname = document.createElement('input');
@@ -1368,8 +1369,14 @@ function buildModelPanel() {
     <option value="4800">🔻 ลด poly (ไม่เกิน 4,800 จุดต่อไฟล์)</option>`;
   const qlog = document.createElement('pre');
   qlog.className = 'hint';
-  qgo.addEventListener('click', () => quickBuild(qname.value || 'rc_car', qgo, qlog, +qpoly.value));
-  qrow.append(qname, qpoly, qgo);
+  // Colours: three garage colours like the game's cars (they all start white), or one colour for the whole
+  // car (McQueen-like).
+  const qcol = document.createElement('select');
+  qcol.title = 'สีในโรงรถ';
+  qcol.innerHTML = `<option value="slots">🎨 แยก 3 สีแบบรถในเกม (ตัวถัง / ขอบล่าง-กันชน / ฝากระโปรง)</option>
+    <option value="one">🎨 สีเดียวเปลี่ยนทั้งคัน (แบบ McQueen)</option>`;
+  qgo.addEventListener('click', () => quickBuild(qname.value || 'rc_car', qgo, qlog, +qpoly.value, qcol.value));
+  qrow.append(qname, qpoly, qcol, qgo);
   quick.append(qrow, qlog);
   box.appendChild(quick);
   const adv = document.createElement('div');
@@ -1544,7 +1551,7 @@ function buildModelPanel() {
   const paintRow = document.createElement('label');
   paintRow.className = 'row row-check';
   paintRow.innerHTML = '<input type="checkbox" checked><span>เปลี่ยนสีได้ทั้งคัน (ยกเว้นกระจก ไฟ) · ไม่ติ๊ก = เปลี่ยนสีได้เฉพาะส่วนที่เป็นสีรถในโมเดล ที่เหลือดำ</span>';
-  const layoutSel = pickerRow('UV / กระจก', [['template', 'เหมือน gtv98 (กระจกใส · ใส่ลายได้) ⭐'], ['zones', 'ช่องสี (แบบเก่า ชุด 39)']], 'template', () => {});
+  const layoutSel = pickerRow('UV / สี', [['slots', 'แยก 3 สีแบบรถในเกม (ชุด 51) ⭐'], ['one', 'สีเดียวทั้งคัน แบบ McQueen (ชุด 50)'], ['template', 'UV เหมือน gtv98 (ใส่ลายได้ แต่มีสามเหลี่ยมดำ ชุด 47)']], 'slots', () => {});
   box.append(capSel, capHint, modeSel, modeHint, hideRow, voxSel, paintRow, layoutSel);
   const go = document.createElement('button');
   go.className = 'accent';
@@ -1563,7 +1570,7 @@ function buildModelPanel() {
         : await convert(m, {
         name, template: await modelTemplate(), categories: srcModel.categories,
         maxVerts: Number(capSel.querySelector('select').value), voxel: Number(voxSel.querySelector('select').value),
-        raw: modeSel.querySelector('select').value === 'raw', hideInterior: hideRow.querySelector('input').checked, paintAll: paintRow.querySelector('input').checked, layout: layoutSel.querySelector('select').value, log: say,
+        raw: modeSel.querySelector('select').value === 'raw', hideInterior: hideRow.querySelector('input').checked, paintAll: paintRow.querySelector('input').checked, layout: layoutSel.querySelector('select').value === 'template' ? 'template' : 'zones', slots: layoutSel.querySelector('select').value === 'slots', log: say,
       });
       say('เปิดรถที่ได้ ตรวจดูแล้วกด "ดาวน์โหลดรถคันนี้ทั้งโฟลเดอร์" ได้เลย');
       const entries = [...out].map(([rel, bytes]) => ({ path: `${name}/${rel}`, file: new File([bytes], rel.split('/').pop()) }));
@@ -1586,7 +1593,7 @@ function buildModelPanel() {
 
 // ⚡ One click: build with the settings that worked in game, check, repair what can be repaired,
 // download, and open the result for a look.
-async function quickBuild(name, btn, logEl, maxVerts = 4800) {
+async function quickBuild(name, btn, logEl, maxVerts = 4800, colours = 'slots') {
   const m = srcModel.model;
   if (!m) return;
   btn.disabled = true;
@@ -1594,7 +1601,8 @@ async function quickBuild(name, btn, logEl, maxVerts = 4800) {
   const say = (t) => { logEl.textContent = `${t}\n${logEl.textContent}`.split('\n').slice(0, 6).join('\n'); };
   try {
     const tpl = await modelTemplate();
-    let out = await convert(m, { name, template: tpl, categories: srcModel.categories, maxVerts, raw: true, hideInterior: true, paintAll: true, layout: 'template', partTextures: false, log: say });
+    // Packs 50 / 51: own colour columns (no black triangles), pieces in the template's files.
+    let out = await convert(m, { name, template: tpl, categories: srcModel.categories, maxVerts, raw: true, hideInterior: true, paintAll: true, slots: colours === 'slots', layout: 'zones', partTextures: false, log: say });
     let list = await checkCar(out, name, tpl);
     if (list.some((c) => c.level === 'bad')) {
       const r = await repairCar(out, name, tpl, true);

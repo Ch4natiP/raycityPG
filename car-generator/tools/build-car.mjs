@@ -38,6 +38,10 @@ const RAW = flag('--raw');
 const BAKE = flag('--bake') && !RAW;
 const ATLAS = Number(opt('--atlas', '1024'));
 const SAME_LODS = BAKE && opt('--same-lods', '1') === '1';
+// --normals smooth (default): smooth normals from the shell itself, averaged over shared positions. The
+// game lights per vertex, so the source's small details in the normals show up as dark triangles.
+// --normals source: take the source surface's normals (looks finer in a per-pixel viewer).
+const NORMALS = opt('--normals', 'smooth');
 const KEEP_LOGOS = flag('--keep-logos') || RAW || BAKE;
 // --max-verts N: hard cap of vertices per .0m file (the game's own files stay under ~2,000).
 const MAX_VERTS = Math.min(65000, Number(opt('--max-verts', BAKE ? '2000' : '65000')));
@@ -1031,7 +1035,7 @@ const REFM = BAKE ? makeReference(REF) : null;
 const hullSlots = {};
 if (BAKE) {
   const t0 = Date.now();
-  const hull = buildHull(REF, { voxel: Number(opt('--voxel', '0.015')) });
+  const hull = buildHull(REF, { voxel: Number(opt('--voxel', '0.015')), smooth: Number(opt('--smooth', '12')) });
   console.log(`shell: ${hull.idx.length / 3} triangles (${hull.grid.join('×')} voxels, ${((Date.now() - t0) / 1000).toFixed(0)} s)`);
   // Everything is drawn as plain textured submeshes (kind 0): lamps, glass and trim are in the baked
   // texture; per-triangle lamp/glass kinds would follow the coarse triangles and look jagged.
@@ -1171,6 +1175,32 @@ for (const dir of SLOT_DIRS) {
   fs.writeFileSync(path.join(OUT, dir, 'list.xml'), xmlUtf16(out));
 }
 
+// Normals averaged over every vertex at the same position whose normal is within 60° (a smooth panel
+// stays smooth across UV seams and part borders; real creases stay sharp), twice.
+function smoothNormals(parts) {
+  const key = (P, v) => `${Math.round(P[v * 3] * 1e4)},${Math.round(P[v * 3 + 1] * 1e4)},${Math.round(P[v * 3 + 2] * 1e4)}`;
+  const cos = Math.cos((60 * Math.PI) / 180);
+  for (let pass = 0; pass < 2; pass++) {
+    const groups = new Map();
+    for (const part of parts) {
+      for (let v = 0; v < part.positions.length / 3; v++) {
+        const k = key(part.positions, v);
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push([part, v]);
+      }
+    }
+    for (const list of groups.values()) {
+      const ns = list.map(([p, v]) => [p.normals[v * 3], p.normals[v * 3 + 1], p.normals[v * 3 + 2]]);
+      const out = ns.map((n) => {
+        const s = [0, 0, 0];
+        for (const m of ns) if (n[0] * m[0] + n[1] * m[1] + n[2] * m[2] >= cos) { s[0] += m[0]; s[1] += m[1]; s[2] += m[2]; }
+        return norm(s);
+      });
+      list.forEach(([p, v], i) => { p.normals[v * 3] = out[i][0]; p.normals[v * 3 + 1] = out[i][1]; p.normals[v * 3 + 2] = out[i][2]; });
+    }
+  }
+}
+
 // --bake: like gtv98, every part folder gets its own texture (sized like the template's), each part
 // file is one submesh, and every LOD uses the detailed mesh. The body's detail layer is <car>_color.
 if (BAKE) {
@@ -1190,26 +1220,36 @@ if (BAKE) {
     }
     return { name: 'merged', kind: 0, positions: new Float32Array(P), normals: new Float32Array(N), uvs: new Float32Array(UV), indices: new Uint16Array(I) };
   };
+  // How the game really textures a car (checked on escarabajo, gtv98, ukbus, gabriel): every part's
+  // UVs point into one shared paint mask, <car>_base.png (red = the player's paint, black = black).
+  // <car>_color.png and the part textures are NOT drawn over the parts at those UVs (the original
+  // cars' UVs only ever land on their transparent pixels), so they stay fully transparent here and
+  // the baked detail goes into the mask: paint stays red (darker in creases), the rest black.
   const t0 = Date.now();
-  const dirs = [...new Set(pending.map(([dir]) => dir))];
-  for (const dir of dirs) {
-    const jobs = pending.filter(([d]) => d === dir);
-    // Template sizes, but at least 256 (the original cars use 256 too): our detail is in the texture.
-    let [w, h] = dir === '' ? [ATLAS, ATLAS] : dir === 'mainspoiler' ? [64, 64] : tplPng(dir);
-    if (dir !== '' && dir !== 'mainspoiler') { while (w < 256) w *= 2; while (h < 256 && h < w) h *= 2; }
-    const parts = dir === 'mainspoiler' ? [] : jobs.flatMap(([, , , byLod]) => byLod[2]);
-    let px = new Uint8ClampedArray(w * h * 4);
-    if (parts.length) {
-      transferNormals(REFM, parts);
-      const ppm = unwrapParts(parts, w, Math.ceil(h / 32) + 2, h);
-      px = bakeAtlas(REFM, parts, w, { height: h });
-      console.log(`  ${(dir || 'body').padEnd(12)} texture ${w}×${h}: ${(1000 / ppm).toFixed(1)} mm per texel`);
-      for (const job of jobs) job[3][2] = [merge(job[3][2])];
-    }
-    paintStrip(px, w, h);
-    if (dir === '') await writeImage(px, w, h, path.join(OUT, `${NAME}_color`), 'half');
-    else await writeImage(px, w, h, path.join(OUT, dir, `${NAME}_${dir}_default`), 'full');
-    if (SAME_LODS) for (const job of jobs) if (dir !== 'mainspoiler') job[3] = [job[3][2], job[3][2], job[3][2]];
+  const jobs = pending.filter(([dir]) => dir !== 'mainspoiler');
+  const parts = jobs.flatMap(([, , , byLod]) => byLod[2]);
+  if (NORMALS === 'source') transferNormals(REFM, parts);
+  else smoothNormals(parts);
+  const ppm = unwrapParts(parts, ATLAS, Math.ceil(ATLAS / 32) + 2);
+  console.log(`  mask ${ATLAS}×${ATLAS}: ${(1000 / ppm).toFixed(1)} mm per texel`);
+  const over = bakeAtlas(REFM, parts, ATLAS);
+  const mask = new Uint8ClampedArray(ATLAS * ATLAS * 4);
+  for (let i = 0; i < mask.length; i += 4) { mask[i] = 255 - over[i + 3]; mask[i + 3] = 255; }
+  const cw = ATLAS / 32;
+  STRIP.keys.forEach((k, i) => {
+    const paint = STRIP_COLORS[k][3] === 0;
+    for (let y = 0; y < cw; y++) for (let x = 0; x < cw; x++) mask.set([paint ? 255 : 0, 0, 0, 255], (y * ATLAS + i * cw + x) * 4);
+  });
+  const [bw, bh] = pngSize(path.join(TPL, `${tplName}_base.png`), [ATLAS, ATLAS]);
+  if (bw !== ATLAS || bh !== ATLAS) console.warn(`! template base is ${bw}×${bh}, writing ${ATLAS}×${ATLAS}`);
+  await writeImage(mask, ATLAS, ATLAS, path.join(OUT, `${NAME}_base`), 'full');
+  for (const job of jobs) if (job[3][2].length) job[3][2] = [merge(job[3][2])];
+  if (SAME_LODS) for (const job of jobs) job[3] = [job[3][2], job[3][2], job[3][2]];
+  // Transparent detail layers at the template's sizes.
+  const clear = async (file, [w, h], mode) => writeImage(new Uint8ClampedArray(w * h * 4), w, h, file, mode);
+  await clear(path.join(OUT, `${NAME}_color`), pngSize(path.join(TPL, `${tplName}_color.png`), [128, 64]), 'half');
+  for (const dir of [...new Set(pending.map(([d]) => d))].filter(Boolean)) {
+    await clear(path.join(OUT, dir, `${NAME}_${dir}_default`), tplPng(dir), 'full');
   }
   console.log(`baked in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
   pending.done = true;

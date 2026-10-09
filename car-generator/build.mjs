@@ -54,7 +54,7 @@ function embedTests() {
   const dir = path.resolve('../cars/test');
   const packs = [];
   if (fs.existsSync(dir)) {
-    for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.zip')).sort()) {
+    for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.zip')).sort().reverse()) {
       packs.push({ file: f, data: fs.readFileSync(path.join(dir, f)).toString('base64') });
     }
   }

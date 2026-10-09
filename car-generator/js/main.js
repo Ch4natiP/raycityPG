@@ -905,11 +905,9 @@ async function openEmbeddedCar(name) {
 
 // Test packs (../cars/test/*.zip, embedded at build time): one download button each.
 const TEST_PACK_INFO = {
+  '17_full_mask_textures.zip': ['ชุด 17: กะบะตัวเต็ม ภาพแบบใหม่ ⭐', 'รายละเอียดอยู่ในภาพมาสก์สี (แบบเดียวกับรถในเกม) · เหมือน rc_canyon.zip ล่าสุด · ลองอันนี้'],
+  '16_full_safe.zip': ['ชุด 16: ตัวเต็มแบบปลอดภัยสุด ✅ ผ่านแล้ว', 'รุ่นก่อน (ภาพแบบเก่า) ไม่มีสเกิร์ต กล่องชน gtv98'],
   'OK_gtv98_as_rc_canyon.zip': ['ชุดฐาน (ใช้ได้แล้ว)', 'gtv98 ของเกมเปลี่ยนชื่อเป็น rc_canyon ไม่มีไฟล์ของเราเลย ใช้สลับกลับเมื่อต้องการ'],
-  '13_full.zip': ['ชุด 13: กะบะตัวเต็มรุ่นล่าสุด', 'เหมือน rc_canyon.zip ทุกไฟล์ · ลองอันนี้ก่อน'],
-  '14_full_gtv98_meshxml.zip': ['ชุด 14: ตัวเต็ม แต่ใช้กล่องชนของ gtv98', 'ผ่าน แต่ 13 เด้ง = mesh.xml ของเราคือต้นเหตุ'],
-  '15_full_no_skirt_default.zip': ['ชุด 15: ตัวเต็ม ไม่มีไฟล์สเกิร์ต default', 'ผ่าน แต่ 13 เด้ง = สเกิร์ตคือต้นเหตุ'],
-  '16_full_safe.zip': ['ชุด 16: ตัวเต็มแบบปลอดภัยสุด', 'กล่องชน gtv98 + ไม่มีสเกิร์ต default + ไม่มีภาพที่ gtv98 ไม่มี · ทุกไฟล์เคยผ่านในเกมแล้ว'],
 };
 function bindTestPacks() {
   const box = document.getElementById('test-packs');

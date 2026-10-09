@@ -291,7 +291,7 @@ export function bakeAtlas(ref, parts, size, { reach = 0.12, height = size } = {}
     if (acc < 1) { const k = 1 - acc; r += k * 0.03; g += k * 0.03; b += k * 0.03; acc = 1; }
     // Overlay alpha: opaque for everything but paint; paint keeps a dark crease line.
     const opaque = 1 - paint;
-    const lineA = Math.min(0.5, crease * 0.6);
+    const lineA = Math.min(0.35, crease * 0.45);
     const a = Math.min(1, opaque + lineA);
     if (a < 1e-3) return [0, 0, 0, 0];
     return [r / a, g / a, b / a, a];

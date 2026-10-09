@@ -5,7 +5,7 @@
 //
 // Coordinates: RayCity space (x left, y back, z up), metres.
 
-export function buildHull(tris, { voxel = 0.02, close = 2, smooth = 3 } = {}) {
+export function buildHull(tris, { voxel = 0.02, close = 2, smooth = 12 } = {}) {
   const min = [Infinity, Infinity, Infinity];
   const max = [-Infinity, -Infinity, -Infinity];
   for (const t of tris) for (const p of [t.a, t.b, t.c]) for (let k = 0; k < 3; k++) {
@@ -117,24 +117,26 @@ export function buildHull(tris, { voxel = 0.02, close = 2, smooth = 3 } = {}) {
   const P = new Float32Array(pos);
   const I = new Uint32Array(idx);
 
-  // 4. Light Laplacian smoothing against the voxel steps.
+  // 4. Taubin smoothing against the voxel steps: a shrinking step (λ) then an inflating one (μ), so
+  //    the surface gets smooth without the car getting smaller.
   const nv = P.length / 3;
   const nbr = Array.from({ length: nv }, () => new Set());
   for (let t = 0; t < I.length; t += 3) {
     for (let e = 0; e < 3; e++) { nbr[I[t + e]].add(I[t + ((e + 1) % 3)]); nbr[I[t + ((e + 1) % 3)]].add(I[t + e]); }
   }
-  for (let it = 0; it < smooth; it++) {
+  const step = (f) => {
     const Q = P.slice();
     for (let v = 0; v < nv; v++) {
       let sx = 0; let sy = 0; let sz = 0;
       for (const w of nbr[v]) { sx += P[w * 3]; sy += P[w * 3 + 1]; sz += P[w * 3 + 2]; }
       const k = nbr[v].size || 1;
-      Q[v * 3] = P[v * 3] * 0.5 + (sx / k) * 0.5;
-      Q[v * 3 + 1] = P[v * 3 + 1] * 0.5 + (sy / k) * 0.5;
-      Q[v * 3 + 2] = P[v * 3 + 2] * 0.5 + (sz / k) * 0.5;
+      Q[v * 3] = P[v * 3] + f * (sx / k - P[v * 3]);
+      Q[v * 3 + 1] = P[v * 3 + 1] + f * (sy / k - P[v * 3 + 1]);
+      Q[v * 3 + 2] = P[v * 3 + 2] + f * (sz / k - P[v * 3 + 2]);
     }
     P.set(Q);
-  }
+  };
+  for (let it = 0; it < smooth; it++) { step(0.5); step(-0.53); }
 
   // Outward winding check (signed volume).
   let vol = 0;

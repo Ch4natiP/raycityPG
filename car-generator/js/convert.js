@@ -91,7 +91,10 @@ export function zoneUVs(mat, P, N) {
     const ax = Math.abs(N[i * 3]); const ay = Math.abs(N[i * 3 + 1]); const az = Math.abs(N[i * 3 + 2]);
     const [a, b] = az >= ax && az >= ay ? [(x + 1.5) / 3, (y + 5) / 10] : ax >= ay ? [(y + 5) / 10, (h + 0.5) / 3] : [(x + 1.5) / 3, (h + 0.5) / 3];
     uv[i * 2] = (z + 0.08 + 0.84 * c(a)) / 16;
-    uv[i * 2 + 1] = 0.03 + 0.94 * c(b);
+    // Only the lower part of the texture (v 0.40-0.97): everything that took v below ~0.33 came out black
+    // in game whatever the mask said there (pack 48: one straight line around the car at 0.45 m, the
+    // nose of the hood).
+    uv[i * 2 + 1] = 0.40 + 0.57 * c(b);
   }
   return uv;
 }
@@ -104,7 +107,9 @@ export function maskPixels(w, h, paintAll = false) {
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const mat = ZONES[Math.floor((x / w) * 16)];
-      const paint = paintAll ? !NOT_PAINT.has(mat) : isPaint(mat);
+      // Glass sits on red like gtv98's windows (its glass UVs: mask red); on black it came out fully
+      // clear in game (pack 48).
+      const paint = mat === 'Glass_Gray' || (paintAll ? !NOT_PAINT.has(mat) : isPaint(mat));
       px.set([paint ? 255 : 0, 0, 0, 255], (y * w + x) * 4);
     }
   }

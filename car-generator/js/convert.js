@@ -1017,7 +1017,14 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, p
   }
   // Paint mask (zone columns) and the transparent body detail layer — or the template's own.
   if (asTemplate) {
-    for (const suffix of ['_base.png', '_base_s.dds', '_color.png', '_color_s.dds']) if (tpl.has(`${tplName}${suffix}`)) out.set(`${name}${suffix}`, tpl.get(`${tplName}${suffix}`));
+    for (const suffix of ['_base.png', '_base_s.dds']) if (tpl.has(`${tplName}${suffix}`)) out.set(`${name}${suffix}`, tpl.get(`${tplName}${suffix}`));
+    // The body detail layer stays transparent: gtv98's has its plate (orange) and black / grey swatches,
+    // and triangles whose copied UVs cross a seam smear them over the car (pack 44: black patches with
+    // orange lines on the doors and the rear; packs 39/40 with a transparent layer: doors white).
+    const [cw2, ch2] = pngSize(tpl.get(`${tplName}_color.png`), [128, 64]);
+    const clear = new Uint8ClampedArray(cw2 * ch2 * 4);
+    out.set(`${name}_color.png`, await png(clear, cw2, ch2));
+    out.set(`${name}_color_s.dds`, dds(clear, cw2, ch2, 'half'));
     if (paintAll) {
       // The whole car on colour slot 1 (red): the template's own slot 2 / 3 areas (gtv98: green trim,
       // blue hood) land as patches on another car's shape.

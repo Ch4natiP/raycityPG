@@ -1291,7 +1291,7 @@ function buildModelPanel() {
   const quick = document.createElement('div');
   quick.className = 'quick-box';
   quick.innerHTML = `<div class="quick-title">⚡ ทางลัด: เข้าเกมในคลิกเดียว</div>
-    <div class="hint">ถอดล้อ ✔ · ปรับให้ตรงล้อเกม ✔ · ผิวจริงของโมเดล ไม่เกิน 4,800 จุดต่อไฟล์ ✔ · UV แบบ gtv98 (ใส่ลายได้) ✔ · กระจกใส ✔ · เปลี่ยนสีได้ทั้งคัน ✔ · ตรวจ + ซ่อมอัตโนมัติ ✔</div>`;
+    <div class="hint">ถอดล้อ ✔ · ปรับให้ตรงล้อเกม ✔ · ผิวจริงของโมเดล ✔ · UV แบบ gtv98 (ใส่ลายได้) ✔ · กระจกใส ✔ · เปลี่ยนสีได้ทั้งคัน ✔ · ตรวจ + ซ่อมอัตโนมัติ ✔</div>`;
   const qrow = document.createElement('div');
   qrow.className = 'btns';
   const qname = document.createElement('input');
@@ -1302,10 +1302,16 @@ function buildModelPanel() {
   const qgo = document.createElement('button');
   qgo.className = 'accent';
   qgo.textContent = '⚡ สร้าง + ตรวจ + ดาวน์โหลด';
+  // Reduce or not: 4,800 per file has loaded in game; the model's full surface can pass 8,000 per file,
+  // which crashed the game before (the check after the build says which files).
+  const qpoly = document.createElement('select');
+  qpoly.title = 'ลด poly หรือใช้ผิวเต็มของโมเดล';
+  qpoly.innerHTML = `<option value="4800">🔻 ลด poly (แนะนำ · ไม่เกิน 4,800 จุดต่อไฟล์ เข้าเกมได้)</option>
+    <option value="60000">💎 ไม่ลด poly (ผิวเต็มของโมเดล · ไฟล์ไหนเกิน 8,000 จุดเกมเคยเด้ง)</option>`;
   const qlog = document.createElement('pre');
   qlog.className = 'hint';
-  qgo.addEventListener('click', () => quickBuild(qname.value || 'rc_car', qgo, qlog));
-  qrow.append(qname, qgo);
+  qgo.addEventListener('click', () => quickBuild(qname.value || 'rc_car', qgo, qlog, +qpoly.value));
+  qrow.append(qname, qpoly, qgo);
   quick.append(qrow, qlog);
   box.appendChild(quick);
   const adv = document.createElement('div');
@@ -1521,7 +1527,7 @@ function buildModelPanel() {
 
 // ⚡ One click: build with the settings that worked in game, check, repair what can be repaired,
 // download, and open the result for a look.
-async function quickBuild(name, btn, logEl) {
+async function quickBuild(name, btn, logEl, maxVerts = 4800) {
   const m = srcModel.model;
   if (!m) return;
   btn.disabled = true;
@@ -1529,7 +1535,7 @@ async function quickBuild(name, btn, logEl) {
   const say = (t) => { logEl.textContent = `${t}\n${logEl.textContent}`.split('\n').slice(0, 6).join('\n'); };
   try {
     const tpl = await modelTemplate();
-    let out = await convert(m, { name, template: tpl, categories: srcModel.categories, maxVerts: 4800, raw: true, hideInterior: true, paintAll: true, layout: 'template', partTextures: false, log: say });
+    let out = await convert(m, { name, template: tpl, categories: srcModel.categories, maxVerts, raw: true, hideInterior: true, paintAll: true, layout: 'template', partTextures: false, log: say });
     let list = await checkCar(out, name, tpl);
     if (list.some((c) => c.level === 'bad')) {
       const r = await repairCar(out, name, tpl, true);

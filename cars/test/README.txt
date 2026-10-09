@@ -83,6 +83,9 @@ In game 40 (one colour per part folder): the front (frontbumper / headlight / gr
 -> Builds in the template layout now put frontbumper / headlight / grill geometry into hood and skirt into
 roof automatically (convert INTO_DRAWN, also in writeCar for Studio / old-body builds); the checker warns
 when those files still hold geometry.
-44 door area dark / see-through: geometry and normals there are complete and identical to 39 (door white);
-only the UVs differ (gtv98 layout), so it is most likely the decal (lai) applied on that UV. To check: 44
-with no decal equipped.
+44 door area dark / see-through (no decal equipped): geometry and normals there are identical to 39 (door
+white). Differences: 44 uses gtv98's body detail layer (_color: its orange plate, black and grey swatches)
+and 16-33 % of its triangles have copied UVs that cross a gtv98 seam, smearing that layer over the car;
+39/40 had a transparent detail layer.
+45_canyon_clear_detail_layer.zip  44 with the transparent detail layer of 39 (only _color.png/_color_s.dds differ).
+Builds in the template layout now write the transparent detail layer.

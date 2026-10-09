@@ -1,18 +1,15 @@
-Finding which of our files the game rejects. Every pack unpacks to rc_canyon/ and starts from
-OK_gtv98_as_rc_canyon (gtv98 renamed: confirmed working in game as "Bullet canyon"), with ONE group
-of files swapped for the pickup's. Pack it to rc_canyon.jmd like always and open it in the garage.
+Finding which pickup file the game rejects. Every pack unpacks to rc_canyon/, starts from gtv98 renamed
+(works in game) and is packed to rc_canyon.jmd as usual.
 
-OK_gtv98_as_rc_canyon.zip  the working base (nothing of ours)
-1_all_meshes.zip           every .0m is ours (the pickup's shape, gtv98's pictures - colors will look wrong)
-2_body_mesh_only.zip       only body_0/1/2.0m is ours
-3_images_only.zip          every .png/.dds (and icons) is ours, gtv98's shape
-4_meshxml_only.zip         only mesh.xml (collision box) is ours
+Results so far (2026-10-09, in game):
+  our images (png/dds/icons)                    pass
+  our body_0/1/2.0m                             pass
+  our body + frontbumper + rearbumper + hood + roof   pass
+So the problem is one of: headlight, rearlight, grill, mainspoiler, skirt.
 
-Crashes in 1 but not 2 -> one of the part meshes. Crashes in 2 -> the body mesh. Crashes in 3 -> our images.
-Crashes in 4 -> mesh.xml.
-
-Result 2026-10-09: 3_images_only works in game -> our images are fine, the problem is in the .0m meshes.
-5_parts_meshes_only.zip    every part .0m is ours, the body is gtv98's (counterpart of 2_body_mesh_only)
-Result 2026-10-09: 2_body_mesh_only works in game -> our body mesh is fine; the problem is in a part mesh.
-6_body_bumpers_hood_roof.zip          our body + frontbumper, rearbumper, hood, roof
-7_body_lights_grill_spoiler_skirt.zip our body + headlight, rearlight, grill, mainspoiler, skirt
+8_plus_headlight.zip    everything that passed + our headlight
+9_plus_rearlight.zip    everything that passed + our rearlight
+10_plus_grill.zip       everything that passed + our grill
+11_plus_mainspoiler.zip everything that passed + our mainspoiler
+12_plus_skirt.zip       everything that passed + our skirt
+OK_gtv98_as_rc_canyon.zip  the working base. Older packs are in the git history.

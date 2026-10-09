@@ -36,6 +36,11 @@ const RAW = flag('--raw');
 // --bake: low-poly parts with a baked detail texture (tools/bake.mjs). Badges and small details come
 // from the source model through the texture, so the meshes can be as light as the game's own cars.
 const BAKE = flag('--bake') && !RAW;
+// --mask (with --raw or alone): the source geometry as it is, laid out like the template (gtv98) and
+// colored through the paint mask only: paint triangles sample a red mask cell, the rest a black one;
+// glass and lamps keep their submesh kinds so the game draws them as glass and lights.
+const MASKMODE = flag('--mask') && !BAKE;
+const GAMEFMT = BAKE || MASKMODE; // template layout, transparent detail textures, mask colors
 const ATLAS = Number(opt('--atlas', '1024'));
 const SAME_LODS = BAKE && opt('--same-lods', '1') === '1';
 // --normals smooth (default): smooth normals from the shell itself, averaged over shared positions. The
@@ -569,7 +574,7 @@ const STRIP = {
 
   },
 };
-const BODY_PAL = BAKE ? STRIP : MASK;
+const BODY_PAL = GAMEFMT ? STRIP : MASK;
 function paintStrip(px, w, h) {
   const cw = Math.max(1, Math.floor(w / 32)); const ch = Math.max(1, Math.floor(h / 32));
   STRIP.keys.forEach((k, i) => {
@@ -967,6 +972,18 @@ function buildSlotOnce(list, budgetIn, pal, lod, attempt) {
     if (process.env.DEBUG) console.log(`    lod${lod} ${mat.padEnd(16)} src ${group.length} target ${target} got ${idx.length / 3}`);
     if (idx.length < 3) continue;
     const g = withNormals(pos, idx, 45, ref, RAW ? vn : null);
+    if (GAMEFMT) {
+      // The game's own files never repeat a triangle on the same three vertices (two-sided copies do).
+      const seenT = new Set();
+      const keepT = [];
+      for (let t = 0; t < g.indices.length; t += 3) {
+        const key = [g.indices[t], g.indices[t + 1], g.indices[t + 2]].sort((a, b) => a - b).join(',');
+        if (seenT.has(key)) continue;
+        seenT.add(key);
+        keepT.push(g.indices[t], g.indices[t + 1], g.indices[t + 2]);
+      }
+      g.indices = keepT;
+    }
     const [u, v] = pal.uv(pal.colors[mat] ? mat : pal.keys[0]);
     // Submesh kind (flags[0]) tells the game to draw glass and lamps as such.
     const kind = /^Glass/i.test(mat) ? 1 : /projector/i.test(mat) ? 2 : /taillight/i.test(mat) ? 3 : /led/i.test(mat) ? 4 : 0;
@@ -1018,7 +1035,7 @@ const BUDGET = RAW ? { // fill each file close to the .0m limit (~21k triangles)
   headlight: [40, 300, 700], rearlight: [60, 220, 500], hood: [40, 130, 300], roof: [100, 250, 500],
   skirt: [60, 140, 300],
 };
-const SLOT_DIRS = BAKE // --bake follows the template's own part folders (gtv98 also has grill)
+const SLOT_DIRS = GAMEFMT // --bake / --mask follows the template's own part folders (gtv98 also has grill)
   ? fs.readdirSync(TPL, { withFileTypes: true }).filter((e) => e.isDirectory() && !/^(dooropen|icon)$/i.test(e.name)).map((e) => e.name).sort()
   : ['frontbumper', 'headlight', 'hood', 'mainspoiler', 'rearbumper', 'rearlight', 'roof', 'skirt'];
 const tplName = path.basename(path.resolve(TPL));
@@ -1118,6 +1135,19 @@ if (BAKE) {
   const red = Buffer.alloc(bw * bh * 4);
   for (let i = 0; i < red.length; i += 4) { red[i] = 255; red[i + 3] = 255; }
   await writeImage(red, bw, bh, path.join(OUT, `${NAME}_base`), 'full');
+} else if (MASKMODE) {
+  // Paint mask: red everywhere (paint), the flat cells in the top row red for paint, black for the rest.
+  const [bw, bh] = pngSize(path.join(TPL, `${tplName}_base.png`), [512, 512]);
+  const px = new Uint8ClampedArray(bw * bh * 4);
+  for (let i = 0; i < px.length; i += 4) { px[i] = 255; px[i + 3] = 255; }
+  const cw = Math.max(1, Math.floor(bw / 32)); const chh = Math.max(1, Math.floor(bh / 32));
+  STRIP.keys.forEach((k, i) => {
+    const paint = STRIP_COLORS[k][3] === 0;
+    for (let y = 0; y < chh; y++) for (let x = 0; x < cw; x++) px.set([paint ? 255 : 0, 0, 0, 255], (y * bw + i * cw + x) * 4);
+  });
+  await writeImage(px, bw, bh, path.join(OUT, `${NAME}_base`), 'full');
+  const [cw2, ch2] = pngSize(path.join(TPL, `${tplName}_color.png`), [128, 64]);
+  await writeImage(new Uint8ClampedArray(cw2 * ch2 * 4), cw2, ch2, path.join(OUT, `${NAME}_color`), 'half');
 } else {
   await writeTexture(MASK, path.join(OUT, `${NAME}_base`), pngSize(path.join(TPL, `${tplName}_base.png`), [512, 512]));
   await writeTexture(MASK, path.join(OUT, `${NAME}_color`), pngSize(path.join(TPL, `${tplName}_color.png`), [128, 64]));
@@ -1131,9 +1161,15 @@ for (const dir of SLOT_DIRS) {
   const isLightSlot = dir === 'headlight' || dir === 'rearlight';
   // Every part folder gets <car>_<dir>.png/_s.dds, named in list.xml wherever the template names a
   // texture (the template leaves some defaults empty, e.g. hood and roof; those stay empty).
-  const tex = BAKE ? `${NAME}_${dir}_default` : `${NAME}_${dir}`;
-  const pal = BAKE ? STRIP : isLightSlot ? LIGHT : MASK;
-  if (!BAKE) await writeTexture(pal, path.join(OUT, dir, tex), pngSize(path.join(TPL, dir, `${tplName}_${dir}.png`), [64, 64]));
+  const tex = GAMEFMT ? `${NAME}_${dir}_default` : `${NAME}_${dir}`;
+  const pal = GAMEFMT ? STRIP : isLightSlot ? LIGHT : MASK;
+  if (MASKMODE) {
+    const d = path.join(TPL, dir);
+    const any = fs.readdirSync(d).find((f) => f.endsWith('.png'));
+    const [tw, th] = any ? pngSize(path.join(d, any), [64, 64]) : [64, 64];
+    await writeImage(new Uint8ClampedArray(tw * th * 4), tw, th, path.join(OUT, dir, tex), 'full');
+  }
+  if (!GAMEFMT) await writeTexture(pal, path.join(OUT, dir, tex), pngSize(path.join(TPL, dir, `${tplName}_${dir}.png`), [64, 64]));
   let meshFor;
   if (dir === 'mainspoiler') {
     const kinds = { pty_h300: 'lip', m10010: 'wing', h11000: 'gt', rbrc_001: 'twin', rbrc_002: 'wing' };
@@ -1146,12 +1182,12 @@ for (const dir of SLOT_DIRS) {
       }
       // Same-named template variant when there is one: its header and moving pieces match (h11000 animates).
       const vTpl = fs.existsSync(path.join(TPL, dir, `${v.mesh}_0.0m`)) ? v.mesh : tplMesh;
-      writeLods(dir, v.mesh, vTpl, [0, 1, 2].map(() => buildSlot(src, 400, BAKE ? STRIP : MASK)));
+      writeLods(dir, v.mesh, vTpl, [0, 1, 2].map(() => buildSlot(src, 400, GAMEFMT ? STRIP : MASK)));
     }
     meshFor = (v) => v.mesh;
   } else {
     const byLod = slotParts(dir, BUDGET[dir] || BUDGET.hood, pal);
-    if (!byLod[2].length && BAKE) {
+    if (!byLod[2].length && GAMEFMT) {
       // A template part our car has nothing for (gtv98's grill): same files, hidden 1 mm stand-ins.
       for (const v of variants) writeLods(dir, v.mesh, v.mesh, [[], [], []]);
       meshFor = (v) => v.mesh;
@@ -1169,7 +1205,7 @@ for (const dir of SLOT_DIRS) {
     let a = attrs;
     if (/mesh='/.test(a)) a = a.replace(/mesh='[^']*'/, `mesh='${meshFor(v)}'`);
     // (--bake: every variant, the detail layer is in the part texture)
-    if (BAKE ? /tex='/.test(a) : /tex='[^']+'/.test(a)) a = a.replace(/tex='[^']*'/, `tex='${tex}'`);
+    if (GAMEFMT ? /tex='/.test(a) : /tex='[^']+'/.test(a)) a = a.replace(/tex='[^']*'/, `tex='${tex}'`);
     return `<part${a}/>`;
   });
   fs.writeFileSync(path.join(OUT, dir, 'list.xml'), xmlUtf16(out));
@@ -1263,7 +1299,7 @@ if (BAKE) {
 // --bake: mirror the template's part folders file for file — its list.xml (names only changed), a mesh
 // file for every variant it names (the stock part, or what the template ships), and a texture for every
 // texture it names or ships (our part texture).
-if (BAKE) {
+if (GAMEFMT) {
   for (const dir of SLOT_DIRS) {
     const od = path.join(OUT, dir);
     if (!fs.existsSync(od)) continue;

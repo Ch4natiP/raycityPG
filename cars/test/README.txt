@@ -157,3 +157,9 @@ Game cars use three colours (gtv98's mask: red body, green trim, blue hood), all
                          the model's trim / plastic / chrome materials, colour 3 (blue) the paint where gtv98
                          has its hood. The web's ⚡ build now does 50 / 51 (choice: three colours or one colour
                          for the whole car, McQueen-like); rc_mcqueen rebuilt with one colour.
+Escarabajo in the garage (video 2026-10-10): starts white; colour 1 the body / roof / rear deck, colour 2 the
+lower band all around (sills, lower bumpers), colour 3 the front lid only; vents / grilles stay black.
+52_canyon_colours_like_escarabajo.zip  colour per point from gtv98's own mask (its green lower band → colour 2,
+                         its blue hood → colour 3, the rest colour 1), smoothed by neighbour vote; the model's
+                         trim / grille / chrome / plastic materials black (no garage colour). The ⚡ build
+                         does the same with "three colours".

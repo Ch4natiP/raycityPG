@@ -914,7 +914,8 @@ async function openEmbeddedCar(name) {
 
 // Test packs (../cars/test/*.zip, embedded at build time): one download button each.
 const TEST_PACK_INFO = {
-  '51_canyon_three_colours.zip': ['ชุด 51: แบบ 50 + แยก 3 สีแบบรถในเกม ⭐ ลองอันนี้', 'สี 1 ตัวถัง · สี 2 ขอบล่าง/กันชน/ซุ้มล้อ/ขอบกระจก (วัสดุพลาสติก-โครเมียมของโมเดล) · สี 3 ฝากระโปรง · เริ่มขาวทั้งคัน'],
+  '52_canyon_colours_like_escarabajo.zip': ['ชุด 52: แยก 3 สีแบบ Escarabajo ⭐ ลองอันนี้', 'สี 1 ตัวถัง · สี 2 แถบล่างรอบคัน · สี 3 ฝากระโปรง (ตามมาสก์ gtv98) · ช่องลม/กระจัง/โครเมียมเป็นดำ · เริ่มขาว'],
+  '51_canyon_three_colours.zip': ['ชุด 51: แบบ 50 + แยก 3 สี (สี 2 = ชิ้นพลาสติก)', 'สี 1 ตัวถัง · สี 2 ขอบล่าง/กันชน/ซุ้มล้อ/ขอบกระจก (วัสดุพลาสติก-โครเมียมของโมเดล) · สี 3 ฝากระโปรง · เริ่มขาวทั้งคัน'],
   '50_canyon_49_fixed_deck_and_glass.zip': ['ชุด 50: แบบ 49 + แก้ฝาท้ายดำ (ขาวทั้งคัน สีเดียวเปลี่ยนทั้งคัน)', 'ลายทุกจุดอยู่ช่วงกลางรูปที่ออกมาขาว · ใต้กระจกใช้ค่าสีแบบที่ gtv98 มีใต้กระจก'],
   '49_canyon_48_fixed_low_and_glass.zip': ['ชุด 49: แบบ 48 + แก้แถบล่าง/หน้าดำ (ขาวเกือบหมด ฝาท้ายดำ กระจกขาวขุ่น)', 'ลายทุกจุดย้ายพ้นส่วนบนของรูป (ส่วนที่ทำให้ดำ) · ใต้กระจกเป็นสีแดงในมาสก์แบบ gtv98 (48 เป็นดำ → ใสเกิน)'],
   '48_canyon_like_40_all_white.zip': ['ชุด 48: สีแบบชุด 40 แต่ขาวทั้งคัน (ขาวทั้งคัน เปลี่ยนสีได้ แต่แถบล่างดำ กระจกใส)', 'UV/มาสก์ของเราเอง (แบบ 39/40 ที่ไม่มีสามเหลี่ยมดำ) + หน้ารถ/สเกิร์ตย้ายเข้าไฟล์ที่ทาสีได้ + ประตูใน roof + กระจกใส · ลายในร้านจะไม่ตรงแบบ gtv98'],
@@ -1373,7 +1374,7 @@ function buildModelPanel() {
   // car (McQueen-like).
   const qcol = document.createElement('select');
   qcol.title = 'สีในโรงรถ';
-  qcol.innerHTML = `<option value="slots">🎨 แยก 3 สีแบบรถในเกม (ตัวถัง / ขอบล่าง-กันชน / ฝากระโปรง)</option>
+  qcol.innerHTML = `<option value="slots">🎨 แยก 3 สีแบบรถในเกม (ตัวถัง / แถบล่าง / ฝากระโปรง)</option>
     <option value="one">🎨 สีเดียวเปลี่ยนทั้งคัน (แบบ McQueen)</option>`;
   qgo.addEventListener('click', () => quickBuild(qname.value || 'rc_car', qgo, qlog, +qpoly.value, qcol.value));
   qrow.append(qname, qpoly, qcol, qgo);

@@ -69,8 +69,9 @@ const CELLS = ['Body_Color', 'Glass_Gray', 'Grille', 'Underbody', 'plastic_gray'
 // Paint mask in big zones like the game's own masks (gtv98: 79 % red): 16 full-height columns, one per
 // material, paint red, the rest black. A tiny cell strip (the old layout, 32 px high) came out black
 // in game (the garage could not repaint it); full-height columns survive any resize or flip.
+// (Column 9 was 'Leather', never produced from models: now the paint on colour 2.)
 const ZONES = ['Body_Color', 'Wing', 'Glass_Gray', 'Grille', 'Underbody', 'plastic_gray', 'metal_gray', 'metal_chrome', 'Carbon_Fiber',
-  'Leather', 'Interior_dark', 'Taillight_Glass', 'Projector_Glass', 'Turn_Signal_LED', 'WingDark', 'Hood_Paint'];
+  'Lower_Paint', 'Interior_dark', 'Taillight_Glass', 'Projector_Glass', 'Turn_Signal_LED', 'WingDark', 'Hood_Paint'];
 const cellUV = (mat) => { const i = Math.max(0, ZONES.indexOf(ZONES.includes(mat) ? mat : 'plastic_gray')); return [(i + 0.5) / 16, 0.5]; };
 // Material of a UV written by this tool: its zone column (any height), or the old top-row cell.
 export function matOfUV(u, v) {
@@ -104,7 +105,7 @@ export function zoneUVs(mat, P, N) {
 // whole in game); otherwise only the model's own paint.
 const NOT_PAINT = new Set(['Glass_Gray', 'Projector_Glass', 'Taillight_Glass', 'Turn_Signal_LED', 'Interior_dark']);
 // slots: the garage's three colours like gtv98's mask — colour 1 (red) body and glass, colour 2 (green)
-// trim / plastic / bumpers' unpainted parts, colour 3 (blue) the hood.
+// the lower band, colour 3 (blue) the hood; where each goes comes from the template's own mask.
 const SLOT1 = new Set(['Body_Color', 'Wing', 'Glass_Gray']);
 export function maskPixels(w, h, paintAll = false, slots = false) {
   const px = new Uint8ClampedArray(w * h * 4);
@@ -112,7 +113,9 @@ export function maskPixels(w, h, paintAll = false, slots = false) {
     for (let x = 0; x < w; x++) {
       const mat = ZONES[Math.floor((x / w) * 16)];
       if (slots) {
-        const c = NOT_PAINT.has(mat) && mat !== 'Glass_Gray' ? [0, 0, 0] : mat === 'Hood_Paint' ? [0, 0, 255] : SLOT1.has(mat) ? [255, 0, 0] : [0, 255, 0];
+        // Like Escarabajo: colour 1 the body, colour 2 the lower band, colour 3 the hood; trim, vents,
+        // grilles, chrome stay black (no garage colour).
+        const c = mat === 'Hood_Paint' ? [0, 0, 255] : mat === 'Lower_Paint' ? [0, 255, 0] : SLOT1.has(mat) ? [255, 0, 0] : [0, 0, 0];
         px.set([...c, 255], (y * w + x) * 4);
         continue;
       }
@@ -1139,9 +1142,13 @@ export async function convert(model, { name, template, categories = new Map(), m
       const s = s0 === 'headlight' || s0 === 'rearlight' ? s0 : near(c0, /glass/i.test(mat) ? 1 : 0) || s0;
       return INTO_DRAWN[s] || s;
     };
-    // Three garage colours: the paint where the template has its hood becomes colour 3 (gtv98's blue).
+    // Three garage colours where the template has them: its mask's colour under the closest point of
+    // the bent template (gtv98: green lower band → colour 2, blue hood → colour 3).
     if (slots && layout === 'zones') {
-      for (const t of src.tris) if ((t.mat === 'Body_Color' || t.mat === 'Wing') && near(t.c0, 0) === 'hood') t.mat = 'Hood_Paint';
+      const slotAt = await templateMaskSlots(bent, template);
+      const paint = src.tris.filter((t) => t.mat === 'Body_Color' || t.mat === 'Wing');
+      const lab = smoothLabels(paint, paint.map((t) => slotAt(t.c0)));
+      paint.forEach((t, i) => { if (lab[i] === 3) t.mat = 'Hood_Paint'; else if (lab[i] === 2) t.mat = 'Lower_Paint'; });
     }
   }
   let lod;
@@ -1495,6 +1502,87 @@ export { omParts, creaseNormals, smoothNormals, cellUV, CELLS, ZONES, merge, dds
 // from its paint pieces), else anywhere on the car. With it the template's own textures, decals and
 // see-through glass work like on the template.
 const KIND_OF = { Glass_Gray: 1, Taillight_Glass: 3, Turn_Signal_LED: 4 };
+
+// Labels per triangle ({a, b, c} corners) smoothed by the neighbours' vote (shared corners), three rounds:
+// clean borders between colour slots instead of a saw-tooth of single triangles.
+export function smoothLabels(tris, labels) {
+  const key = (p) => `${Math.round(p[0] * 1e3)},${Math.round(p[1] * 1e3)},${Math.round(p[2] * 1e3)}`;
+  const at = new Map();
+  tris.forEach((t, i) => { for (const p of [t.a, t.b, t.c]) { const k = key(p); const l = at.get(k); if (l) l.push(i); else at.set(k, [i]); } });
+  let cur = Int8Array.from(labels);
+  for (let round = 0; round < 3; round++) {
+    const next = cur.slice();
+    tris.forEach((t, i) => {
+      const votes = [0, 0, 0, 0];
+      for (const p of [t.a, t.b, t.c]) for (const j of at.get(key(p))) votes[cur[j]]++;
+      let best = cur[i];
+      for (let k = 0; k < 4; k++) if (votes[k] > votes[best]) best = k;
+      next[i] = best;
+    });
+    cur = next;
+  }
+  return cur;
+}
+
+// .png (8-bit RGB / RGBA, not interlaced) → { w, h, data: RGBA }, with DecompressionStream: page and node.
+export async function decodePNG(bytes) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const w = dv.getUint32(16); const h = dv.getUint32(20); const type = bytes[25];
+  const ch = type === 6 ? 4 : type === 2 ? 3 : 0;
+  if (!ch || bytes[24] !== 8 || bytes[28] !== 0) throw new Error('png ชนิดนี้ยังอ่านไม่ได้');
+  const idat = [];
+  for (let p = 8; p < bytes.length;) {
+    const len = dv.getUint32(p); const t = String.fromCharCode(...bytes.subarray(p + 4, p + 8));
+    if (t === 'IDAT') idat.push(bytes.subarray(p + 8, p + 8 + len));
+    p += 12 + len;
+  }
+  const raw = new Uint8Array(await new Response(new Blob(idat).stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer());
+  const stride = w * ch; const out = new Uint8Array(w * h * 4); const prev = new Uint8Array(stride); const cur = new Uint8Array(stride);
+  for (let y = 0; y < h; y++) {
+    const f = raw[y * (stride + 1)]; const row = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
+    for (let i = 0; i < stride; i++) {
+      const a = i >= ch ? cur[i - ch] : 0; const b = prev[i]; const c = i >= ch ? prev[i - ch] : 0;
+      let v = row[i];
+      if (f === 1) v += a; else if (f === 2) v += b; else if (f === 3) v += (a + b) >> 1;
+      else if (f === 4) { const pp = a + b - c; const pa = Math.abs(pp - a); const pb = Math.abs(pp - b); const pc = Math.abs(pp - c); v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c; }
+      cur[i] = v & 255;
+    }
+    for (let x = 0; x < w; x++) { out[(y * w + x) * 4] = cur[x * ch]; out[(y * w + x) * 4 + 1] = cur[x * ch + 1]; out[(y * w + x) * 4 + 2] = cur[x * ch + 2]; out[(y * w + x) * 4 + 3] = ch === 4 ? cur[x * ch + 3] : 255; }
+    prev.set(cur);
+  }
+  return { w, h, data: out };
+}
+
+// point → the template's colour slot there (1 red, 2 green, 3 blue, 0 none): its mask under the UV of the
+// closest point of the bent template's stock paint pieces.
+export async function templateMaskSlots(bent, template) {
+  const img = await decodePNG(template.files.get(`${template.name}_base.png`));
+  const P = []; const UV = [];
+  for (const [rel, { om, parts }] of bent) {
+    if (!/^body_2\.0m$|\/default_2\.0m$/.test(rel)) continue;
+    parts.forEach((p, k) => {
+      const f = om.submeshes[k].flags;
+      if (f[0] !== 0 || f[1] || f[2] || p.positions.length / 3 <= 8) return;
+      for (let t = 0; t < p.indices.length; t += 3) for (let j = 0; j < 3; j++) { const i = p.indices[t + j]; P.push(p.positions[i * 3], p.positions[i * 3 + 1], p.positions[i * 3 + 2]); UV.push(p.uvs[i * 2], p.uvs[i * 2 + 1]); }
+    });
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(P), 3));
+  const bvh = new MeshBVH(g, { indirect: true });
+  const tri = new THREE.Triangle(); const A = new THREE.Vector3(); const B = new THREE.Vector3(); const C = new THREE.Vector3(); const bary = new THREE.Vector3(); const q = new THREE.Vector3();
+  return (c) => {
+    const hit = bvh.closestPointToPoint(q.set(c[0], c[1], c[2]), {});
+    if (!hit) return 1;
+    const f = hit.faceIndex;
+    A.set(P[f * 9], P[f * 9 + 1], P[f * 9 + 2]); B.set(P[f * 9 + 3], P[f * 9 + 4], P[f * 9 + 5]); C.set(P[f * 9 + 6], P[f * 9 + 7], P[f * 9 + 8]);
+    tri.set(A, B, C).getBarycoord(hit.point, bary);
+    const u = UV[f * 6] * bary.x + UV[f * 6 + 2] * bary.y + UV[f * 6 + 4] * bary.z;
+    const v = UV[f * 6 + 1] * bary.x + UV[f * 6 + 3] * bary.y + UV[f * 6 + 5] * bary.z;
+    const x = Math.min(img.w - 1, Math.max(0, Math.floor(u * img.w))); const y = Math.min(img.h - 1, Math.max(0, Math.floor(v * img.h)));
+    const o = (y * img.w + x) * 4;
+    return img.data[o] > 128 ? 1 : img.data[o + 1] > 128 ? 2 : img.data[o + 2] > 128 ? 3 : 0;
+  };
+}
 
 // (point, kind) → the slot whose template file has the closest surface there (stock files: body and
 // the parts' default meshes; moving pieces left out), or null.

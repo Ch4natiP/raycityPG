@@ -906,11 +906,10 @@ async function openEmbeddedCar(name) {
 // Test packs (../cars/test/*.zip, embedded at build time): one download button each.
 const TEST_PACK_INFO = {
   'OK_gtv98_as_rc_canyon.zip': ['ชุดฐาน (ใช้ได้แล้ว)', 'gtv98 ของเกมเปลี่ยนชื่อเป็น rc_canyon ไม่มีไฟล์ของเราเลย ใช้สลับกลับเมื่อต้องการ'],
-  '8_plus_headlight.zip': ['ชุด 8: ที่ผ่านแล้ว + ไฟหน้า', 'ตัวถัง กันชน ฝากระโปรง หลังคา ของกะบะ (ผ่านแล้ว) + ไฟหน้าของกะบะ · เด้ง = ไฟหน้าคือต้นเหตุ'],
-  '9_plus_rearlight.zip': ['ชุด 9: ที่ผ่านแล้ว + ไฟท้าย', 'เด้ง = ไฟท้ายคือต้นเหตุ'],
-  '10_plus_grill.zip': ['ชุด 10: ที่ผ่านแล้ว + grill', 'เด้ง = grill คือต้นเหตุ'],
-  '11_plus_mainspoiler.zip': ['ชุด 11: ที่ผ่านแล้ว + สปอยเลอร์', 'เด้ง = สปอยเลอร์คือต้นเหตุ'],
-  '12_plus_skirt.zip': ['ชุด 12: ที่ผ่านแล้ว + สเกิร์ต', 'เด้ง = สเกิร์ตคือต้นเหตุ'],
+  '13_full.zip': ['ชุด 13: กะบะตัวเต็มรุ่นล่าสุด', 'เหมือน rc_canyon.zip ทุกไฟล์ · ลองอันนี้ก่อน'],
+  '14_full_gtv98_meshxml.zip': ['ชุด 14: ตัวเต็ม แต่ใช้กล่องชนของ gtv98', 'ผ่าน แต่ 13 เด้ง = mesh.xml ของเราคือต้นเหตุ'],
+  '15_full_no_skirt_default.zip': ['ชุด 15: ตัวเต็ม ไม่มีไฟล์สเกิร์ต default', 'ผ่าน แต่ 13 เด้ง = สเกิร์ตคือต้นเหตุ'],
+  '16_full_safe.zip': ['ชุด 16: ตัวเต็มแบบปลอดภัยสุด', 'กล่องชน gtv98 + ไม่มีสเกิร์ต default + ไม่มีภาพที่ gtv98 ไม่มี · ทุกไฟล์เคยผ่านในเกมแล้ว'],
 };
 function bindTestPacks() {
   const box = document.getElementById('test-packs');

@@ -437,9 +437,8 @@ function smoothNormals(parts) {
   }
 }
 
-// One LOD of the shell: simplified to `target` triangles, colored and split into slots.
-function shellLod(hull, target, ref, m) {
-  const raw = MeshoptSimplifier.simplify(hull.idx, hull.pos, 3, Math.round(target) * 3, 1, [])[0];
+// Clean index list: no degenerate or duplicate triangles.
+function dedupe(raw) {
   const seen = new Set();
   const idx = [];
   for (let t = 0; t < raw.length; t += 3) {
@@ -450,7 +449,12 @@ function shellLod(hull, target, ref, m) {
     seen.add(key);
     idx.push(...tri);
   }
-  const P = hull.pos;
+  return idx;
+}
+
+// Material of every triangle of a shell mesh (majority of 4 samples), then paint / non-paint islands
+// of one triangle cleaned up. Returns { mats, info: [{ c0, n }] }.
+function shellMaterials(P, idx, ref) {
   const nt = idx.length / 3;
   const mats = new Array(nt); const info = new Array(nt);
   for (let t = 0; t < nt; t++) {
@@ -478,25 +482,72 @@ function shellLod(hull, target, ref, m) {
       if (others.length === nb.length) mats[t] = mats[others[0]];
     }
   }
-  const groups = new Map();
-  for (let t = 0; t < nt; t++) {
-    const slot = m.slotOf(info[t].c0, info[t].n, mats[t]);
-    if (!groups.has(slot)) groups.set(slot, new Map());
-    const g = groups.get(slot);
-    if (!g.has(mats[t])) g.set(mats[t], []);
-    g.get(mats[t]).push(idx[t * 3], idx[t * 3 + 1], idx[t * 3 + 2]);
+  return { mats, info };
+}
+
+// One file's triangles as parts, one per material, with crease normals and the material's mask cell.
+function slotParts(P, idx, mats) {
+  const byMat = new Map();
+  for (let t = 0; t < mats.length; t++) {
+    if (!byMat.has(mats[t])) byMat.set(mats[t], []);
+    byMat.get(mats[t]).push(idx[t * 3], idx[t * 3 + 1], idx[t * 3 + 2]);
   }
-  const out = {};
-  for (const [slot, g] of groups) {
-    out[slot] = [];
-    for (const [mat, list] of g) {
-      const nm = creaseNormals(P, list, 70);
-      const [u, v] = cellUV(mat);
-      out[slot].push({ name: mat, kind: 0, ...nm, uvs: nm.positions.map((_, i) => (i % 3 === 2 ? null : null)).filter(() => false), u, v });
+  const parts = [];
+  for (const [mat, list] of byMat) {
+    const nm = creaseNormals(P, list, 70);
+    const [u, v] = cellUV(mat);
+    const uvs = new Float32Array((nm.positions.length / 3) * 2).map((_, i) => (i % 2 ? v : u));
+    parts.push({ name: mat, kind: 0, ...nm, uvs });
+  }
+  return parts;
+}
+const vertsOf = (parts) => parts.reduce((s, q) => s + q.positions.length / 3, 0);
+// A .0m holds at most 65,535 indices (u16 counts): about 21,000 triangles per file.
+const MAX_FILE_TRIS = 21000;
+
+// The shell split into the template's files, each file as detailed as `cap` vertices allows: the whole
+// shell is simplified once (no borders: it is closed), cut into files by slot, and only the files
+// still over the cap are simplified further on their own, their edges locked so neighbouring files
+// still meet without gaps. When locked edges alone are too many, the whole shell starts coarser.
+async function fitShell(hull, ref, m, cap, log) {
+  const hullTris = hull.idx.length / 3;
+  let T = Math.min(hullTris, cap * 10);
+  for (let round = 0; round < 8; round++) {
+    const mid = dedupe(T >= hullTris ? hull.idx : MeshoptSimplifier.simplify(hull.idx, hull.pos, 3, Math.round(T) * 3, 1, [])[0]);
+    const { mats, info } = shellMaterials(hull.pos, mid, ref);
+    const slots = new Map();
+    for (let t = 0; t < mats.length; t++) {
+      const slot = m.slotOf(info[t].c0, info[t].n, mats[t]);
+      if (!slots.has(slot)) slots.set(slot, []);
+      slots.get(slot).push(mid[t * 3], mid[t * 3 + 1], mid[t * 3 + 2]);
     }
+    const out = {};
+    let ok = true;
+    for (const [slot, list] of slots) {
+      let idx = list;
+      let parts = slotParts(hull.pos, idx, shellMaterials(hull.pos, idx, ref).mats);
+      let v = vertsOf(parts);
+      const over = () => v > cap || idx.length / 3 > MAX_FILE_TRIS;
+      let target = (idx.length / 3) * Math.min(1, (cap / v) * 0.95, MAX_FILE_TRIS / (idx.length / 3));
+      for (let k = 0; over() && k < 10; k++) {
+        const s = dedupe(MeshoptSimplifier.simplify(Uint32Array.from(list), hull.pos, 3, Math.max(3, Math.round(target) * 3), 1, ['LockBorder'])[0]);
+        const p2 = slotParts(hull.pos, s, shellMaterials(hull.pos, s, ref).mats);
+        const v2 = vertsOf(p2);
+        if (s.length >= idx.length && k > 0) break; // locked edges: can't go lower
+        idx = s; parts = p2; v = v2;
+        target = (idx.length / 3) * Math.min((cap / v) * 0.95, MAX_FILE_TRIS / (idx.length / 3));
+      }
+      if (over()) { ok = false; log(`ลด poly: ชิ้น ${slot} ยังเกิน (${v.toLocaleString()} จุด) เริ่มใหม่หยาบลง`); break; }
+      out[slot] = parts;
+    }
+    await tick();
+    if (ok) {
+      log(`ลด poly: ${Object.entries(out).map(([s, p]) => `${s} ${vertsOf(p).toLocaleString()}`).join(' · ')} จุด`);
+      return out;
+    }
+    T *= 0.7;
   }
-  for (const ps of Object.values(out)) for (const q of ps) { q.uvs = new Float32Array((q.positions.length / 3) * 2).map((_, i) => (i % 2 ? q.v : q.u)); }
-  return out;
+  throw new Error('ลด poly ให้ต่ำกว่าเพดานไม่ได้');
 }
 
 const merge = (parts) => {
@@ -656,17 +707,8 @@ export async function convert(model, { name, template, categories = new Map(), m
   const hull = buildHull(src.tris, { voxel, smooth: 12 });
   log(`เปลือกนอก: ${(hull.idx.length / 3).toLocaleString()} สามเหลี่ยม`);
   await tick();
-  // Shrink until every part file fits under the cap.
-  let target = Math.max(2000, maxVerts * 4);
-  let lod;
-  for (let k = 0; k < 10; k++) {
-    lod = shellLod(hull, target, ref, m);
-    const worst = Math.max(...Object.values(lod).map((ps) => ps.reduce((s, q) => s + q.positions.length / 3, 0)));
-    log(`ลด poly: ${Math.round(target).toLocaleString()} สามเหลี่ยม → ไฟล์ใหญ่สุด ${worst.toLocaleString()} จุด`);
-    await tick();
-    if (worst <= maxVerts * 0.97) break;
-    target *= Math.max(0.5, (maxVerts / worst) * 0.95);
-  }
+  // Every part file as detailed as the cap allows.
+  const lod = await fitShell(hull, ref, m, maxVerts, log);
   smoothNormals(Object.values(lod).flat());
 
   const out = new Map();

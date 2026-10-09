@@ -913,7 +913,7 @@ async function openEmbeddedCar(name) {
 
 // Test packs (../cars/test/*.zip, embedded at build time): one download button each.
 const TEST_PACK_INFO = {
-  '23_urus_from_web.zip': ['ชุด 23: Lamborghini Urus (ถอดล้อแล้ว) ทำจากหน้าเว็บ ⭐', 'สร้างด้วยปุ่ม "สร้างรถจากโมเดล 3D" สูตรเดียวกับชุด 22 · ไม่เกิน 3,500 จุดต่อไฟล์ · ใช้ชื่อ rc_canyon เดิม'],
+  '23_urus_from_web.zip': ['ชุด 23: Lamborghini Urus (ถอดล้อแล้ว) ทำจากหน้าเว็บ ⭐', 'สร้างด้วยปุ่ม "สร้างรถจากโมเดล 3D" ทุกชิ้นได้ 3,500 จุดของตัวเอง (ทั้งคัน ~17,500 สามเหลี่ยม) · ใช้ชื่อ rc_canyon เดิม'],
   '22_flat_colors_3500.zip': ['ชุด 22: สีเรียบต่อสามเหลี่ยม แบบรถในเกม ⭐', 'ทุกสามเหลี่ยมใช้สีเดียว (สีรถ/ดำ) ไม่มีปื้นดำมั่ว · ไม่เกิน 3,500 จุดต่อไฟล์'],
   '21_more_poly_3800.zip': ['ชุด 21: ✅ เข้าเกมได้ (3,631 จุด) แต่มีปื้นดำ', 'ใช้ทดสอบเพดาน: 3,800 ผ่าน'],
   '17_full_mask_textures.zip': ['ชุด 17: ✅ เข้าเกมได้ แต่มีปื้นดำ', 'เปลือกนอก ~3,000 สามเหลี่ยม'],
@@ -1313,9 +1313,22 @@ function buildModelPanel() {
   ni.addEventListener('change', () => { ni.value = ni.value.trim().replace(/[^a-z0-9_]/gi, '_').toLowerCase() || 'rc_car'; });
   nameRow.appendChild(ni);
   box.appendChild(nameRow);
-  const capSel = pickerRow('จุดสูงสุดต่อไฟล์', [['2000', '2,000 (เท่ารถในเกม)'], ['3000', '3,000'], ['3500', '3,500 (แนะนำ)']], '3500', () => {});
+  const capHint = document.createElement('p');
+  capHint.className = 'hint';
+  const CAP_HINTS = {
+    2000: 'เท่ารถในเกม เบาสุด',
+    3000: 'ปลอดภัย',
+    3500: 'ละเอียดสุดที่เข้าเกมได้แน่นอน (ทดสอบแล้วถึง 3,631) · แต่ละชิ้น (ตัวถัง ฝากระโปรง หลังคา กันชน ไฟ) ได้ 3,500 ของตัวเอง',
+    5000: '⚠ ยังไม่เคยทดสอบในเกม อาจเด้ง (8,000 เด้งแน่)',
+    60000: '⛔ ไม่ลด poly (ละเอียดเต็มที่ไฟล์ .0m เก็บได้ ~21,000 สามเหลี่ยมต่อไฟล์): สวยสุด ดูในเว็บได้ แต่ใส่เกมจะเด้ง (เกมรับไม่เกิน ~3,600 จุดต่อไฟล์)',
+  };
+  const capSel = pickerRow('ลด poly (จุดสูงสุดต่อไฟล์)', [['2000', '2,000'], ['3000', '3,000'], ['3500', '3,500 (แนะนำ)'], ['5000', '5,000 (ทดลอง)'], ['60000', 'ไม่ลด poly']], '3500', (v) => {
+    capHint.textContent = CAP_HINTS[v];
+    capHint.style.color = Number(v) > 3500 ? '#ff8a6a' : '';
+  });
+  capHint.textContent = CAP_HINTS[3500];
   const voxSel = pickerRow('ความละเอียดผิว', [['0.01', '1.0 ซม. (ละเอียด ช้า)'], ['0.015', '1.5 ซม. (ปกติ)'], ['0.02', '2.0 ซม. (เร็ว)']], '0.015', () => {});
-  box.append(capSel, voxSel);
+  box.append(capSel, capHint, voxSel);
   const go = document.createElement('button');
   go.className = 'accent';
   go.textContent = '⚙ สร้างรถ RayCity จากโมเดลนี้';
@@ -1333,7 +1346,9 @@ function buildModelPanel() {
         maxVerts: Number(capSel.querySelector('select').value), voxel: Number(voxSel.querySelector('select').value), log: say,
       });
       say('เปิดรถที่ได้ ตรวจดูแล้วกด "ดาวน์โหลดรถคันนี้ทั้งโฟลเดอร์" ได้เลย');
-      await openCarFolder([...out].map(([rel, bytes]) => ({ path: `${name}/${rel}`, file: new File([bytes], rel.split('/').pop()) })));
+      const entries = [...out].map(([rel, bytes]) => ({ path: `${name}/${rel}`, file: new File([bytes], rel.split('/').pop()) }));
+      await openCarFolder(entries);
+      showBuildResult(name, out, entries);
     } catch (e) {
       console.error(e);
       say(`ผิดพลาด: ${e.message}`);
@@ -1343,7 +1358,59 @@ function buildModelPanel() {
   const goRow = document.createElement('div');
   goRow.className = 'btns';
   goRow.appendChild(go);
-  box.append(goRow, log);
+  const result = document.createElement('div');
+  result.id = 'model-result';
+  result.hidden = true;
+  box.append(goRow, log, result);
+}
+
+// After a build: what came out (vertices per file against the game's limit) and the check-before-
+// download buttons, right under the build button.
+function showBuildResult(name, out, entries) {
+  const box = document.getElementById('model-result');
+  box.hidden = false;
+  box.innerHTML = '';
+  const h = document.createElement('div');
+  h.className = 'result-title';
+  h.textContent = `✅ สร้าง ${name} เสร็จ — จอ 3D ตอนนี้คือรถที่ได้ ตรวจดูก่อนโหลด`;
+  box.appendChild(h);
+  const rows = [...out.keys()].filter((r) => r === 'body_2.0m' || /^[^/]+\/default_2\.0m$/.test(r))
+    .map((r) => [r.includes('/') ? r.split('/')[0] : 'ตัวถัง (body)', countsOf(out.get(r))]);
+  const t = document.createElement('table');
+  t.className = 'result-table';
+  let worst = 0;
+  for (const [label, c] of rows) {
+    if (c.verts <= 30) continue; // empty stand-ins
+    worst = Math.max(worst, c.verts);
+    const tr = t.insertRow();
+    tr.insertCell().textContent = label;
+    tr.insertCell().textContent = `${c.verts.toLocaleString()} จุด · ${c.tris.toLocaleString()} ▲`;
+    tr.insertCell().textContent = c.verts <= 3631 ? '✅' : '⚠ เกิน';
+  }
+  box.appendChild(t);
+  const note = document.createElement('p');
+  note.className = 'hint';
+  note.textContent = worst <= 3631 ? 'ทุกไฟล์ไม่เกิน 3,631 จุด (ที่ทดสอบแล้วว่าเข้าเกมได้)' : '⚠ มีไฟล์เกิน 3,631 จุด ใส่เกมอาจเด้ง ใช้ดู/เก็บไว้ หรือสร้างใหม่แบบ 3,500';
+  if (worst > 3631) note.style.color = '#ff8a6a';
+  box.appendChild(note);
+  const btns = document.createElement('div');
+  btns.className = 'btns';
+  const mk = (text, fn, cls) => { const b = document.createElement('button'); b.textContent = text; if (cls) b.className = cls; b.addEventListener('click', fn); btns.appendChild(b); return b; };
+  mk('👁 ดูรถที่ได้', () => openCarFolder(entries));
+  mk('🔁 เทียบกับโมเดลต้นฉบับ', showModelPreview);
+  mk('🎮 ดูแบบในเกม (ด้านเดียว)', () => document.getElementById('btn-ingame').click());
+  mk('✏ แก้ต่อ (ขนาด ย้าย ลด poly รายชิ้น)', async () => {
+    if (!folder || folder.name !== name) await openCarFolder(entries);
+    const ed = document.getElementById('car-edit');
+    ed.hidden = false;
+    ed.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  mk('⬇ ดาวน์โหลดทั้งโฟลเดอร์ (.zip)', async () => {
+    if (!folder || folder.name !== name) await openCarFolder(entries);
+    await downloadCarZip();
+  }, 'accent');
+  box.appendChild(btns);
+  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 // Click a piece (pick mode): removed ↔ kept.

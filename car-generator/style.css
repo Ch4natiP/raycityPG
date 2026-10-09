@@ -152,3 +152,8 @@ body.rc-mode .gen-only, body.rc-mode #controls { display: none; }
 #model-panel .edit-sub { margin: 12px 0 4px; font-size: 12px; font-weight: 600; color: var(--accent-2); }
 #model-panel input[type="text"] { width: 100%; }
 #model-panel pre, #model-log { white-space: pre-wrap; margin: 6px 0; }
+#model-result { margin-top: 10px; padding: 10px; border: 1px solid rgba(80,220,140,0.45); border-radius: 8px; background: rgba(80,220,140,0.07); }
+#model-result .result-title { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+#model-result .result-table { width: 100%; font-size: 12px; border-collapse: collapse; }
+#model-result .result-table td { padding: 2px 4px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+#model-result .btns { margin-top: 8px; }

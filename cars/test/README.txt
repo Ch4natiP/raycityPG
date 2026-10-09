@@ -76,3 +76,13 @@ In game 42 = 43 except the headlights (blue in 43 = gtv98's headlight texture): 
 nor the part textures. Likely frontbumper / headlight / skirt are not drawn (38's red frontbumper texture never
 showed). 44_canyon_front_into_hood.zip: 42 with frontbumper + headlight geometry in the hood file and the skirt in
 the roof file (files known to draw); those part folders keep stand-ins only (mesh file set = gtv98's).
+
+In game 40 (one colour per part folder): the front (frontbumper / headlight / grill) and the lower sides
+(skirt) stayed dark grey, none of their colours showed: those files are not drawn with the car's paint.
+44 (the same geometry moved into hood / roof) came out white and repaintable at the front.
+-> Builds in the template layout now put frontbumper / headlight / grill geometry into hood and skirt into
+roof automatically (convert INTO_DRAWN, also in writeCar for Studio / old-body builds); the checker warns
+when those files still hold geometry.
+44 door area dark / see-through: geometry and normals there are complete and identical to 39 (door white);
+only the UVs differ (gtv98 layout), so it is most likely the decal (lai) applied on that UV. To check: 44
+with no decal equipped.

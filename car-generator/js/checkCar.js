@@ -94,6 +94,13 @@ export async function checkCar(files, name, template = null) {
       if (moving(t) !== moving(om)) flagsDiff++;
     }
   }
+  // Pack 40: these part files stay dark in game whatever their texture; pack 44 (moved into hood / roof) white.
+  const undrawn = ['frontbumper', 'headlight', 'grill', 'skirt'].filter((d) => {
+    const b = files.get(`${d}/default_2.0m`) || files.get(`${d}/rbrc_001_2.0m`);
+    if (!b) return false;
+    try { return omOf(b).submeshes.some((s) => s.vertexCount > 8); } catch { return false; }
+  });
+  if (undrawn.length) warn(`มีชิ้นรถอยู่ในไฟล์ ${undrawn.join(', ')} ที่เกมไม่ทาสี (ชุด 40 ออกมาดำ) สร้างใหม่ด้วยแบบ "ตามรถแม่แบบ" จะย้ายไปไว้ใน hood / roof ให้`);
   if (broken) bad(`ไฟล์ .0m เสีย ${broken} ไฟล์ (อ่านไม่ได้)`);
   if (worst > CRASH) bad(`${worstRel} มี ${worst.toLocaleString()} จุด เกิน ${CRASH.toLocaleString()} ที่เคยเด้ง`);
   else if (worst > TESTED_OK) warn(`${worstRel} มี ${worst.toLocaleString()} จุด เกินที่เคยผ่าน (${TESTED_OK.toLocaleString()}) ยังไม่รู้ว่าเด้งไหม`);

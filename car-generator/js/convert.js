@@ -596,6 +596,11 @@ function slotParts(P, idx, mats) {
   }
   return parts;
 }
+// In game these part files are not drawn with the car's paint (pack 40: the front and lower sides stayed
+// dark whatever their texture); the same geometry in the hood / roof files came out white and
+// repaintable (pack 44). Builds in the template layout put it there.
+export const INTO_DRAWN = { frontbumper: 'hood', headlight: 'hood', grill: 'hood', skirt: 'roof' };
+
 const vertsOf = (parts) => parts.reduce((s, q) => s + q.positions.length / 3, 0);
 // A .0m holds at most 65,535 indices (u16 counts): about 21,000 triangles per file.
 const MAX_FILE_TRIS = 21000;
@@ -881,6 +886,10 @@ export async function convert(model, { name, template, categories = new Map(), m
   log(`ตัวรถ (ถอดล้อแล้ว): ${src.tris.length.toLocaleString()} สามเหลี่ยม, ยาว ${src.length.toFixed(2)} ม., ล้อ ${src.wheels.length}`);
   await tick();
   const m = metrics(src.tris, src.wheels);
+  if (layout === 'template') {
+    const slotOf0 = m.slotOf;
+    m.slotOf = (c0, n, mat) => { const s = slotOf0(c0, n, mat); return INTO_DRAWN[s] || s; };
+  }
   let lod;
   if (raw) {
     log('ใช้ผิวจริงของโมเดล (ไม่สร้างผิวใหม่)…');
@@ -924,6 +933,18 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, p
   // layout 'template': the pieces already carry the template's UV layout (uvsFromTemplate), so the
   // template's own textures (paint mask, colour layer, part textures) are used as they are.
   const asTemplate = layout === 'template';
+  // Geometry still in a file the game does not paint (Studio, old-body mode) joins its drawn neighbour
+  // while that file stays within what has loaded in game.
+  if (asTemplate) {
+    for (const [from, to] of Object.entries(INTO_DRAWN)) {
+      if (!lod[from]?.length) continue;
+      const n = vertsOf(lod[from]) + vertsOf(lod[to] || []);
+      if (n > 5005) { log(`${from}: ย้ายไป ${to} ไม่ได้ (รวม ${n.toLocaleString()} จุด เกิน 5,005) เกมอาจไม่ทาสีชิ้นนี้`); continue; }
+      lod[to] = [...(lod[to] || []), ...lod[from]];
+      delete lod[from];
+      log(`${from} → ${to} (ไฟล์ ${from} เกมไม่ทาสี)`);
+    }
+  }
   // paintAll: everything but glass / lamps / cabin samples the paint column. In game the colour follows
   // the UV column (a car with the whole mask red still showed its trim black and the hood brown).
   for (const parts of Object.values(lod)) {

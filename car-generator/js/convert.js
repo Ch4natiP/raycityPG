@@ -901,7 +901,7 @@ export async function convert(model, { name, template, categories = new Map(), m
 // A car folder in the template's layout from finished geometry. lod: { slot ('body', 'hood', ...):
 // [parts with positions, normals, uvs, indices] }; bounds: [min, max] of the body (mesh.xml).
 // Returns Map(rel → Uint8Array).
-export async function writeCar(lod, { name, template, bounds, paintAll = true, log = () => {} }) {
+export async function writeCar(lod, { name, template, bounds, paintAll = true, partTextures = false, log = () => {} }) {
   const tpl = template.files;
   const tplName = template.name;
   // paintAll: everything but glass / lamps / cabin samples the paint column. In game the colour follows
@@ -947,7 +947,10 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, l
     // Only the textures the template really has: a list.xml texture missing on purpose (gtv98's hood,
     // roof, spoiler) makes the game paint that part like the body; a transparent stand-in there came
     // out brown / black in game.
-    const texNames = new Set(tplPngs.map((r) => r.slice(dir.length + 1, -4)));
+    // In game a part texture is drawn as the part's own colour (pack 38: red texture → red trunk) and a
+    // part with no texture takes the body's paint (pack 39: whole rear repaintable). So by default the
+    // parts get no textures at all; `partTextures` keeps the template's.
+    const texNames = new Set(partTextures ? tplPngs.map((r) => r.slice(dir.length + 1, -4)) : []);
     const [w, h] = tplPngs.map((r) => pngSize(tpl.get(r), [128, 128])).sort((a, b) => b[0] * b[1] - a[0] * a[1])[0] || [128, 128];
     for (const t of texNames) {
       const px = new Uint8ClampedArray(w * h * 4);

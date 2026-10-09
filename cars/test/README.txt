@@ -53,3 +53,10 @@ skirt low on the sides) or in body triangles of the plastic zone; body paint-zon
 39_canyon_no_part_textures.zip  37 + part textures removed (like gtv98's hood/roof, painted like the body)
 Web: '⚡ สร้าง + ตรวจ + ดาวน์โหลด' one-click build (raw outer surface ≤4,800/file, wheels fitted, paint
 column for everything but glass/lamps, check + repair, download).
+In game: 38 (red part textures) -> the trunk/rear turned literally red: a part texture is the part's own
+colour. 39 (no part textures) -> rear white and repaintable. Still dark in both: the front of the hood /
+nose and the lower sides (38 did not turn them red: those part files may not be drawn at all).
+Builds now write no part textures (writeCar partTextures=false); the checker warns about part textures.
+40_canyon_part_colors_diagnostic.zip  39 with one solid colour per part folder (frontbumper red, headlight
+                         green, rearbumper blue, rearlight yellow, skirt magenta, grill cyan, hood orange,
+                         roof purple) to see which part files the game draws and where.

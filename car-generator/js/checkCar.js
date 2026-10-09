@@ -51,9 +51,8 @@ export async function checkCar(files, name, template = null) {
       for (let l = 0; l < 3; l++) if (!files.has(`${d}/${m[1]}_${l}.0m`)) missing.push(`${d}/${m[1]}_${l}.0m`);
       // A texture the list names may be missing on purpose (gtv98's hood / roof: painted like the
       // body); it is needed only where the base car has it.
-      const tplHas = (ext) => template && template.files.has(`${d}/${m[2].split(name).join(template.name)}${ext}`);
-      if (m[2] && tplHas('.png') && !files.has(`${d}/${m[2]}.png`)) missing.push(`${d}/${m[2]}.png`);
-      if (m[2] && tplHas('_s.dds') && !files.has(`${d}/${m[2]}_s.dds`)) missing.push(`${d}/${m[2]}_s.dds`);
+      // (Part textures are left out on purpose: without one a part takes the body's paint in game;
+      // with one it shows the texture's own colour.)
     }
     if (!/<part\b/.test(text)) warn(`${d}/list.xml ไม่มีรายการชิ้นส่วน`);
     if (/gtv98|escarabajo/.test(text) && name !== 'gtv98') warn(`${d}/list.xml ยังมีชื่อรถเก่าอยู่ข้างใน`);
@@ -66,7 +65,9 @@ export async function checkCar(files, name, template = null) {
   if (template) {
     const extra = [...files.keys()].filter((r) => /\/[^/]+\.png$/.test(r) && !r.startsWith('icon/')
       && ![...template.files.keys()].some((t) => t.split(template.name).join(name) === r));
-    if (extra.length) bad(`มีรูปชิ้นส่วนที่รถแม่แบบไม่มี ${extra.length} ไฟล์ (${extra.slice(0, 4).join(', ')}) ชิ้นนั้นในเกมจะไม่ได้สีรถ (เป็นสีน้ำตาล/ดำ) · กด 🔧 ซ่อมให้อัตโนมัติ`);
+    const partTex = [...files.keys()].filter((r) => /\/[^/]+\.png$/.test(r) && !r.startsWith('icon/'));
+    if (partTex.length) warn(`มีรูปของชิ้นส่วน ${partTex.length} ไฟล์ (${partTex.slice(0, 3).join(', ')}) ชิ้นที่มีรูปจะเป็นสีตามรูป ไม่ใช่สีรถ (ทดสอบแล้วในชุด 38/39) · ถ้าอยากให้เปลี่ยนสีได้ทั้งคัน กด 🔧 ซ่อมให้อัตโนมัติ`);
+    else if (extra.length === 0) ok('ชิ้นส่วนไม่มีรูปของตัวเอง → รับสีรถจากตัวถังทุกชิ้น');
   }
   if (missing.length) bad(`ไฟล์ขาด ${missing.length} ไฟล์: ${missing.slice(0, 8).join(', ')}${missing.length > 8 ? ' …' : ''}`);
   else ok('ไฟล์ครบทุกไฟล์ที่เกมเปิด');
@@ -209,11 +210,11 @@ export async function repairCar(files, name, template = null, paintAll = true) {
     fixes.push(`เปลี่ยนชื่อไฟล์และ list.xml จาก ${inner} เป็น ${name}`);
   }
   if (template) {
-    const keep = (r) => !(/\/[^/]+\.(png|dds)$/.test(r) && !r.startsWith('icon/')) || [...template.files.keys()].some((t) => t.split(template.name).join(name) === r);
+    const keep = (r) => !(/\/[^/]+\.(png|dds)$/.test(r) && !r.startsWith('icon/')) || (!paintAll && [...template.files.keys()].some((t) => t.split(template.name).join(name) === r));
     const extra = [...out.keys()].filter((r) => !keep(r));
     if (extra.length) {
       for (const r of extra) out.delete(r);
-      fixes.push(`ลบรูปชิ้นส่วนที่รถแม่แบบไม่มี ${extra.length} ไฟล์ (ฝากระโปรง หลังคา ฯลฯ จะได้สีรถเหมือนตัวถัง)`);
+      fixes.push(`ลบรูปของชิ้นส่วน ${extra.length} ไฟล์ (ชิ้นส่วนจะรับสีรถจากตัวถัง แบบชุด 39)`);
     }
   }
   const body = out.get('body_2.0m');

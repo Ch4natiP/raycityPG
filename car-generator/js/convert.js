@@ -14,6 +14,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { MeshoptSimplifier } from 'meshoptimizer';
 import { MeshBVH } from 'three-mesh-bvh';
 import { buildHull } from '../tools/hull.mjs';
@@ -136,13 +137,122 @@ function dracoLoader() {
 
 export const MODEL_TYPES = '.glb,.gltf,.fbx,.obj';
 
-async function readScene(file) {
-  const ext = file.name.split('.').pop().toLowerCase();
-  if (ext === 'fbx') return new FBXLoader().parse(await file.arrayBuffer(), '');
-  if (ext === 'obj') return new OBJLoader().parse(await file.text());
-  const loader = new GLTFLoader();
-  loader.setDRACOLoader(dracoLoader());
-  return (await loader.parseAsync(ext === 'gltf' ? await file.text() : await file.arrayBuffer(), '')).scene;
+// Pictures given with a model: the colour texture is the most colourful one (normal maps are blue-violet,
+// AO / shadow maps grey).
+async function pickColourImage(images) {
+  let best = null; let bestScore = -1;
+  for (const f of images) {
+    try {
+      const bmp = await createImageBitmap(f);
+      const c = document.createElement('canvas'); c.width = 48; c.height = 48;
+      const g = c.getContext('2d', { willReadFrequently: true });
+      g.drawImage(bmp, 0, 0, 48, 48);
+      const d = g.getImageData(0, 0, 48, 48).data;
+      let sat = 0; let nrm = 0; let n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i + 3] < 20) continue;
+        const r = d[i]; const gg = d[i + 1]; const b = d[i + 2];
+        const mx = Math.max(r, gg, b); const mn = Math.min(r, gg, b);
+        sat += mx ? (mx - mn) / mx : 0; n++;
+        if (b > 200 && Math.abs(r - 128) < 40 && Math.abs(gg - 128) < 40) nrm++;
+      }
+      const score = n && nrm < n * 0.5 ? sat / n : -1;
+      if (score > bestScore) { bestScore = score; best = f; }
+    } catch { /* not an image the browser reads */ }
+  }
+  return best;
+}
+
+// input: one File, or several (the model with its .mtl / .bin / pictures, any names, no folders needed).
+async function readScene(input) {
+  const files = [].concat(input);
+  const main = files.find((f) => /\.(glb|gltf|fbx|obj)$/i.test(f.name));
+  if (!main) throw new Error('ไม่เจอไฟล์โมเดล (.glb .gltf .fbx .obj)');
+  const ext = main.name.split('.').pop().toLowerCase();
+  const byName = new Map(files.map((f) => [f.name.toLowerCase(), f]));
+  const urls = new Map();
+  const manager = new THREE.LoadingManager();
+  // A texture path inside the model (C:\\work\\tex\\body.png, textures/body.png) → the picture given with it.
+  manager.setURLModifier((url) => {
+    const base = decodeURIComponent(url.split(/[?#]/)[0]).split(/[\\/]/).pop().toLowerCase();
+    const f = byName.get(base);
+    if (!f) return url;
+    if (!urls.has(f)) urls.set(f, URL.createObjectURL(f));
+    return urls.get(f);
+  });
+  let pending = 0; let wake = null;
+  manager.onStart = () => {};
+  const itemStart = manager.itemStart.bind(manager); const itemEnd = manager.itemEnd.bind(manager); const itemError = manager.itemError.bind(manager);
+  manager.itemStart = (u) => { pending++; itemStart(u); };
+  manager.itemEnd = (u) => { pending--; itemEnd(u); if (!pending && wake) wake(); };
+  manager.itemError = (u) => { itemError(u); };
+  let scene;
+  if (ext === 'fbx') scene = new FBXLoader(manager).parse(await main.arrayBuffer(), '');
+  else if (ext === 'obj') {
+    const loader = new OBJLoader(manager);
+    const mtl = files.find((f) => /\.mtl$/i.test(f.name));
+    if (mtl) {
+      const mats = new MTLLoader(manager).parse(await mtl.text(), '');
+      mats.preload();
+      loader.setMaterials(mats);
+    }
+    scene = loader.parse(await main.text());
+  } else {
+    const loader = new GLTFLoader(manager);
+    loader.setDRACOLoader(dracoLoader());
+    scene = (await loader.parseAsync(ext === 'gltf' ? await main.text() : await main.arrayBuffer(), '')).scene;
+  }
+  if (pending) await Promise.race([new Promise((r) => { wake = r; }), new Promise((r) => setTimeout(r, 20000))]);
+  // No texture reached the model (an .obj without .mtl, a model whose paths point elsewhere) but a
+  // picture came with it: the colour picture on every material.
+  const images = files.filter((f) => /\.(png|jpe?g|webp|bmp|gif|tga)$/i.test(f.name) || /^image\//.test(f.type));
+  let hasMap = false;
+  scene.traverse((o) => { if (o.isMesh) for (const m of [].concat(o.material)) if (m?.map?.image) hasMap = true; });
+  if (!hasMap && images.length) {
+    const pick = await pickColourImage(images);
+    if (pick) {
+      const img = await createImageBitmap(pick, { imageOrientation: 'flipY' });
+      const tex = new THREE.Texture(img);
+      tex.flipY = false; // flipped while decoding (ImageBitmap)
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.needsUpdate = true;
+      tex.userData.flipped = true;
+      scene.traverse((o) => {
+        if (!o.isMesh) return;
+        for (const m of [].concat(o.material)) if (m) { m.map = tex; if (m.color) m.color.set('#ffffff'); m.needsUpdate = true; }
+      });
+    }
+  }
+  return scene;
+}
+
+// Colour of a texture under a uv (for telling glass / tyres apart on scans with one material).
+const texReaders = new WeakMap();
+function texSampler(tex) {
+  if (!tex?.image) return null;
+  if (texReaders.has(tex)) return texReaders.get(tex);
+  let fn = null;
+  try {
+    const im = tex.image;
+    const w0 = im.width || im.videoWidth; const h0 = im.height || im.videoHeight;
+    const k = Math.min(1, 1024 / Math.max(w0, h0));
+    const w = Math.max(1, Math.round(w0 * k)); const h = Math.max(1, Math.round(h0 * k));
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    g.drawImage(im, 0, 0, w, h);
+    const d = g.getImageData(0, 0, w, h).data;
+    // Rows as stored: flipY textures (OBJ / FBX) have v = 0 at the bottom row; a bitmap flipped while
+    // decoding has it at the top already (like glTF's).
+    const flip = tex.flipY && !tex.userData?.flipped;
+    fn = (u, v) => {
+      u -= Math.floor(u); v -= Math.floor(v);
+      const x = Math.min(w - 1, Math.floor(u * w)); const y = Math.min(h - 1, Math.floor((flip ? 1 - v : v) * h));
+      const i = (y * w + x) * 4;
+      return [d[i] / 255, d[i + 1] / 255, d[i + 2] / 255];
+    };
+  } catch { fn = null; }
+  texReaders.set(tex, fn);
+  return fn;
 }
 
 // Reads a whole car model (.glb / .gltf / .fbx / .obj, usually with wheels, brakes, interior...) into a
@@ -151,12 +261,15 @@ async function readScene(file) {
 // shape and position and start out removed — the game puts its own wheels on.
 // Returns the model: { P, N (9 floats per triangle), M (material per triangle), C (piece per
 // triangle), pieces, removed (per piece), wheels, materials: [{ name, tris, color, category }] }.
-export async function loadModel(file) {
-  const scene = await readScene(file);
+export async function loadModel(input) {
+  const files = [].concat(input);
+  const file = files.find((f) => /\.(glb|gltf|fbx|obj)$/i.test(f.name)) || files[0];
+  const scene = await readScene(files);
   scene.updateMatrixWorld(true);
   const matIndex = new Map();
   const materials = [];
   const P = []; const N = []; const M = []; const skipTri = [];
+  const TC = []; let texTris = 0; // colour under each corner (texture × material colour)
   const wheelNodes = [];
   const toRC = (v) => [-v.x, v.z, v.y];
   const v = new THREE.Vector3();
@@ -188,6 +301,9 @@ export async function loadModel(file) {
         matIndex.set(name, mi);
         materials.push({ name, tris: 0, color: m?.color ? `#${m.color.getHexString()}` : '#888888', category: guessCategory(name) });
       }
+      const sample = g.attributes.uv ? texSampler(m?.map) : null;
+      const base = m?.color ? [m.color.r, m.color.g, m.color.b] : [0.55, 0.55, 0.55];
+      const uvA = g.attributes.uv;
       const end = Math.min(count, gr.start + gr.count);
       for (let t = gr.start; t + 2 < end; t += 3) {
         const ids = I ? [I[t], I[t + 1], I[t + 2]] : [t, t + 1, t + 2];
@@ -197,6 +313,10 @@ export async function loadModel(file) {
         else { const f = norm(cross(sub(a[1], a[0]), sub(a[2], a[0]))); nv = [f, f, f]; }
         P.push(...a[0], ...a[1], ...a[2]); N.push(...nv[0], ...nv[1], ...nv[2]);
         M.push(mi); skipTri.push(skipNode ? 1 : 0);
+        for (const i of ids) {
+          if (sample) { const c = sample(uvA.getX(i), uvA.getY(i)); TC.push(c[0] * base[0], c[1] * base[1], c[2] * base[2]); } else TC.push(...base);
+        }
+        if (sample) texTris++;
         materials[mi].tris++;
       }
     }
@@ -204,6 +324,11 @@ export async function loadModel(file) {
   const nt = M.length;
   if (!nt) throw new Error('ไม่พบโมเดล 3 มิติในไฟล์นี้');
   const model = { P: new Float32Array(P), N: new Float32Array(N), M: Uint16Array.from(M), materials, name: file.name.replace(/\.[^.]+$/, '') };
+  model.TC = new Float32Array(TC);
+  model.textured = texTris > nt * 0.5;
+  // A scan (one material over the whole car, its look in a picture): the picture tells the windows
+  // (light, bluish or very bright, high up) and the tyres (dark, grey, low down) from the paint.
+  const scan = model.textured && materials.length === 1;
   const ext = () => {
     const mn = [Infinity, Infinity, Infinity]; const mx = [-Infinity, -Infinity, -Infinity];
     for (let i = 0; i < model.P.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], model.P[i + k]); mx[k] = Math.max(mx[k], model.P[i + k]); }
@@ -234,8 +359,10 @@ export async function loadModel(file) {
   for (const w of wheelNodes) w.p = place(w.p, e.mn[2]);
   model.scale = s;
 
+  if (scan) splitScan(model);
   findPieces(model);
   findWheels(model, skipTri);
+  if (model.splitByMat) scanRims(model);
   // Ground: the bottom of the wheels (else of the whole model) at z = 0.
   {
     let z0 = Infinity;
@@ -255,7 +382,8 @@ export async function loadModel(file) {
     const h = meanY((t) => cat(t) === 'Projector_Glass'); const tl = meanY((t) => cat(t) === 'Taillight_Glass');
     if (h !== null && tl !== null) front = Math.sign(h - tl);
   }
-  if (!front) {
+  // (Not for scans: windows found by colour say nothing reliable about the front; keep the file's.)
+  if (!front && !model.splitByMat) {
     const g = meanY((t) => materials[model.M[t]].category === 'Glass_Gray');
     front = g === null ? -1 : Math.sign(g) || -1;
   }
@@ -283,6 +411,64 @@ export function turnAround(model) {
   if (fit) fitToWheels(model, fit.game, fit.mode);
 }
 
+// Scans: windows and tyres told apart by the picture's colour (per triangle, then smoothed by the
+// neighbours' vote), each its own material; pieces then split by material so the tyres are pieces
+// the wheel finder sees.
+function splitScan(model) {
+  const { P, TC, M, materials } = model;
+  const nt = M.length;
+  let zMin = Infinity; let zMax = -Infinity;
+  for (let i = 2; i < P.length; i += 3) { zMin = Math.min(zMin, P[i]); zMax = Math.max(zMax, P[i]); }
+  const H = zMax - zMin;
+  const label = new Uint8Array(nt); // 0 paint, 1 window, 2 tyre
+  for (let t = 0; t < nt; t++) {
+    let r = 0; let g = 0; let b = 0;
+    for (let j = 0; j < 3; j++) { r += TC[t * 9 + j * 3]; g += TC[t * 9 + j * 3 + 1]; b += TC[t * 9 + j * 3 + 2]; }
+    r /= 3; g /= 3; b /= 3;
+    const v = Math.max(r, g, b); const sat = v ? (v - Math.min(r, g, b)) / v : 0;
+    const z = (P[t * 9 + 2] + P[t * 9 + 5] + P[t * 9 + 8]) / 3 - zMin;
+    if (v < 0.3 && sat < 0.45 && z < H * 0.4) label[t] = 2;
+    else if (z > H * 0.5 && ((b > r + 0.06 && b > 0.5 && sat < 0.6) || (v > 0.85 && sat < 0.15))) label[t] = 1;
+  }
+  // Neighbours (shared corners) vote twice: no speckles.
+  const byKey = new Map();
+  const keyOf = (o) => `${Math.round(P[o] * 1e4)},${Math.round(P[o + 1] * 1e4)},${Math.round(P[o + 2] * 1e4)}`;
+  for (let t = 0; t < nt; t++) for (let j = 0; j < 3; j++) { const k = keyOf(t * 9 + j * 3); const l = byKey.get(k); if (l) l.push(t); else byKey.set(k, [t]); }
+  for (let round = 0; round < 2; round++) {
+    const next = label.slice();
+    for (let t = 0; t < nt; t++) {
+      const votes = [0, 0, 0];
+      for (let j = 0; j < 3; j++) for (const u of byKey.get(keyOf(t * 9 + j * 3))) votes[label[u]]++;
+      const best = votes.indexOf(Math.max(...votes));
+      if (votes[best] > votes[label[t]]) next[t] = best;
+    }
+    label.set(next);
+  }
+  const name = materials[0].name;
+  const add = (suffix, category) => { materials.push({ name: `${name}_${suffix}`, tris: 0, color: suffix === 'window' ? '#9ac4e8' : '#222222', category }); return materials.length - 1; };
+  const ids = [0, add('window', 'Glass_Gray'), add('tyre', 'skip')];
+  for (let t = 0; t < nt; t++) if (label[t]) { M[t] = ids[label[t]]; materials[0].tris--; materials[M[t]].tris++; }
+  model.splitByMat = true;
+}
+
+// Scans: the rims are painted like the body and joined to it; what lies inside a found tyre (its
+// circle, from its outer face inwards) goes with the wheel.
+function scanRims(model) {
+  const { P, M, materials, wheels } = model;
+  if (!wheels.length) return;
+  const tyre = materials.findIndex((m) => m.category === 'skip');
+  if (tyre < 0) return;
+  for (let t = 0; t < M.length; t++) {
+    if (M[t] === tyre) continue;
+    const c = [0, 1, 2].map((k) => (P[t * 9 + k] + P[t * 9 + 3 + k] + P[t * 9 + 6 + k]) / 3);
+    for (const w of wheels) {
+      if (Math.sign(c[0]) !== Math.sign(w.p[0])) continue;
+      const d = Math.hypot(c[1] - w.p[1], c[2] - w.p[2]);
+      if (d < w.r * 0.8 && Math.abs(c[0]) > Math.abs(w.p[0]) - w.r * 0.6) { materials[M[t]].tris--; M[t] = tyre; materials[tyre].tris++; break; }
+    }
+  }
+}
+
 // Connected pieces: triangles sharing a corner position (0.1 mm) belong together.
 function findPieces(model) {
   const { P } = model;
@@ -293,7 +479,7 @@ function findPieces(model) {
   for (let t = 0; t < nt; t++) {
     for (let j = 0; j < 3; j++) {
       const o = t * 9 + j * 3;
-      const k = `${Math.round(P[o] * 1e4)},${Math.round(P[o + 1] * 1e4)},${Math.round(P[o + 2] * 1e4)}`;
+      const k = `${Math.round(P[o] * 1e4)},${Math.round(P[o + 1] * 1e4)},${Math.round(P[o + 2] * 1e4)}${model.splitByMat ? `|${model.M[t]}` : ''}`;
       const u = seen.get(k);
       if (u === undefined) seen.set(k, t);
       else { const a = find(u); const b = find(t); if (a !== b) parent[a] = b; }

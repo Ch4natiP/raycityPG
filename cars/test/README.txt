@@ -89,3 +89,18 @@ and 16-33 % of its triangles have copied UVs that cross a gtv98 seam, smearing t
 39/40 had a transparent detail layer.
 45_canyon_clear_detail_layer.zip  44 with the transparent detail layer of 39 (only _color.png/_color_s.dds differ).
 Builds in the template layout now write the transparent detail layer.
+
+zombie1 (a car from the game, 2026-10-10) studied against gtv98:
+- Same file names / list.xml form, but one variant per part (default only) and no icon folder;
+  headlight / rearlight also hold base_0..2.0m (lamp housings, not named in list.xml).
+- Its moving pieces differ from gtv98's (body: doors [0,1,0] / [0,1,1], trunk [0,1,4]): each car its own set,
+  matching its dooropen/default.xml (doors 0, 1, 2).
+- Every part file has geometry and its own texture (grill even carries pieces along the whole car), so the
+  game does draw those files.
+- Textures: every .png has an _s.dds at HALF its size with a full mip chain (base 512 png / 256 dds, color
+  256x128 / 128x64, parts 128 / 64...), all DXT3. gtv98's dds are the png's size without mips (only its
+  color layer is half + mips). "_s" = small copy; both layouts are games' own.
+- Part textures and the body _color layer are detail overlays: dark grime / lamp art in RGB, alpha 0..~60
+  mostly (mean alpha 8-60): low alpha lets the paint show; lamps are opaque where the lamp art is.
+- _base = paint mask: red slot 1 over most, green strips (slot 2), a blue block (slot 3); alpha 199-255.
+- Lamps map into their part texture's lamp art (headlight uv 0.50-0.75 x 0.75-0.87).

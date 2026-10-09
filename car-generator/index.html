@@ -26,10 +26,10 @@
     <section class="block" id="model-box">
       <h2>🚗 สร้างรถจากโมเดล 3D (มาทั้งคัน มีล้อก็ได้)</h2>
       <div class="btns">
-        <button id="btn-model-open" class="accent">📂 เปิดโมเดล (.glb .fbx .obj)</button>
-        <input id="file-model" type="file" accept=".glb,.gltf,.fbx,.obj" hidden>
+        <button id="btn-model-open" class="accent">📂 เปิดโมเดล + รูป (.glb .fbx .obj .zip)</button>
+        <input id="file-model" type="file" accept=".glb,.gltf,.fbx,.obj,.mtl,.bin,.zip,.png,.jpg,.jpeg,.webp,.bmp,.tga" multiple hidden>
       </div>
-      <p class="hint"><b>3 ขั้นเข้าเกม:</b> ① เปิด/ลากโมเดลมาวาง ② ใส่ชื่อรถ ③ กด ⚡ ได้ .zip พร้อมแพ็กเป็น .jmd
+      <p class="hint"><b>3 ขั้นเข้าเกม:</b> ① เปิด/ลากโมเดลมาวาง (เลือกพร้อมรูป .png .jpg .webp / .mtl ได้หลายไฟล์ หรือ .zip ทั้งก้อน) ② ใส่ชื่อรถ ③ กด ⚡ ได้ .zip พร้อมแพ็กเป็น .jmd
         (ล้อ ยาง เบรก ถูกถอดให้เอง เป็นสีชมพูในภาพ · ล้อดำโปร่ง = ล้อของเกม)</p>
       <pre id="model-log" class="hint"></pre>
       <div id="model-panel" hidden></div>

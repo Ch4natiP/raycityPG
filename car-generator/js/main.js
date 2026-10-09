@@ -6,7 +6,7 @@ import { OBJExporter } from 'three/addons/exporters/OBJExporter.js';
 import { buildCar, disposeObject } from './carBuilder.js';
 import { parseOM, omToObject, writeOM, objectToParts, mergePartsByName } from './om.js';
 import { SPEC_TEMPLATE, SPEC_FIELDS, readSpec, writeSpec, encodeSpec, decodeSpec, suggestSpec } from './carSpec.js';
-import { makeZip } from './zip.js';
+import { makeZip, readZip } from './zip.js';
 import { IDENTITY, slotOfPath, bboxOf, editFile, editFileInfo, editMeshXml, renamePath, countsOf, ready as editReady } from './carEdit.js';
 import { SCHEMA, PRESETS, presetParams, randomParams } from './params.js';
 import { checkCar, renderChecks, repairCar } from './checkCar.js';
@@ -994,8 +994,10 @@ function bindOmButtons() {
     e.preventDefault();
     hint.hidden = true;
     const entries = await droppedEntries(e.dataTransfer);
-    const model = entries.length === 1 && MODEL_TYPES.split(',').some((x) => entries[0].path.toLowerCase().endsWith(x));
-    if (model) await openModelFile(entries[0].file);
+    // A model (with its pictures / .mtl, or a .zip of them) unless it is a RayCity car folder.
+    const isCar = entries.some((x) => /(^|\/)body_\d\.0m$/i.test(x.path));
+    const model = !isCar && entries.some((x) => MODEL_TYPES.split(',').some((t) => x.path.toLowerCase().endsWith(t)) || /\.zip$/i.test(x.path));
+    if (model) await openModelFile(entries.map((x) => x.file));
     else if (entries.length) await openCarFolder(entries);
   });
   const input = document.getElementById('file-om');
@@ -1197,7 +1199,10 @@ function buildModelPreview() {
         pos[d] = m.P[o]; pos[d + 1] = m.P[o + 2]; pos[d + 2] = -m.P[o + 1];
         nrm[d] = m.N[o]; nrm[d + 1] = m.N[o + 2]; nrm[d + 2] = -m.N[o + 1];
       }
-      if (col) {
+      if (col && srcModel.showTex && m.TC?.length) {
+        // The model's own look (its pictures), corner by corner.
+        for (let j = 0; j < 3; j++) { c.setRGB(m.TC[t * 9 + j * 3], m.TC[t * 9 + j * 3 + 1], m.TC[t * 9 + j * 3 + 2]).convertSRGBToLinear(); col.set([c.r, c.g, c.b], i * 9 + j * 3); }
+      } else if (col) {
         c.set(CAT_COLORS[categoryOf(m, srcModel.categories, t)] || '#3c3f45').convertSRGBToLinear();
         for (let j = 0; j < 3; j++) col.set([c.r, c.g, c.b], i * 9 + j * 3);
       }
@@ -1254,19 +1259,36 @@ function updateModelInfo() {
     + `ใส่ในรถ ${srcModel.counts.keep.toLocaleString()} · ถอดออก ${srcModel.counts.gone.toLocaleString()} สามเหลี่ยม (สีชมพู)`;
 }
 
-async function openModelFile(file) {
+// A model with whatever came with it (.mtl, .bin, pictures), or a .zip holding them: one flat list of
+// Files (folders inside a zip don't matter, textures are found by file name).
+async function modelFiles(list) {
+  const out = [];
+  for (const f of [].concat(list)) {
+    if (/\.zip$/i.test(f.name)) {
+      for (const e of await readZip(new Uint8Array(await f.arrayBuffer()))) out.push(new File([e.data], e.path.split('/').pop()));
+    } else out.push(f);
+  }
+  return out;
+}
+
+async function openModelFile(input) {
   const status = document.getElementById('model-log');
   const box = document.getElementById('model-panel');
-  status.textContent = `กำลังเปิด ${file.name}…`;
+  const files = await modelFiles(input);
+  const file = files.find((f) => /\.(glb|gltf|fbx|obj)$/i.test(f.name));
+  if (!file) { status.textContent = 'ไม่เจอไฟล์โมเดล (.glb .gltf .fbx .obj) ในที่เลือกมา'; return; }
+  const extras = files.length - 1;
+  status.textContent = `กำลังเปิด ${file.name}${extras ? ` + ไฟล์ประกอบ ${extras} ไฟล์ (รูป/วัสดุ)` : ''}…`;
   box.hidden = false;
   await new Promise((r) => setTimeout(r, 30));
   try {
-    srcModel.model = await loadModel(file);
+    srcModel.model = await loadModel(files);
   } catch (e) {
     status.textContent = `เปิดไม่ได้: ${e.message}`;
     return;
   }
   srcModel.file = file;
+  srcModel.showTex = !!srcModel.model.textured;
   srcModel.categories = new Map();
   const m = srcModel.model;
   let y0 = Infinity; let y1 = -Infinity;
@@ -1339,6 +1361,7 @@ function buildModelPanel() {
     showModelPreview();
   }, 'เกมใส่ล้อของมันเอง ล้อในโมเดลต้องเอาออก');
   check('ซ่อนชิ้นที่ถอดออก (ดูรถตอนไม่มีล้อ)', srcModel.hideRemoved, (on) => { srcModel.hideRemoved = on; if (srcModel.preview) srcModel.preview.children[1].visible = !on; });
+  if (m.textured) check('🖼 แสดงสีจากรูปของโมเดล', srcModel.showTex, (on) => { srcModel.showTex = on; showModelPreview(); }, 'ไม่ติ๊ก = สีตามประเภทวัสดุ (กระจก ยาง สีรถ)');
   check('คลิกบนรถเพื่อถอด / ใส่ชิ้นนั้นคืน', srcModel.pick, (on) => { srcModel.pick = on; }, 'คลิกชิ้นสีชมพูเพื่อใส่คืน คลิกชิ้นอื่นเพื่อถอดออก (หมุนกล้องได้ตามปกติ)');
 
   const btns = document.createElement('div');
@@ -1636,7 +1659,7 @@ function showBuildResult(name, out, entries) {
 function bindModelButtons() {
   const input = document.getElementById('file-model');
   document.getElementById('btn-model-open').addEventListener('click', () => input.click());
-  input.addEventListener('change', async (e) => { if (e.target.files[0]) await openModelFile(e.target.files[0]); e.target.value = ''; });
+  input.addEventListener('change', async (e) => { if (e.target.files.length) await openModelFile([...e.target.files]); e.target.value = ''; });
 }
 
 // --- Loop --------------------------------------------------------------------

@@ -82,3 +82,32 @@ export async function makeZip(files) {
   end.setUint32(16, offset, true);
   return new Blob([...chunks, ...central, end.buffer], { type: 'application/zip' });
 }
+
+// .zip reader: [{ path, data: Uint8Array }] (stored or deflated entries; folders skipped).
+export async function readZip(bytes) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let eocd = -1;
+  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error('ไฟล์ .zip เสีย (ไม่เจอสารบัญ)');
+  const count = dv.getUint16(eocd + 10, true);
+  let p = dv.getUint32(eocd + 16, true);
+  const out = [];
+  for (let n = 0; n < count; n++) {
+    if (dv.getUint32(p, true) !== 0x02014b50) break;
+    const method = dv.getUint16(p + 10, true);
+    const csize = dv.getUint32(p + 20, true);
+    const nameLen = dv.getUint16(p + 28, true); const extraLen = dv.getUint16(p + 30, true); const commentLen = dv.getUint16(p + 32, true);
+    const local = dv.getUint32(p + 42, true);
+    const path = new TextDecoder().decode(bytes.subarray(p + 46, p + 46 + nameLen)).replace(/\\/g, '/');
+    p += 46 + nameLen + extraLen + commentLen;
+    if (path.endsWith('/')) continue;
+    const start = local + 30 + dv.getUint16(local + 26, true) + dv.getUint16(local + 28, true);
+    const raw = bytes.subarray(start, start + csize);
+    let data;
+    if (method === 0) data = raw.slice();
+    else if (method === 8) data = new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+    else continue; // other compression methods: not supported
+    out.push({ path, data });
+  }
+  return out;
+}

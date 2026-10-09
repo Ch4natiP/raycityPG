@@ -134,3 +134,10 @@ different gtv98 islands so the triangle's middle lies on empty texture between i
 rearbumper 16 % of triangles in 46; 45: 17 / 24 / 21 %).
 47_canyon_uv_on_islands.zip  46 + every triangle whose UV middle or edge middles fall off gtv98's islands
                          remapped through one gtv98 triangle (inside it): body 0.4 %, roof 2 %, rearbumper 3.5 %.
+In game 47: still jagged black triangles on the rear deck / quarters / door edges (fewer than 45, about like 46).
+Packs 39 / 40 (own zone-column UVs and mask) never showed those triangles: only the front and lower sides
+were dark there (fixed in 44 by moving them into hood / roof).
+48_canyon_like_40_all_white.zip  39/40's way (own UV columns, own mask, whole car on the paint column,
+                         no part textures) + pieces in gtv98's files (doors in roof) + front / grill /
+                         headlight geometry in hood, skirt in roof + see-through glass (kind 1 piece).
+                         No gtv98 UV unwrap, so shop decals won't land like on gtv98.

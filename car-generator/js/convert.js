@@ -1024,11 +1024,28 @@ function dds(px, w, h, mode) {
   for (const l of levels) { out.set(l, p); p += l.length; }
   return out;
 }
+// RGBA → .png (8-bit RGBA, no filter), deflated with CompressionStream: the same in the page and in node.
+const PNG_CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
 async function png(px, w, h) {
-  const c = document.createElement('canvas');
-  c.width = w; c.height = h;
-  c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(px), w, h), 0, 0);
-  return new Uint8Array(await (await new Promise((r) => c.toBlob(r, 'image/png'))).arrayBuffer());
+  const raw = new Uint8Array((w * 4 + 1) * h);
+  for (let y = 0; y < h; y++) raw.set(px.subarray ? px.subarray(y * w * 4, (y + 1) * w * 4) : px.slice(y * w * 4, (y + 1) * w * 4), y * (w * 4 + 1) + 1);
+  const idat = new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());
+  const chunk = (type, data) => {
+    const out = new Uint8Array(12 + data.length); const dv = new DataView(out.buffer);
+    dv.setUint32(0, data.length);
+    for (let i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i);
+    out.set(data, 8);
+    let c = 0xffffffff;
+    for (let i = 4; i < 8 + data.length; i++) c = PNG_CRC[(c ^ out[i]) & 0xff] ^ (c >>> 8);
+    dv.setUint32(8 + data.length, (c ^ 0xffffffff) >>> 0);
+    return out;
+  };
+  const ihdr = new Uint8Array(13); const dv = new DataView(ihdr.buffer);
+  dv.setUint32(0, w); dv.setUint32(4, h); ihdr[8] = 8; ihdr[9] = 6;
+  const parts = [new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', idat), chunk('IEND', new Uint8Array(0))];
+  const out = new Uint8Array(parts.reduce((n, q) => n + q.length, 0));
+  let o = 0; for (const q of parts) { out.set(q, o); o += q.length; }
+  return out;
 }
 function pngSize(bytes, fallback) {
   if (!bytes || bytes.length < 24) return fallback;

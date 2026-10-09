@@ -317,6 +317,11 @@ export function matchTemplateSubmeshes(template, parts) {
   };
   const moving = (f) => f[1] !== 0 || f[2] !== 0;
   const own = parts.map((p) => ({ ...p, flags: [(p.flags ? p.flags[0] : p.kind) || 0, 0, 0] }));
-  const out = template.submeshes.map((s) => (moving(s.flags) ? placeholder(s) : own.shift() || placeholder(s)));
+  // Each template piece takes our piece of the same kind (paint, glass, lamp), else a stand-in.
+  const out = template.submeshes.map((s) => {
+    if (moving(s.flags)) return placeholder(s);
+    const i = own.findIndex((p) => p.flags[0] === s.flags[0]);
+    return i >= 0 ? own.splice(i, 1)[0] : placeholder(s);
+  });
   return out.concat(own);
 }

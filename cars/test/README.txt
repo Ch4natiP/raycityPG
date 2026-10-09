@@ -60,3 +60,12 @@ Builds now write no part textures (writeCar partTextures=false); the checker war
 40_canyon_part_colors_diagnostic.zip  39 with one solid colour per part folder (frontbumper red, headlight
                          green, rearbumper blue, rearlight yellow, skirt magenta, grill cyan, hood orange,
                          roof purple) to see which part files the game draws and where.
+gtv98 study: body/roof have a glass piece (kind 1) drawn see-through; its UVs are a real unwrap over the
+whole 1024 texture (decals in the shop use it); its mask: body red (slot 1), lower trim/bumpers green (slot 2),
+hood blue (slot 3); rearlight has lamp pieces kind 4 / kind 3. New 'template' layout: gtv98 is bent onto the
+new car and every point takes gtv98's UV at the closest spot (same file, same kind), glass goes into the kind-1
+piece, lamps into kind 3/4, the template's own textures are used (whole-red mask with paintAll), 1–2 texel nudge
+against flat UVs. Windows the model filed as "lights" (above 60 % of the height) are glass now.
+41_canyon_gtv98_layout_glass_paintall.zip  pack 35 shape, gtv98 layout, see-through glass, gtv98 part textures, all slot 1
+42_canyon_gtv98_layout_no_part_textures.zip  same without part textures
+43_canyon_gtv98_layout_gtv98_paint.zip  same with gtv98's own mask (3 colour slots like gtv98)

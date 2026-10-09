@@ -11,7 +11,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
 import { MeshoptSimplifier } from 'meshoptimizer';
 import { EditMesh, SLOTS, partVerts } from './editMesh.js';
-import { loadModel, convert, bendTemplate, GAME_WHEELS, fitToWheels, unfitWheels, writeCar, smoothNormals, categoryOf, removeHidden, CATEGORIES } from '../convert.js';
+import { loadModel, convert, bendTemplate, uvsFromTemplate, GAME_WHEELS, fitToWheels, unfitWheels, writeCar, smoothNormals, categoryOf, removeHidden, CATEGORIES } from '../convert.js';
 import { makeZip } from '../zip.js';
 import { checkCar, renderChecks } from '../checkCar.js';
 
@@ -875,7 +875,23 @@ async function exportCar() {
     for (const [slot, p] of Object.entries(parts)) if (partVerts(p) > 65000) throw new Error(`${slot} ใหญ่เกินที่ไฟล์ .0m เก็บได้ (${partVerts(p).toLocaleString()} จุด)`);
     smoothNormals(Object.values(parts).flat());
     const bb = mesh.bbox();
-    const out = await writeCar(parts, { name, template: await template(), bounds: [bb.min, bb.max], paintAll: $('opt-paintall').checked, log: (t) => { log.textContent = t; } });
+    // gtv98's UV layout (decals) and see-through glass piece: the template bent onto this car gives
+    // every point its UV.
+    const tplCar = await template();
+    const outside = [];
+    for (const ps of Object.values(parts)) {
+      for (const p of ps) {
+        for (let t = 0; t < p.indices.length; t += 3) {
+          const v = [p.indices[t], p.indices[t + 1], p.indices[t + 2]].map((i) => [p.positions[i * 3], p.positions[i * 3 + 1], p.positions[i * 3 + 2]]);
+          outside.push({ a: v[0], b: v[1], c: v[2], mat: p.name });
+        }
+      }
+    }
+    log.textContent = 'คัดลอก UV แบบ gtv98…';
+    await tick();
+    const { bent } = await bendTemplate(null, { name, template: tplCar, outside, geometryOnly: true });
+    uvsFromTemplate(parts, bent);
+    const out = await writeCar(parts, { name, template: tplCar, bounds: [bb.min, bb.max], paintAll: $('opt-paintall').checked, layout: 'template', partTextures: false, log: (t) => { log.textContent = t; } });
     log.textContent = 'บีบอัด .zip…';
     await tick();
     const files = [...out].sort((a, b) => a[0].localeCompare(b[0])).map(([rel, data]) => ({ path: `${name}/${rel}`, data }));

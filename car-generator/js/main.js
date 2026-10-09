@@ -915,8 +915,8 @@ async function openEmbeddedCar(name) {
 // Test packs (../cars/test/*.zip, embedded at build time): one download button each.
 const TEST_PACK_INFO = {
   '43_canyon_gtv98_layout_gtv98_paint.zip': ['ชุด 43: แบบ gtv98 + มาสก์สีของ gtv98 (3 ช่องสี)', 'ตัวถัง=สี1 ขอบล่าง/กันชน=สี2 ฝากระโปรง=สี3 แบบ gtv98 · กระจกใส · มีลายจุดเพี้ยนบ้าง'],
-  '42_canyon_gtv98_layout_no_part_textures.zip': ['ชุด 42: แบบ gtv98 · ไม่มีรูปชิ้นส่วน', 'เหมือน 41 แต่ชิ้นส่วนไม่มีรูป (แบบชุด 39)'],
-  '41_canyon_gtv98_layout_glass_paintall.zip': ['ชุด 41: แบบ gtv98 ทุกอย่าง · กระจกใส · สีเดียวทั้งคัน ⭐', 'UV แบบ gtv98 (ใส่ลายได้) · กระจกเป็นชิ้นใสแบบ gtv98 · รูปชิ้นส่วนของ gtv98 · ทั้งคันสี 1'],
+  '42_canyon_gtv98_layout_no_part_textures.zip': ['ชุด 42: แบบ gtv98 · ไม่มีรูปชิ้นส่วน ⭐ ลองอันนี้', 'กระจกใส + ใส่ลายได้ (ผ่านในชุด 41) + ชิ้นส่วนรับสีรถจากตัวถัง (แบบชุด 39) แก้ส่วนดำ/โปร่ง'],
+  '41_canyon_gtv98_layout_glass_paintall.zip': ['ชุด 41: ✅ กระจกใส ใส่ลายได้ (ชิ้นส่วนยังดำ/โปร่ง)', 'UV แบบ gtv98 (ใส่ลายได้) · กระจกเป็นชิ้นใสแบบ gtv98 · รูปชิ้นส่วนของ gtv98 · ทั้งคันสี 1'],
   '40_canyon_part_colors_diagnostic.zip': ['ชุด 40: ทดสอบ · ทาสีแยกทุกชิ้น ดูว่าชิ้นไหนเกมแสดง', 'กันชนหน้า=แดง ไฟหน้า=เขียว กันชนหลัง=น้ำเงิน ไฟท้าย=เหลือง สเกิร์ต=ชมพู กระจัง=ฟ้า ฝากระโปรง=ส้ม หลังคา=ม่วง · ถ่ายรูปรอบคันส่งมา'],
   '39_canyon_no_part_textures.zip': ['ชุด 39: ✅ ท้ายรถเปลี่ยนสีได้แล้ว (ลบรูปของชิ้นส่วน) ⭐', 'แบบเดียวกับฝากระโปรง/หลังคาของ gtv98 ที่ไม่มีรูป → ชิ้นส่วนน่าจะได้สีรถจากตัวถัง'],
   '38_canyon_red_part_textures.zip': ['ชุด 38: เหมือน 37 + รูปของชิ้นส่วนเป็นสีแดง (แบบมาสก์สี)', 'ทดสอบว่าเกมใช้รูปของชิ้นส่วนเป็นมาสก์สีของชิ้นนั้นไหม'],
@@ -1290,7 +1290,7 @@ function buildModelPanel() {
   const quick = document.createElement('div');
   quick.className = 'quick-box';
   quick.innerHTML = `<div class="quick-title">⚡ ทางลัด: เข้าเกมในคลิกเดียว</div>
-    <div class="hint">ถอดล้อ ✔ · ตัดข้างใน ✔ · ปรับให้ตรงล้อเกม ✔ · ผิวจริงของโมเดล ไม่เกิน 4,800 จุดต่อไฟล์ ✔ · เปลี่ยนสีได้ทั้งคัน ✔ · ตรวจ + ซ่อมอัตโนมัติ ✔</div>`;
+    <div class="hint">ถอดล้อ ✔ · ปรับให้ตรงล้อเกม ✔ · ผิวจริงของโมเดล ไม่เกิน 4,800 จุดต่อไฟล์ ✔ · UV แบบ gtv98 (ใส่ลายได้) ✔ · กระจกใส ✔ · เปลี่ยนสีได้ทั้งคัน ✔ · ตรวจ + ซ่อมอัตโนมัติ ✔</div>`;
   const qrow = document.createElement('div');
   qrow.className = 'btns';
   const qname = document.createElement('input');
@@ -1478,7 +1478,7 @@ function buildModelPanel() {
   const paintRow = document.createElement('label');
   paintRow.className = 'row row-check';
   paintRow.innerHTML = '<input type="checkbox" checked><span>เปลี่ยนสีได้ทั้งคัน (ยกเว้นกระจก ไฟ) · ไม่ติ๊ก = เปลี่ยนสีได้เฉพาะส่วนที่เป็นสีรถในโมเดล ที่เหลือดำ</span>';
-  const layoutSel = pickerRow('UV / รูป / กระจก', [['zones', 'ช่องสี (แบบที่ทดสอบแล้ว ชุด 39)'], ['template', 'เหมือน gtv98 ทุกอย่าง (กระจกใส · ใส่ลายได้ · รูปชิ้นส่วน gtv98)']], 'zones', () => {});
+  const layoutSel = pickerRow('UV / กระจก', [['template', 'เหมือน gtv98 (กระจกใส · ใส่ลายได้) ⭐'], ['zones', 'ช่องสี (แบบเก่า ชุด 39)']], 'template', () => {});
   box.append(capSel, capHint, modeSel, modeHint, hideRow, voxSel, paintRow, layoutSel);
   const go = document.createElement('button');
   go.className = 'accent';
@@ -1528,7 +1528,7 @@ async function quickBuild(name, btn, logEl) {
   const say = (t) => { logEl.textContent = `${t}\n${logEl.textContent}`.split('\n').slice(0, 6).join('\n'); };
   try {
     const tpl = await modelTemplate();
-    let out = await convert(m, { name, template: tpl, categories: srcModel.categories, maxVerts: 4800, raw: true, hideInterior: true, paintAll: true, log: say });
+    let out = await convert(m, { name, template: tpl, categories: srcModel.categories, maxVerts: 4800, raw: true, hideInterior: true, paintAll: true, layout: 'template', partTextures: false, log: say });
     let list = await checkCar(out, name, tpl);
     if (list.some((c) => c.level === 'bad')) {
       const r = await repairCar(out, name, tpl, true);

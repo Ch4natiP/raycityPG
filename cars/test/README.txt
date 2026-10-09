@@ -69,3 +69,6 @@ against flat UVs. Windows the model filed as "lights" (above 60 % of the height)
 41_canyon_gtv98_layout_glass_paintall.zip  pack 35 shape, gtv98 layout, see-through glass, gtv98 part textures, all slot 1
 42_canyon_gtv98_layout_no_part_textures.zip  same without part textures
 43_canyon_gtv98_layout_gtv98_paint.zip  same with gtv98's own mask (3 colour slots like gtv98)
+In game 41: decals work, glass see-through (driver visible). Black / see-through patches remain: gtv98's part
+textures (about half alpha 0, half dark brown) drawn as the parts' own colour. -> 42 (no part textures).
+Web default now: template layout without part textures (⚡ button, builder, Studio export).

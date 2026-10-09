@@ -869,7 +869,7 @@ function renderIcon(bytes) {
 // ---------------------------------------------------------------------------------------------
 // The whole conversion. template: { name, files: Map(rel → Uint8Array) }. Returns Map(rel → Uint8Array).
 
-export async function convert(model, { name, template, categories = new Map(), maxVerts = 3500, voxel = 0.015, raw = false, smooth = true, hideInterior = true, paintAll = true, layout = 'zones', partTextures = layout === 'template', log = () => {} }) {
+export async function convert(model, { name, template, categories = new Map(), maxVerts = 3500, voxel = 0.015, raw = false, smooth = true, hideInterior = true, paintAll = true, layout = 'template', partTextures = false, log = () => {} }) {
   await MeshoptSimplifier.ready;
   log('อ่านโมเดล…');
   const src = collect(model, categories);

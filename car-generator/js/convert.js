@@ -1505,11 +1505,37 @@ export function uvsFromTemplate(lod, bent) {
     });
   }
   const trees = new Map();
+  // Where the template's own triangles cover its texture (512² grid per set): a UV outside every
+  // island came out black in game (packs 44-46).
+  const GRID = 512;
+  const coverOf = (UV) => {
+    const m = new Uint8Array(GRID * GRID);
+    for (let f = 0; f < UV.length / 6; f++) {
+      const xs = [UV[f * 6], UV[f * 6 + 2], UV[f * 6 + 4]].map((u) => u * GRID); const ys = [UV[f * 6 + 1], UV[f * 6 + 3], UV[f * 6 + 5]].map((v) => v * GRID);
+      const x0 = Math.max(0, Math.floor(Math.min(...xs)) - 1); const x1 = Math.min(GRID - 1, Math.ceil(Math.max(...xs)) + 1);
+      const y0 = Math.max(0, Math.floor(Math.min(...ys)) - 1); const y1 = Math.min(GRID - 1, Math.ceil(Math.max(...ys)) + 1);
+      const d = (xs[1] - xs[0]) * (ys[2] - ys[0]) - (xs[2] - xs[0]) * (ys[1] - ys[0]);
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        // pixel touched by the triangle (1-pixel margin)
+        let inside = Math.abs(d) < 1e-9;
+        if (!inside) {
+          const px = x + 0.5; const py = y + 0.5;
+          const a = ((xs[1] - px) * (ys[2] - py) - (xs[2] - px) * (ys[1] - py)) / d;
+          const b = ((xs[2] - px) * (ys[0] - py) - (xs[0] - px) * (ys[2] - py)) / d;
+          const tol = 1.5 / Math.max(1, Math.sqrt(Math.abs(d)));
+          inside = a > -tol && b > -tol && 1 - a - b > -tol;
+        }
+        if (inside) m[y * GRID + x] = 1;
+      }
+    }
+    return m;
+  };
   for (const [key, e] of sets) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(e.P), 3));
-    trees.set(key, { bvh: new MeshBVH(g, { indirect: true }), P: e.P, UV: e.UV });
+    trees.set(key, { bvh: new MeshBVH(g, { indirect: true }), P: e.P, UV: e.UV, cover: coverOf(e.UV) });
   }
+  const covered = (set, u, v) => set.cover[Math.min(GRID - 1, Math.max(0, Math.floor(v * GRID))) * GRID + Math.min(GRID - 1, Math.max(0, Math.floor(u * GRID)))];
   const tri = new THREE.Triangle(); const A = new THREE.Vector3(); const B = new THREE.Vector3(); const C = new THREE.Vector3();
   const bary = new THREE.Vector3(); const q = new THREE.Vector3();
   for (const [slot, parts] of Object.entries(lod)) {
@@ -1554,7 +1580,11 @@ export function uvsFromTemplate(lod, bent) {
         const v = [I[t], I[t + 1], I[t + 2]];
         const span = Math.max(uvl(v[0], v[1]), uvl(v[1], v[2]), uvl(v[0], v[2]));
         const size = Math.max(lens(v[0], v[1]), lens(v[1], v[2]), lens(v[0], v[2]));
-        if (!(span > 0.04 && span > size * 0.35)) continue;
+        // Its middle and edge middles in UV must lie on the template's islands too.
+        const at = (wa, wb, wc) => [uvs[v[0] * 2] * wa + uvs[v[1] * 2] * wb + uvs[v[2] * 2] * wc, uvs[v[0] * 2 + 1] * wa + uvs[v[1] * 2 + 1] * wb + uvs[v[2] * 2 + 1] * wc];
+        const home = local || global;
+        const offIsland = [[1 / 3, 1 / 3, 1 / 3], [0.5, 0.5, 0], [0, 0.5, 0.5], [0.5, 0, 0.5]].some(([a, b, c]) => { const [u, w] = at(a, b, c); return !covered(home, u, w) && !covered(global, u, w); });
+        if (!offIsland && !(span > 0.04 && span > size * 0.35)) continue;
         q.set(0, 0, 0);
         for (const i of v) q.add(A.set(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]));
         q.divideScalar(3);
@@ -1568,6 +1598,9 @@ export function uvsFromTemplate(lod, bent) {
           const c = new THREE.Vector3(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]);
           pl.projectPoint(c, c);
           tri.getBarycoord(c, bary);
+          // inside the template triangle (its island), not extrapolated past it
+          bary.set(Math.max(0, bary.x), Math.max(0, bary.y), Math.max(0, bary.z));
+          bary.divideScalar(bary.x + bary.y + bary.z || 1);
           const u = U[f * 6] * bary.x + U[f * 6 + 2] * bary.y + U[f * 6 + 4] * bary.z;
           const w = U[f * 6 + 1] * bary.x + U[f * 6 + 3] * bary.y + U[f * 6 + 5] * bary.z;
           addP.push(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]); addN.push(p.normals[i * 3], p.normals[i * 3 + 1], p.normals[i * 3 + 2]);

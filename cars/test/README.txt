@@ -128,3 +128,9 @@ polestar1 (a high-poly car from the game, 2026-10-10):
   the file is mclaren_headlight.png → no part texture, painted from the mask.
 - Rear light: the lamp shape three times: kind 0 (housing), kind 3 (brake / tail) and kind 4 (indicator),
   same 16,107 points each; the game lights kinds 3 / 4. Builds now do the same with the tail lamps.
+In game 46: doors white now (they are in the roof file like gtv98's); jagged black triangles remain on the
+rear deck / quarters / door edges. Their normals and windings are fine. Their UVs: corners taken from
+different gtv98 islands so the triangle's middle lies on empty texture between islands (body 5 %, roof 9 %,
+rearbumper 16 % of triangles in 46; 45: 17 / 24 / 21 %).
+47_canyon_uv_on_islands.zip  46 + every triangle whose UV middle or edge middles fall off gtv98's islands
+                         remapped through one gtv98 triangle (inside it): body 0.4 %, roof 2 %, rearbumper 3.5 %.

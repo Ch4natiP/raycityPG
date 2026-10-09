@@ -138,3 +138,6 @@ details[open] summary { border-bottom: 1px solid var(--line); }
 .test-pack { margin: 6px 0; }
 .test-pack button { width: 100%; text-align: left; }
 .test-pack .hint { margin: 2px 0 0; }
+
+/* A RayCity car is open: the cartoon generator's controls don't apply, the car tools come first. */
+body.rc-mode .gen-only, body.rc-mode #controls { display: none; }

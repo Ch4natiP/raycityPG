@@ -358,6 +358,8 @@ function showImported(group) {
   if (imported) { applySides(imported); scene.add(imported); }
   car.visible = !imported;
   document.getElementById('btn-om-back').hidden = !imported;
+  document.body.classList.toggle('rc-mode', Boolean(imported));
+  if (!imported) { const ed = document.getElementById('car-edit'); if (ed) ed.hidden = true; }
   updateStats();
 }
 
@@ -687,7 +689,7 @@ async function assembleFolder() {
       c.y = Math.max(0, c.y);
       obj.position.add(c.normalize().multiplyScalar(0.7));
     }
-    if (obj.userData.slot === folder.selected && folder.selected !== null) {
+    if (folder.selected && obj.userData.slot === folder.selected) { // a part picked (body: no box)
       const helper = new THREE.BoxHelper(obj, '#ffb020');
       helper.userData.helper = true;
       group.add(helper);

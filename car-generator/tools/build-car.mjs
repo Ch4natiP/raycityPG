@@ -1036,7 +1036,19 @@ if (BAKE) {
   // Everything is drawn as plain textured submeshes (kind 0): lamps, glass and trim are in the baked
   // texture; per-triangle lamp/glass kinds would follow the coarse triangles and look jagged.
   const buildLod = (target) => {
-    const idx = MeshoptSimplifier.simplify(hull.idx, hull.pos, 3, Math.round(target) * 3, 1, [])[0];
+    const raw = MeshoptSimplifier.simplify(hull.idx, hull.pos, 3, Math.round(target) * 3, 1, [])[0];
+    // Drop duplicate and degenerate triangles the simplifier can leave behind.
+    const seenT = new Set();
+    const keepT = [];
+    for (let t = 0; t < raw.length; t += 3) {
+      const tri = [raw[t], raw[t + 1], raw[t + 2]];
+      if (tri[0] === tri[1] || tri[1] === tri[2] || tri[0] === tri[2]) continue;
+      const key = [...tri].sort((a, b) => a - b).join(',');
+      if (seenT.has(key)) continue;
+      seenT.add(key);
+      keepT.push(...tri);
+    }
+    const idx = Uint32Array.from(keepT);
     const P = hull.pos;
     const groups = new Map(); // slot → mat → [indices]
     for (let t = 0; t < idx.length; t += 3) {
@@ -1044,7 +1056,8 @@ if (BAKE) {
       const c0 = [0, 1, 2].map((k) => (v[0][k] + v[1][k] + v[2][k]) / 3);
       const n = norm(cross(sub(v[1], v[0]), sub(v[2], v[0])));
       const mat = materialAt(REFM, c0, n) || 'Underbody';
-      const slot = slotOf({ c0, n, mat });
+      // Lamps by where the source's lamps are (small lamps would otherwise go to the body).
+      const slot = inBox(headBox, { c0 }, 0.02) ? 'headlight' : inBox(tailBox, { c0 }, 0.02) ? 'rearlight' : slotOf({ c0, n, mat });
       if (!groups.has(slot)) groups.set(slot, new Map());
       const g = groups.get(slot);
       if (!g.has(mat)) g.set(mat, []);

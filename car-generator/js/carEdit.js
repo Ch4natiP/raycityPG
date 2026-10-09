@@ -29,7 +29,7 @@ export function bboxOf(positions) {
 const WELD_COS = Math.cos((35 * Math.PI) / 180);
 // mode 0: borders locked (best shape). 1: borders may collapse too. minPiece: separate pieces smaller
 // than this (metres, bounding-box diagonal) are dropped first (bolts, clips, small lettering).
-function reduce(part, keep, mode = 0, minPiece = 0) {
+export function reduce(part, keep, mode = 0, minPiece = 0) {
   const tris = part.indices.length / 3;
   if ((keep >= 1 && !minPiece) || tris <= 4) return { part, error: 0 };
   const P = part.positions; const N = part.normals; const UV = part.uvs;
@@ -59,8 +59,23 @@ function reduce(part, keep, mode = 0, minPiece = 0) {
   if (idx.length < 3) return { part, error: 0 };
   const target = Math.max(1, Math.round((idx.length / 3) * Math.min(1, keep)));
   const posArr = new Float32Array(cP);
-  const [out, relErr] = keep >= 1 ? [new Uint32Array(idx), 0]
+  let [out, relErr] = keep >= 1 ? [new Uint32Array(idx), 0]
     : MeshoptSimplifier.simplify(new Uint32Array(idx), posArr, 3, target * 3, 1, mode === 0 ? ['LockBorder'] : []);
+  // No zero-area or doubled triangles out of the simplifier.
+  {
+    const keep = []; const seen = new Set();
+    for (let t = 0; t < out.length; t += 3) {
+      const a = out[t]; const b = out[t + 1]; const c = out[t + 2];
+      if (a === b || b === c || a === c) continue;
+      const u = [0, 1, 2].map((k) => cP[b * 3 + k] - cP[a * 3 + k]); const w = [0, 1, 2].map((k) => cP[c * 3 + k] - cP[a * 3 + k]);
+      if (Math.hypot(u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]) < 1e-9) continue;
+      const key = [a, b, c].sort((x, y) => x - y).join(',');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      keep.push(a, b, c);
+    }
+    if (keep.length >= 3) out = keep;
+  }
   const bb = bboxOf(posArr);
   const extent = Math.max(...bb.max.map((v, k) => v - bb.min[k]));
   const remap = new Map();
@@ -133,31 +148,40 @@ export function editFileInfo(bytes, edit, car, pivot, carPivot) {
     }
     return part;
   });
-  const base = Math.min(e.keep, g.keep);
+  const best = fitParts(moved, Math.min(e.keep, g.keep), g.maxVerts || 0);
+  return { bytes: writeOM(om, best.parts), error: best.error, verts: best.verts };
+}
+
+// Parts reduced to `base` of their triangles, then (cap) the least reduction that keeps the file under
+// `cap` vertices and `limit` (the format's 65,535) vertices / indices. Returns { parts, error, verts }.
+export function fitParts(parts, base = 1, cap = 0, limit = 65535) {
   const run = (keep, mode = 0, minPiece = 0) => {
-    const res = moved.map((p) => reduce(p, keep, mode, minPiece));
-    return { parts: res.map((r) => r.part), error: Math.max(0, ...res.map((r) => r.error)), verts: res.reduce((n, r) => n + r.part.positions.length / 3, 0) };
+    const res = parts.map((p) => reduce(p, keep, mode, minPiece));
+    return {
+      parts: res.map((r) => r.part), error: Math.max(0, ...res.map((r) => r.error)),
+      verts: res.reduce((n, r) => n + r.part.positions.length / 3, 0), indices: res.reduce((n, r) => n + r.part.indices.length, 0),
+    };
   };
+  const over = (r) => (cap && r.verts > cap) || r.verts > limit || r.indices > limit;
   let best = run(base);
-  const cap = g.maxVerts || 0;
-  if (cap && best.verts > cap) {
+  if (over(best)) {
     // Least damage first: borders locked, then borders free, then tiny separate pieces dropped
     // (growing size); within a stage, binary search for the most triangles that fit under the cap.
     const stages = [[0, 0], [1, 0], [1, 0.02], [1, 0.05], [1, 0.1], [1, 0.2], [1, 0.4]];
     for (const [mode, minPiece] of stages) {
       const low = run(0.01, mode, minPiece);
-      if (low.verts > cap) { best = low; continue; }
+      if (over(low)) { best = low; continue; }
       let lo = 0.01; let hi = base;
       best = low;
       for (let k = 0; k < 9; k++) {
         const mid = (lo + hi) / 2;
         const r = run(mid, mode, minPiece);
-        if (r.verts <= cap) { lo = mid; best = r; } else hi = mid;
+        if (!over(r)) { lo = mid; best = r; } else hi = mid;
       }
       break;
     }
   }
-  return { bytes: writeOM(om, best.parts), error: best.error, verts: best.verts };
+  return best;
 }
 
 export function editFile(bytes, edit, car, pivot, carPivot) {

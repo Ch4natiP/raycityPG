@@ -19,6 +19,7 @@ import { buildHull } from '../tools/hull.mjs';
 import { makeReference, materialAt } from '../tools/bake.mjs';
 import { parseOM, writeOM, matchTemplateSubmeshes, omParts } from './om.js';
 import { encodeSpec, decodeSpec } from './carSpec.js';
+import { fitParts } from './carEdit.js';
 
 // ---------------------------------------------------------------------------------------------
 // Material categories
@@ -550,11 +551,67 @@ async function fitShell(hull, ref, m, cap, log) {
   throw new Error('ลด poly ให้ต่ำกว่าเพดานไม่ได้');
 }
 
+// "Model's own surface" mode: the source triangles themselves (no shell), cut into the template's
+// files by slot, one part per material (welded: same position, normals within 35°), each file
+// reduced only as far as `cap` and the .0m format (65,535 vertices / indices) require. Material
+// borders stay the model's own edges, so colours don't zigzag.
+async function fitRaw(tris, m, cap, log) {
+  const WELD = Math.cos((35 * Math.PI) / 180);
+  const bySlot = new Map();
+  for (const t of tris) {
+    const slot = m.slotOf(t.c0, t.n, t.mat);
+    if (!bySlot.has(slot)) bySlot.set(slot, new Map());
+    const g = bySlot.get(slot);
+    if (!g.has(t.mat)) g.set(t.mat, []);
+    g.get(t.mat).push(t);
+  }
+  const out = {};
+  for (const [slot, g] of bySlot) {
+    const parts = [];
+    for (const [mat, list] of g) {
+      const P = []; const N = []; const I = [];
+      const keys = new Map();
+      const seen = new Set();
+      for (const t of list) {
+        // The model's own zero-area and doubled triangles are left out.
+        const cr = cross(sub(t.b, t.a), sub(t.c, t.a));
+        if (Math.hypot(cr[0], cr[1], cr[2]) < 1e-9) continue;
+        const tk = [t.a, t.b, t.c].map((p) => p.map((x) => Math.round(x * 1e4)).join(',')).sort().join('|');
+        if (seen.has(tk)) continue;
+        seen.add(tk);
+        [t.a, t.b, t.c].forEach((p, j) => {
+          const n = t.vn ? norm(t.vn[j]) : t.n;
+          const key = `${Math.round(p[0] * 1e4)},${Math.round(p[1] * 1e4)},${Math.round(p[2] * 1e4)}`;
+          const cands = keys.get(key) || [];
+          let v = cands.find((c) => N[c * 3] * n[0] + N[c * 3 + 1] * n[1] + N[c * 3 + 2] * n[2] >= WELD);
+          if (v === undefined) { v = P.length / 3; P.push(...p); N.push(...n); cands.push(v); keys.set(key, cands); }
+          I.push(v);
+        });
+        const n0 = I.length - 3;
+        if (I[n0] === I[n0 + 1] || I[n0 + 1] === I[n0 + 2] || I[n0] === I[n0 + 2]) I.length = n0;
+      }
+      const [u, vv] = cellUV(mat);
+      parts.push({
+        name: mat, kind: 0, positions: new Float32Array(P), normals: new Float32Array(N),
+        uvs: new Float32Array((P.length / 3) * 2).map((_, i) => (i % 2 ? vv : u)), indices: Uint32Array.from(I),
+      });
+    }
+    const before = parts.reduce((s, q) => s + q.positions.length / 3, 0);
+    const fit = fitParts(parts, 1, cap, 64000); // room for the template's stand-in pieces
+    out[slot] = fit.parts;
+    log(fit.verts < before ? `${slot}: ${before.toLocaleString()} → ${fit.verts.toLocaleString()} จุด (ลดเท่าที่ต้องให้ไม่เกินเพดาน)` : `${slot}: ${before.toLocaleString()} จุด (ไม่ได้ลด)`);
+    await tick();
+  }
+  return out;
+}
+
 const merge = (parts) => {
   const P = []; const N = []; const UV = []; const I = [];
   for (const q of parts) {
     const base = P.length / 3;
-    P.push(...q.positions); N.push(...q.normals); UV.push(...q.uvs);
+    for (const x of q.positions) P.push(x);
+    for (const x of q.normals) N.push(x);
+    for (const x of q.uvs) UV.push(x);
     for (const i of q.indices) I.push(base + i);
   }
   return { name: 'merged', kind: 0, positions: new Float32Array(P), normals: new Float32Array(N), uvs: new Float32Array(UV), indices: new Uint16Array(I) };
@@ -692,7 +749,7 @@ function renderIcon(bytes) {
 // ---------------------------------------------------------------------------------------------
 // The whole conversion. template: { name, files: Map(rel → Uint8Array) }. Returns Map(rel → Uint8Array).
 
-export async function convert(model, { name, template, categories = new Map(), maxVerts = 3500, voxel = 0.015, log = () => {} }) {
+export async function convert(model, { name, template, categories = new Map(), maxVerts = 3500, voxel = 0.015, raw = false, log = () => {} }) {
   await MeshoptSimplifier.ready;
   const tpl = template.files;
   const tplName = template.name;
@@ -701,14 +758,21 @@ export async function convert(model, { name, template, categories = new Map(), m
   log(`ตัวรถ (ถอดล้อแล้ว): ${src.tris.length.toLocaleString()} สามเหลี่ยม, ยาว ${src.length.toFixed(2)} ม., ล้อ ${src.wheels.length}`);
   await tick();
   const m = metrics(src.tris, src.wheels);
-  const ref = makeReference(src.tris);
-  log('สร้างเปลือกนอก (voxel)…');
-  await tick();
-  const hull = buildHull(src.tris, { voxel, smooth: 12 });
-  log(`เปลือกนอก: ${(hull.idx.length / 3).toLocaleString()} สามเหลี่ยม`);
-  await tick();
-  // Every part file as detailed as the cap allows.
-  const lod = await fitShell(hull, ref, m, maxVerts, log);
+  let lod;
+  if (raw) {
+    log('ใช้ผิวจริงของโมเดล (ไม่สร้างผิวใหม่)…');
+    await tick();
+    lod = await fitRaw(src.tris, m, maxVerts, log);
+  } else {
+    const ref = makeReference(src.tris);
+    log('สร้างเปลือกนอก (voxel)…');
+    await tick();
+    const hull = buildHull(src.tris, { voxel, smooth: 12 });
+    log(`เปลือกนอก: ${(hull.idx.length / 3).toLocaleString()} สามเหลี่ยม`);
+    await tick();
+    // Every part file as detailed as the cap allows.
+    lod = await fitShell(hull, ref, m, maxVerts, log);
+  }
   smoothNormals(Object.values(lod).flat());
 
   const out = new Map();

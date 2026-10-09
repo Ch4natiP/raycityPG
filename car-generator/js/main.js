@@ -913,6 +913,7 @@ async function openEmbeddedCar(name) {
 
 // Test packs (../cars/test/*.zip, embedded at build time): one download button each.
 const TEST_PACK_INFO = {
+  '24_urus_no_reduce.zip': ['ชุด 24: Urus ไม่ลด poly ใช้ผิวจริงของโมเดล ⚠ ทดลอง', 'ทั้งคัน ~105,000 สามเหลี่ยม (ตัวถัง 19,667 จุด) เกินที่เคยผ่าน (3,631) มาก ลองเพื่อดูว่าเกมรับได้ไหม ถ้าเด้งให้กลับไปใช้ชุดฐาน · ชื่อ rc_canyon เดิม'],
   '23_urus_from_web.zip': ['ชุด 23: Lamborghini Urus (ถอดล้อแล้ว) ทำจากหน้าเว็บ ⭐', 'สร้างด้วยปุ่ม "สร้างรถจากโมเดล 3D" ทุกชิ้นได้ 3,500 จุดของตัวเอง (ทั้งคัน ~17,500 สามเหลี่ยม) · ใช้ชื่อ rc_canyon เดิม'],
   '22_flat_colors_3500.zip': ['ชุด 22: สีเรียบต่อสามเหลี่ยม แบบรถในเกม ⭐', 'ทุกสามเหลี่ยมใช้สีเดียว (สีรถ/ดำ) ไม่มีปื้นดำมั่ว · ไม่เกิน 3,500 จุดต่อไฟล์'],
   '21_more_poly_3800.zip': ['ชุด 21: ✅ เข้าเกมได้ (3,631 จุด) แต่มีปื้นดำ', 'ใช้ทดสอบเพดาน: 3,800 ผ่าน'],
@@ -1320,15 +1321,32 @@ function buildModelPanel() {
     3000: 'ปลอดภัย',
     3500: 'ละเอียดสุดที่เข้าเกมได้แน่นอน (ทดสอบแล้วถึง 3,631) · แต่ละชิ้น (ตัวถัง ฝากระโปรง หลังคา กันชน ไฟ) ได้ 3,500 ของตัวเอง',
     5000: '⚠ ยังไม่เคยทดสอบในเกม อาจเด้ง (8,000 เด้งแน่)',
-    60000: '⛔ ไม่ลด poly (ละเอียดเต็มที่ไฟล์ .0m เก็บได้ ~21,000 สามเหลี่ยมต่อไฟล์): สวยสุด ดูในเว็บได้ แต่ใส่เกมจะเด้ง (เกมรับไม่เกิน ~3,600 จุดต่อไฟล์)',
+    60000: '⛔ ไม่ลด poly: ใช้โมเดลเดิมตามที่เป็น ลดเฉพาะไฟล์ที่ใหญ่เกินที่ไฟล์ .0m เก็บได้ (65,535 จุด/index ต่อไฟล์) · ใส่เกมเสี่ยงเด้ง (ที่ทดสอบแล้ว: 3,631 ผ่าน 8,000 เด้ง)',
   };
+  const modeHint = document.createElement('p');
+  modeHint.className = 'hint';
+  const MODE_HINTS = {
+    raw: 'ใช้สามเหลี่ยมของโมเดลเดิมตรงๆ ไม่สร้างผิวใหม่ ขอบสีคมตามต้นฉบับ (ลดเฉพาะไฟล์ที่เกินเพดาน) · แนะนำตั้ง "ภายในห้องโดยสาร" เป็นตัดทิ้ง จะเหลือ poly ให้ตัวรถมากขึ้น',
+    shell: 'สร้างผิวนอกใหม่จากโมเดล (ปิดรู ตัดของข้างใน) เบาและทนในเกม แต่ผิวเป็นคลื่นเล็กน้อย ขอบสีหยักตามสามเหลี่ยม',
+  };
+  const updateModeHint = () => {
+    const v = modeSel.querySelector('select').value;
+    const lowCap = Number(capSel.querySelector('select').value) <= 5000;
+    modeHint.textContent = MODE_HINTS[v] + (v === 'raw' && lowCap ? ' · ⚠ ลดเหลือไม่กี่พันจุดแบบนี้รถจะเป็นรู/ยุบ (โมเดลจริงมีหลายหมื่นจุด) ใช้ "สร้างผิวใหม่" จะดีกว่า' : '');
+    modeHint.style.color = v === 'raw' && lowCap ? '#ff8a6a' : '';
+    voxSel.hidden = v === 'raw';
+  };
+  const modeSel = pickerRow('ผิวรถ', [['raw', 'ใช้ผิวจริงของโมเดล'], ['shell', 'สร้างผิวใหม่ (เปลือกนอก)']], 'shell', () => updateModeHint());
+  modeHint.textContent = MODE_HINTS.shell;
   const capSel = pickerRow('ลด poly (จุดสูงสุดต่อไฟล์)', [['2000', '2,000'], ['3000', '3,000'], ['3500', '3,500 (แนะนำ)'], ['5000', '5,000 (ทดลอง)'], ['60000', 'ไม่ลด poly']], '3500', (v) => {
     capHint.textContent = CAP_HINTS[v];
     capHint.style.color = Number(v) > 3500 ? '#ff8a6a' : '';
+    if (v === '60000') modeSel.querySelector('select').value = 'raw';
+    updateModeHint();
   });
   capHint.textContent = CAP_HINTS[3500];
   const voxSel = pickerRow('ความละเอียดผิว', [['0.01', '1.0 ซม. (ละเอียด ช้า)'], ['0.015', '1.5 ซม. (ปกติ)'], ['0.02', '2.0 ซม. (เร็ว)']], '0.015', () => {});
-  box.append(capSel, capHint, voxSel);
+  box.append(capSel, capHint, modeSel, modeHint, voxSel);
   const go = document.createElement('button');
   go.className = 'accent';
   go.textContent = '⚙ สร้างรถ RayCity จากโมเดลนี้';
@@ -1343,7 +1361,8 @@ function buildModelPanel() {
       const name = ni.value || 'rc_car';
       const out = await convert(m, {
         name, template: await modelTemplate(), categories: srcModel.categories,
-        maxVerts: Number(capSel.querySelector('select').value), voxel: Number(voxSel.querySelector('select').value), log: say,
+        maxVerts: Number(capSel.querySelector('select').value), voxel: Number(voxSel.querySelector('select').value),
+        raw: modeSel.querySelector('select').value === 'raw', log: say,
       });
       say('เปิดรถที่ได้ ตรวจดูแล้วกด "ดาวน์โหลดรถคันนี้ทั้งโฟลเดอร์" ได้เลย');
       const entries = [...out].map(([rel, bytes]) => ({ path: `${name}/${rel}`, file: new File([bytes], rel.split('/').pop()) }));

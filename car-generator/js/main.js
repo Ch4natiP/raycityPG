@@ -914,6 +914,9 @@ async function openEmbeddedCar(name) {
 
 // Test packs (../cars/test/*.zip, embedded at build time): one download button each.
 const TEST_PACK_INFO = {
+  '39_canyon_no_part_textures.zip': ['ชุด 39: เหมือน 37 + ลบรูปของชิ้นส่วน (กันชน ไฟ สเกิร์ต) ⭐', 'แบบเดียวกับฝากระโปรง/หลังคาของ gtv98 ที่ไม่มีรูป → ชิ้นส่วนน่าจะได้สีรถจากตัวถัง'],
+  '38_canyon_red_part_textures.zip': ['ชุด 38: เหมือน 37 + รูปของชิ้นส่วนเป็นสีแดง (แบบมาสก์สี)', 'ทดสอบว่าเกมใช้รูปของชิ้นส่วนเป็นมาสก์สีของชิ้นนั้นไหม'],
+  '37_canyon_all_paint_column.zip': ['ชุด 37: ทุกผิวอ่านสีจากช่องสีรถ (ยกเว้นกระจก ไฟ)', 'ต่อจากชุด 35 (ไม่รวมชิ้น ไม่แหว่ง) · ตัวถังทั้งหมดเปลี่ยนสีได้'],
   '36_canyon_all_in_body.zip': ['ชุด 36: canyon ทุกชิ้นรวมในตัวถัง (ทาสีได้แน่นอน)', 'เหมือนชุด 35 แต่ฝากระโปรง กันชน ฯลฯ ย้ายมาอยู่ในไฟล์ตัวถัง (4,989 จุด) เผื่อชิ้นแยกยังไม่รับสี'],
   '35_canyon_narrow_wheels_paintall.zip': ['ชุด 35: canyon แคบลง + ซุ้มล้อตรงล้อเกม + เปลี่ยนสีได้ทั้งคัน ⭐', 'กว้าง 2.30 → 1.80 ม. · เลื่อนตัวรถ 11 ซม. ให้ซุ้มล้อตรงล้อเกม · ทุกส่วนเปลี่ยนสีได้ยกเว้นกระจกและไฟ'],
   '34_canyon_paint_parts.zip': ['ชุด 34: canyon · ฝากระโปรง/หลังคาได้สีรถแล้ว ⭐', 'ต่อจากชุด 33: ลบรูปชิ้นส่วนที่ gtv98 ไม่มี (ฝากระโปรงเคยเป็นน้ำตาล หลังคาดำ) · ไฟล์เหมือน gtv98 ทุกไฟล์'],
@@ -1279,6 +1282,32 @@ function buildModelPanel() {
   info.className = 'hint';
   box.appendChild(info);
 
+  // ⚡ The short way: everything that worked in game, in one click.
+  const quick = document.createElement('div');
+  quick.className = 'quick-box';
+  quick.innerHTML = `<div class="quick-title">⚡ ทางลัด: เข้าเกมในคลิกเดียว</div>
+    <div class="hint">ถอดล้อ ✔ · ตัดข้างใน ✔ · ปรับให้ตรงล้อเกม ✔ · ผิวจริงของโมเดล ไม่เกิน 4,800 จุดต่อไฟล์ ✔ · เปลี่ยนสีได้ทั้งคัน ✔ · ตรวจ + ซ่อมอัตโนมัติ ✔</div>`;
+  const qrow = document.createElement('div');
+  qrow.className = 'btns';
+  const qname = document.createElement('input');
+  qname.type = 'text';
+  qname.placeholder = 'ชื่อรถ (ชื่อ .jmd ที่ลงทะเบียนไว้)';
+  qname.value = 'rc_canyon';
+  qname.addEventListener('change', () => { qname.value = qname.value.trim().replace(/[^a-z0-9_]/gi, '_').toLowerCase(); });
+  const qgo = document.createElement('button');
+  qgo.className = 'accent';
+  qgo.textContent = '⚡ สร้าง + ตรวจ + ดาวน์โหลด';
+  const qlog = document.createElement('pre');
+  qlog.className = 'hint';
+  qgo.addEventListener('click', () => quickBuild(qname.value || 'rc_car', qgo, qlog));
+  qrow.append(qname, qgo);
+  quick.append(qrow, qlog);
+  box.appendChild(quick);
+  const adv = document.createElement('div');
+  adv.className = 'edit-sub';
+  adv.textContent = 'หรือปรับเองทีละขั้น ↓';
+  box.appendChild(adv);
+
   const check = (label, value, onChange, title = '') => {
     const row = document.createElement('label');
     row.className = 'row row-check';
@@ -1482,6 +1511,38 @@ function buildModelPanel() {
   result.id = 'model-result';
   result.hidden = true;
   box.append(goRow, log, result);
+}
+
+// ⚡ One click: build with the settings that worked in game, check, repair what can be repaired,
+// download, and open the result for a look.
+async function quickBuild(name, btn, logEl) {
+  const m = srcModel.model;
+  if (!m) return;
+  btn.disabled = true;
+  logEl.textContent = '';
+  const say = (t) => { logEl.textContent = `${t}\n${logEl.textContent}`.split('\n').slice(0, 6).join('\n'); };
+  try {
+    const tpl = await modelTemplate();
+    let out = await convert(m, { name, template: tpl, categories: srcModel.categories, maxVerts: 4800, raw: true, hideInterior: true, paintAll: true, log: say });
+    let list = await checkCar(out, name, tpl);
+    if (list.some((c) => c.level === 'bad')) {
+      const r = await repairCar(out, name, tpl, true);
+      out = r.files;
+      list = await checkCar(out, name, tpl);
+      for (const f of r.fixes) say(`🔧 ${f}`);
+    }
+    const bad = list.filter((c) => c.level === 'bad');
+    const zipFiles = [...out].sort((a, b) => a[0].localeCompare(b[0])).map(([rel, data]) => ({ path: `${name}/${rel}`, data }));
+    download(await makeZip(zipFiles), `${name}.zip`);
+    say(bad.length ? `⚠ ดาวน์โหลด ${name}.zip แล้ว แต่ยังมี ${bad.length} ข้อที่ต้องดู (ด้านล่าง)` : `✅ ดาวน์โหลด ${name}.zip แล้ว · แตกไฟล์ → แพ็กเป็น ${name}.jmd → เข้าเกมได้เลย`);
+    const entries = [...out].map(([rel, bytes]) => ({ path: `${name}/${rel}`, file: new File([bytes], rel.split('/').pop()) }));
+    await openCarFolder(entries);
+    showBuildResult(name, out, entries);
+  } catch (e) {
+    console.error(e);
+    say(`ผิดพลาด: ${e.message}`);
+  }
+  btn.disabled = false;
 }
 
 // After a build: what came out (vertices per file against the game's limit) and the check-before-

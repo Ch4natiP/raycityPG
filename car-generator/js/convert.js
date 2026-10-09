@@ -904,7 +904,14 @@ export async function convert(model, { name, template, categories = new Map(), m
 export async function writeCar(lod, { name, template, bounds, paintAll = true, log = () => {} }) {
   const tpl = template.files;
   const tplName = template.name;
-  for (const parts of Object.values(lod)) for (const p of parts) if (ZONES.includes(p.name)) p.uvs = zoneUVs(p.name, p.positions, p.normals);
+  // paintAll: everything but glass / lamps / cabin samples the paint column. In game the colour follows
+  // the UV column (a car with the whole mask red still showed its trim black and the hood brown).
+  for (const parts of Object.values(lod)) {
+    for (const p of parts) {
+      if (!ZONES.includes(p.name)) continue;
+      p.uvs = zoneUVs(paintAll && !NOT_PAINT.has(p.name) ? 'Body_Color' : p.name, p.positions, p.normals);
+    }
+  }
   const out = new Map();
   const readTpl = (rel) => { const b = tpl.get(rel); return b ? parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)) : null; };
   const tplLod = (dir, mesh, l) => {

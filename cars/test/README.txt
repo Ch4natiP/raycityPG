@@ -44,3 +44,12 @@ In game 34: repaints (blue), but black areas stay black, wheels off, car too wid
                          sit on the game's wheels (-1.23 / +1.15), mask: every zone paint except glass/lamps
 36_canyon_all_in_body.zip  35 with every part's stock geometry merged into the body (4,989 verts), parts
                          left as stand-ins: in case the separate part files don't take the paint
+In game 35 = 36 visually: lower sides / trunk / hood stay black-brown whatever the mask says. Region map:
+the black areas are in the PART files (frontbumper over the hood, rearbumper/rearlight over the trunk,
+skirt low on the sides) or in body triangles of the plastic zone; body paint-zone triangles are white.
+36's hood/arch had holes (merge + reduction dropped small pieces).
+37_canyon_all_paint_column.zip  35 with every UV outside glass/lamps/cabin in the paint column (zone 0)
+38_canyon_red_part_textures.zip 37 + part textures opaque red (does a part use its own texture as mask?)
+39_canyon_no_part_textures.zip  37 + part textures removed (like gtv98's hood/roof, painted like the body)
+Web: '⚡ สร้าง + ตรวจ + ดาวน์โหลด' one-click build (raw outer surface ≤4,800/file, wheels fitted, paint
+column for everything but glass/lamps, check + repair, download).

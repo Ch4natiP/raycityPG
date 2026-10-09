@@ -226,7 +226,9 @@ export async function repairCar(files, name, template = null, paintAll = true) {
         const n = p.positions.length / 3;
         if (n <= 8) continue; // stand-ins
         for (let i = 0; i < n; i++) {
-          const uv = zoneUVs(matOfUV(p.uvs[i * 2], p.uvs[i * 2 + 1]) || 'Body_Color', p.positions.subarray(i * 3, i * 3 + 3), p.normals.subarray(i * 3, i * 3 + 3));
+          const m = matOfUV(p.uvs[i * 2], p.uvs[i * 2 + 1]) || 'Body_Color';
+          const keep = ['Glass_Gray', 'Projector_Glass', 'Taillight_Glass', 'Turn_Signal_LED', 'Interior_dark'].includes(m);
+          const uv = zoneUVs(paintAll && !keep ? 'Body_Color' : m, p.positions.subarray(i * 3, i * 3 + 3), p.normals.subarray(i * 3, i * 3 + 3));
           p.uvs[i * 2] = uv[0]; p.uvs[i * 2 + 1] = uv[1];
         }
       }

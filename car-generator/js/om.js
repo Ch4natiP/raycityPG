@@ -293,14 +293,25 @@ export function omParts(om) {
 // them keeps its index and flags; where the new car has no such piece, a hidden 1 mm triangle stands
 // in at the template piece's position. The new car's own parts fill the other slots, then follow.
 export function matchTemplateSubmeshes(template, parts) {
+  // Stand-in: a closed 5 mm box (8 vertices, 12 triangles) at the template piece's first vertex.
+  // The game's own files never have a submesh under 6 vertices, so no single triangles.
   const placeholder = (s) => {
     const i = s.vertexStart * 3;
     const [x, y, z] = [template.positions[i], template.positions[i + 1], template.positions[i + 2]];
+    const d = 0.0025;
+    const P = []; const N = [];
+    for (let k = 0; k < 8; k++) {
+      const c = [k & 1 ? 1 : -1, k & 2 ? 1 : -1, k & 4 ? 1 : -1];
+      P.push(x + c[0] * d, y + c[1] * d, z + c[2] * d);
+      const l = Math.sqrt(3);
+      N.push(c[0] / l, c[1] / l, c[2] / l);
+    }
+    const u = template.uvs[s.vertexStart * 2]; const v = template.uvs[s.vertexStart * 2 + 1];
     return {
-      positions: new Float32Array([x, y, z, x + 0.001, y, z, x, y + 0.001, z]),
-      normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
-      uvs: new Float32Array([template.uvs[s.vertexStart * 2], template.uvs[s.vertexStart * 2 + 1], template.uvs[s.vertexStart * 2], template.uvs[s.vertexStart * 2 + 1], template.uvs[s.vertexStart * 2], template.uvs[s.vertexStart * 2 + 1]]),
-      indices: new Uint16Array([0, 1, 2]),
+      positions: new Float32Array(P),
+      normals: new Float32Array(N),
+      uvs: new Float32Array(16).map((_, k) => (k % 2 ? v : u)),
+      indices: new Uint16Array([0, 2, 3, 0, 3, 1, 4, 5, 7, 4, 7, 6, 0, 1, 5, 0, 5, 4, 2, 6, 7, 2, 7, 3, 0, 4, 6, 0, 6, 2, 1, 3, 7, 1, 7, 5]),
       flags: s.flags.slice(),
     };
   };

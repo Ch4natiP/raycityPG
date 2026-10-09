@@ -181,3 +181,8 @@ pattern spread over the whole car — decals work once the UVs spread over the t
                          0 stretched triangles), mask drawn triangle by triangle with 52's colour slots
                          (body 1, lower band 2, hood 3, trim black), glass / trim / lamps on flat points in a
                          reserved strip, colour layer clear except gtv98's under-window value under the glass point.
+In game 54: right side, top, front, rear white and clean; the LEFT side all black with patches in the wheels'
+colour. The left side was the only region in v 0.02-0.29: the top third of the texture is the game's own
+(the wheels' picture), as pack 48 showed (everything mapped below v 0.33 black).
+55_canyon_atlas_lower_two_thirds.zip  54 with every region in v 0.35-0.97 (sides 0.37-0.77, top / front / rear
+                         0.79-0.97, flat points at 0.35) and clear of the bottom-left corner (u < 0.08, v > 0.69).

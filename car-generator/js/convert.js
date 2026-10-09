@@ -1184,24 +1184,27 @@ export async function convert(model, { name, template, categories = new Map(), m
 }
 
 // "Atlas" layout: every triangle projected by its own face direction into one region of the texture —
-// left side, right side, top, front, rear, each its own rectangle (no overlaps), so a shop decal spreads
+// left side, right side, top, front, rear, each its own rectangle in the lower two thirds (no overlaps), so a shop decal spreads
 // over the car like on a game car (pack 53) and no triangle stretches across the texture (stretched
 // triangles showed black / the wheels' picture, packs 44-53). Points shared across regions are split.
 // Glass, trim and lamps take one point each in a reserved strip (flat UVs on a known texel are how game
 // cars colour whole pieces: polestar1). The mask is drawn triangle by triangle with its colour slot.
 // Returns { mask (1024² RGBA), colour (cw×ch RGBA) }.
-const ATLAS_FLAT = { 1: [0.05, 0.315], 2: [0.10, 0.315], 3: [0.15, 0.315], glass: [0.20, 0.315], black: [0.25, 0.315] };
+// The top third of the texture (v < 0.33) is the game's own: whatever maps there shows black with the
+// wheels' picture in their colour (pack 54: the whole left side; pack 48: everything below 0.45 m). So is
+// the bottom-left corner (u < 0.08, v > 0.69; pack 48: the rear deck). Everything stays in v 0.34-0.98.
+const ATLAS_FLAT = { 1: [0.12, 0.35], 2: [0.17, 0.35], 3: [0.22, 0.35], glass: [0.27, 0.35], black: [0.32, 0.35] };
 function atlasLayout(lod, { slots, paintAll, cw = 128, ch = 64 }) {
   const lo = [Infinity, Infinity, Infinity]; const hi = [-Infinity, -Infinity, -Infinity];
   for (const parts of Object.values(lod)) for (const p of parts) for (let i = 0; i < p.positions.length; i += 3) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p.positions[i + k]); hi[k] = Math.max(hi[k], p.positions[i + k]); }
   const L = hi[1] - lo[1] || 1; const Wd = hi[0] - lo[0] || 1; const H = hi[2] - lo[2] || 1;
   const fx = (x) => (x - lo[0]) / Wd; const fy = (y) => (y - lo[1]) / L; const fz = (z) => (hi[2] - z) / H;
   const proj = {
-    left: (q) => [0.02 + 0.96 * fy(q[1]), 0.02 + 0.27 * fz(q[2])],
-    right: (q) => [0.02 + 0.96 * fy(q[1]), 0.71 + 0.27 * fz(q[2])],
-    top: (q) => [0.02 + 0.66 * fy(q[1]), 0.34 + 0.32 * fx(q[0])],
-    front: (q) => [0.70 + 0.13 * fx(q[0]), 0.34 + 0.32 * fz(q[2])],
-    rear: (q) => [0.85 + 0.13 * fx(q[0]), 0.34 + 0.32 * fz(q[2])],
+    left: (q) => [0.10 + 0.88 * fy(q[1]), 0.37 + 0.19 * fz(q[2])],
+    right: (q) => [0.10 + 0.88 * fy(q[1]), 0.58 + 0.19 * fz(q[2])],
+    top: (q) => [0.10 + 0.58 * fy(q[1]), 0.79 + 0.18 * fx(q[0])],
+    front: (q) => [0.70 + 0.13 * fx(q[0]), 0.79 + 0.18 * fz(q[2])],
+    rear: (q) => [0.85 + 0.13 * fx(q[0]), 0.79 + 0.18 * fz(q[2])],
   };
   const SIZE = 1024;
   const mask = new Uint8ClampedArray(SIZE * SIZE * 4);

@@ -10,7 +10,8 @@
       "imports": {
         "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
         "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
-        "meshoptimizer": "./node_modules/meshoptimizer/index.module.js"
+        "meshoptimizer": "./node_modules/meshoptimizer/index.module.js",
+        "three-mesh-bvh": "./node_modules/three-mesh-bvh/src/index.js"
       }
     }
   </script>
@@ -21,6 +22,17 @@
       <h1>RayCity <span>Car Generator</span></h1>
       <p class="sub">เปิด / แก้ / สร้างรถ RayCity แล้วดาวน์โหลดทั้งโฟลเดอร์ไปใส่ในเกม</p>
     </header>
+    <section class="block" id="model-box">
+      <h2>🚗 สร้างรถจากโมเดล 3D (มาทั้งคัน มีล้อก็ได้)</h2>
+      <div class="btns">
+        <button id="btn-model-open" class="accent">📂 เปิดโมเดล (.glb .fbx .obj)</button>
+        <input id="file-model" type="file" accept=".glb,.gltf,.fbx,.obj" hidden>
+      </div>
+      <p class="hint">ใส่โมเดลรถทั้งคันได้เลย (หรือลากไฟล์มาวางบนจอ 3D) เว็บจะหาล้อ ยาง จานเบรก แล้วถอดออกให้ (สีชมพู)
+        ตรวจ / แก้ได้ก่อน แล้วกดสร้างรถ → เปิดรถที่ได้ให้ดู แก้ต่อ แล้วดาวน์โหลดทั้งโฟลเดอร์</p>
+      <pre id="model-log" class="hint"></pre>
+      <div id="model-panel" hidden></div>
+    </section>
     <section class="block">
       <h2>รถ RayCity สมจริง (กดดูได้เลย)</h2>
       <div id="embedded-cars" class="btns"></div>

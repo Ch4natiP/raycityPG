@@ -19,9 +19,9 @@ let html = fs.readFileSync('index.html', 'utf8');
 html = html
   .replace(/\s*<script type="importmap">[\s\S]*?<\/script>/, '')
   .replace('<link rel="stylesheet" href="style.css">', () => `<style>\n${css}</style>`)
-  .replace('<script type="module" src="js/main.js"></script>', () => `<script>${embedCars()}\n${embedTests()}</script>\n<script>${js}</script>`);
+  .replace('<script type="module" src="js/main.js"></script>', () => `<script>${embedCars()}\n${embedTests()}\n${embedTemplates()}\n${embedDraco()}</script>\n<script>${js}</script>`);
 fs.writeFileSync('RayCity-Car-Generator.html', html);
-fs.writeFileSync('js/embedded-cars.js', `${embedCars()}\n${embedTests()}\n`); // same data for the dev page (index.html)
+fs.writeFileSync('js/embedded-cars.js', `${embedCars()}\n${embedTests()}\n${embedTemplates()}\n${embedDraco()}\n`); // same data for the dev page (index.html)
 console.log(`RayCity-Car-Generator.html: ${(html.length / 1024).toFixed(0)} KB`);
 
 // Built cars in ../cars/<name>/ are embedded whole (every file, so the page can open them with one
@@ -47,6 +47,39 @@ function embedCars() {
     }
   }
   return `window.RC_EMBEDDED_CARS = ${JSON.stringify(cars)};`;
+}
+
+// Template cars in templates/<name>/ (the file layout a converted 3D model is written in), like cars.
+function embedTemplates() {
+  const dir = path.resolve('templates');
+  const out = {};
+  if (fs.existsSync(dir)) {
+    for (const name of fs.readdirSync(dir)) {
+      const root = path.join(dir, name);
+      if (!fs.statSync(root).isDirectory()) continue;
+      const files = {};
+      const walk = (d) => {
+        for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+          const f = path.join(d, e.name);
+          if (e.isDirectory()) walk(f);
+          else files[path.relative(root, f).split(path.sep).join('/')] = fs.readFileSync(f).toString('base64');
+        }
+      };
+      walk(root);
+      out[name] = zlib.gzipSync(JSON.stringify(files), { level: 9 }).toString('base64');
+    }
+  }
+  return `window.RC_TEMPLATES = ${JSON.stringify(out)};`;
+}
+
+// Draco decoder (compressed .glb models), so opening them needs no internet.
+function embedDraco() {
+  const d = 'node_modules/three/examples/jsm/libs/draco/gltf';
+  if (!fs.existsSync(`${d}/draco_decoder.wasm`)) return 'window.RC_DRACO = null;';
+  return `window.RC_DRACO = ${JSON.stringify({
+    wrapper: fs.readFileSync(`${d}/draco_wasm_wrapper.js`).toString('base64'),
+    wasm: fs.readFileSync(`${d}/draco_decoder.wasm`).toString('base64'),
+  })};`;
 }
 
 // Test packs in ../cars/test/*.zip: downloadable from the page as they are (base64), in name order.

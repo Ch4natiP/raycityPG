@@ -141,3 +141,14 @@ details[open] summary { border-bottom: 1px solid var(--line); }
 
 /* A RayCity car is open: the cartoon generator's controls don't apply, the car tools come first. */
 body.rc-mode .gen-only, body.rc-mode #controls { display: none; }
+
+/* 3D model → RayCity car */
+#model-panel { margin-top: 8px; }
+#model-panel .row-check { display: flex; gap: 8px; align-items: center; margin: 4px 0; font-size: 13px; cursor: pointer; }
+#model-panel .mat-row { display: grid; grid-template-columns: 12px 1fr 150px; gap: 6px; align-items: center; font-size: 12px; margin: 3px 0; }
+#model-panel .mat-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#model-panel .mat-row select { width: 100%; }
+#model-panel .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; border: 1px solid rgba(255,255,255,0.25); }
+#model-panel .edit-sub { margin: 12px 0 4px; font-size: 12px; font-weight: 600; color: var(--accent-2); }
+#model-panel input[type="text"] { width: 100%; }
+#model-panel pre, #model-log { white-space: pre-wrap; margin: 6px 0; }

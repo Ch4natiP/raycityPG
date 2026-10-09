@@ -9,6 +9,7 @@ import { SPEC_TEMPLATE, SPEC_FIELDS, readSpec, writeSpec, encodeSpec, decodeSpec
 import { makeZip } from './zip.js';
 import { IDENTITY, slotOfPath, bboxOf, editFile, editFileInfo, editMeshXml, renamePath, countsOf, ready as editReady } from './carEdit.js';
 import { SCHEMA, PRESETS, presetParams, randomParams } from './params.js';
+import { CATEGORIES, MODEL_TYPES, loadModel, convert, turnAround, categoryOf } from './convert.js';
 
 const STORAGE_KEY = 'raycity-car-generator:params';
 
@@ -912,6 +913,7 @@ async function openEmbeddedCar(name) {
 
 // Test packs (../cars/test/*.zip, embedded at build time): one download button each.
 const TEST_PACK_INFO = {
+  '23_urus_from_web.zip': ['ชุด 23: Lamborghini Urus (ถอดล้อแล้ว) ทำจากหน้าเว็บ ⭐', 'สร้างด้วยปุ่ม "สร้างรถจากโมเดล 3D" สูตรเดียวกับชุด 22 · ไม่เกิน 3,500 จุดต่อไฟล์ · ใช้ชื่อ rc_canyon เดิม'],
   '22_flat_colors_3500.zip': ['ชุด 22: สีเรียบต่อสามเหลี่ยม แบบรถในเกม ⭐', 'ทุกสามเหลี่ยมใช้สีเดียว (สีรถ/ดำ) ไม่มีปื้นดำมั่ว · ไม่เกิน 3,500 จุดต่อไฟล์'],
   '21_more_poly_3800.zip': ['ชุด 21: ✅ เข้าเกมได้ (3,631 จุด) แต่มีปื้นดำ', 'ใช้ทดสอบเพดาน: 3,800 ผ่าน'],
   '17_full_mask_textures.zip': ['ชุด 17: ✅ เข้าเกมได้ แต่มีปื้นดำ', 'เปลือกนอก ~3,000 สามเหลี่ยม'],
@@ -971,7 +973,9 @@ function bindOmButtons() {
     e.preventDefault();
     hint.hidden = true;
     const entries = await droppedEntries(e.dataTransfer);
-    if (entries.length) await openCarFolder(entries);
+    const model = entries.length === 1 && MODEL_TYPES.split(',').some((x) => entries[0].path.toLowerCase().endsWith(x));
+    if (model) await openModelFile(entries[0].file);
+    else if (entries.length) await openCarFolder(entries);
   });
   const input = document.getElementById('file-om');
   document.getElementById('btn-om-open').addEventListener('click', () => input.click());
@@ -1103,6 +1107,271 @@ function updateDrive(dt) {
   document.getElementById('speed').textContent = `${Math.round(Math.abs(drive.speed) * 3.6)} km/h`;
 }
 
+// --- 3D model → RayCity car ------------------------------------------------------
+// A whole car model (with wheels, brakes, interior) is opened, shown with the parts that won't go into
+// the game (wheels, cut materials) in pink, adjusted (click pieces, material categories, front/back),
+// then converted on the page (js/convert.js) and opened as a car folder for checking and downloading.
+const CAT_COLORS = {
+  Body_Color: '#4f8cff', Glass_Gray: '#26343f', Projector_Glass: '#fff6c4', Taillight_Glass: '#c3122a', Lights_Auto: '#f1e3a0',
+  Turn_Signal_LED: '#ffa21a', metal_chrome: '#d8dde3', metal_gray: '#8b939c', plastic_gray: '#3c3f45', Carbon_Fiber: '#23262b',
+  Interior_dark: '#6a5442',
+};
+const srcModel = { model: null, categories: new Map(), preview: null, pick: false, hideRemoved: false, file: null };
+
+function modelTemplate() {
+  if (srcModel.template) return srcModel.template;
+  const b64 = (window.RC_TEMPLATES || {}).gtv98;
+  if (!b64) throw new Error('ไม่มีรถแม่แบบ (gtv98) ในหน้าเว็บ');
+  return (async () => {
+    const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const json = await new Response(new Blob([bin]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+    const files = new Map(Object.entries(JSON.parse(json)).map(([p, d]) => [p, Uint8Array.from(atob(d), (c) => c.charCodeAt(0))]));
+    srcModel.template = { name: 'gtv98', files };
+    return srcModel.template;
+  })();
+}
+
+// Preview: kept triangles in category colors, removed ones (wheels, cut materials) pink, a green
+// arrow at the front.
+function buildModelPreview() {
+  const m = srcModel.model;
+  const nt = m.C.length;
+  const keep = []; const gone = [];
+  for (let t = 0; t < nt; t++) {
+    const cat = categoryOf(m, srcModel.categories, t);
+    (m.removed[m.C[t]] || cat === 'skip' ? gone : keep).push(t);
+  }
+  const toThree = (A, list, colors) => {
+    const pos = new Float32Array(list.length * 9); const nrm = new Float32Array(list.length * 9);
+    const col = colors ? new Float32Array(list.length * 9) : null;
+    const c = new THREE.Color();
+    list.forEach((t, i) => {
+      for (let j = 0; j < 3; j++) {
+        const o = t * 9 + j * 3; const d = i * 9 + j * 3;
+        pos[d] = m.P[o]; pos[d + 1] = m.P[o + 2]; pos[d + 2] = -m.P[o + 1];
+        nrm[d] = m.N[o]; nrm[d + 1] = m.N[o + 2]; nrm[d + 2] = -m.N[o + 1];
+      }
+      if (col) {
+        c.set(CAT_COLORS[categoryOf(m, srcModel.categories, t)] || '#3c3f45').convertSRGBToLinear();
+        for (let j = 0; j < 3; j++) col.set([c.r, c.g, c.b], i * 9 + j * 3);
+      }
+    });
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+    if (col) g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    return g;
+  };
+  const group = new THREE.Group();
+  group.name = 'model';
+  const kept = new THREE.Mesh(toThree(m.P, keep, true), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.1, side: THREE.DoubleSide }));
+  kept.userData.tris = keep;
+  const removed = new THREE.Mesh(toThree(m.P, gone, false), new THREE.MeshStandardMaterial({ color: '#ff2bd6', roughness: 0.6, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }));
+  removed.userData.tris = gone;
+  removed.visible = !srcModel.hideRemoved;
+  kept.castShadow = true;
+  group.add(kept, removed);
+  let y0 = Infinity; let zTop = 0;
+  for (let i = 0; i < m.P.length; i += 3) { y0 = Math.min(y0, m.P[i + 1]); zTop = Math.max(zTop, m.P[i + 2]); }
+  const arrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, zTop * 0.5, -y0 + 0.15), 0.9, '#3ee07a', 0.3, 0.2);
+  group.add(arrow);
+  group.userData.files = `โมเดลต้นฉบับ (ยังไม่แปลง) · ตัวรถ ${keep.length.toLocaleString()} · ถอด ${gone.length.toLocaleString()} สามเหลี่ยม`;
+  srcModel.preview = group;
+  srcModel.counts = { keep: keep.length, gone: gone.length };
+  return group;
+}
+
+function showModelPreview() {
+  folder = null;
+  document.getElementById('om-parts').innerHTML = '';
+  document.getElementById('car-edit').hidden = true;
+  showImported(buildModelPreview());
+  updateModelInfo();
+}
+
+function updateModelInfo() {
+  const m = srcModel.model;
+  const el = document.getElementById('model-info');
+  if (!m || !el) return;
+  const wheelsOff = m.pieces.filter((p, i) => p.wheel && m.removed[i]).length;
+  el.textContent = `${m.C.length.toLocaleString()} สามเหลี่ยม · ${m.pieces.length.toLocaleString()} ชิ้น · ยาว ${(srcModel.length || 0).toFixed(2)} ม.\n`
+    + `เจอล้อ ${m.wheels.length} ล้อ (${wheelsOff} ชิ้นที่เป็นล้อ/เบรก ถูกถอด)\n`
+    + `ใส่ในรถ ${srcModel.counts.keep.toLocaleString()} · ถอดออก ${srcModel.counts.gone.toLocaleString()} สามเหลี่ยม (สีชมพู)`;
+}
+
+async function openModelFile(file) {
+  const status = document.getElementById('model-log');
+  const box = document.getElementById('model-panel');
+  status.textContent = `กำลังเปิด ${file.name}…`;
+  box.hidden = false;
+  await new Promise((r) => setTimeout(r, 30));
+  try {
+    srcModel.model = await loadModel(file);
+  } catch (e) {
+    status.textContent = `เปิดไม่ได้: ${e.message}`;
+    return;
+  }
+  srcModel.file = file;
+  srcModel.categories = new Map();
+  const m = srcModel.model;
+  let y0 = Infinity; let y1 = -Infinity;
+  for (let i = 1; i < m.P.length; i += 3) { y0 = Math.min(y0, m.P[i]); y1 = Math.max(y1, m.P[i]); }
+  srcModel.length = y1 - y0;
+  status.textContent = '';
+  buildModelPanel();
+  showModelPreview();
+  controls.target.set(0, 0.6, 0);
+}
+
+function buildModelPanel() {
+  const m = srcModel.model;
+  const box = document.getElementById('model-panel');
+  box.innerHTML = '';
+  const info = document.createElement('pre');
+  info.id = 'model-info';
+  info.className = 'hint';
+  box.appendChild(info);
+
+  const check = (label, value, onChange, title = '') => {
+    const row = document.createElement('label');
+    row.className = 'row row-check';
+    row.title = title;
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = value;
+    input.addEventListener('change', () => onChange(input.checked));
+    const span = document.createElement('span');
+    span.textContent = label;
+    row.append(input, span);
+    box.appendChild(row);
+    return input;
+  };
+  check(`ถอดล้อออก (ยาง ล้อแม็ก จานเบรก คาลิปเปอร์)`, true, (on) => {
+    m.pieces.forEach((p, i) => { if (p.wheel) m.removed[i] = on ? 1 : 0; });
+    showModelPreview();
+  }, 'เกมใส่ล้อของมันเอง ล้อในโมเดลต้องเอาออก');
+  check('ซ่อนชิ้นที่ถอดออก (ดูรถตอนไม่มีล้อ)', srcModel.hideRemoved, (on) => { srcModel.hideRemoved = on; if (srcModel.preview) srcModel.preview.children[1].visible = !on; });
+  check('คลิกบนรถเพื่อถอด / ใส่ชิ้นนั้นคืน', srcModel.pick, (on) => { srcModel.pick = on; }, 'คลิกชิ้นสีชมพูเพื่อใส่คืน คลิกชิ้นอื่นเพื่อถอดออก (หมุนกล้องได้ตามปกติ)');
+
+  const btns = document.createElement('div');
+  btns.className = 'btns';
+  const flip = document.createElement('button');
+  flip.textContent = '↻ หันหน้ารถกลับ';
+  flip.title = 'หน้ารถต้องอยู่ทางลูกศรสีเขียว';
+  flip.addEventListener('click', () => { turnAround(m); showModelPreview(); });
+  const back = document.createElement('button');
+  back.textContent = '👁 ดูโมเดลต้นฉบับ';
+  back.addEventListener('click', showModelPreview);
+  btns.append(flip, back);
+  box.appendChild(btns);
+  const hint = document.createElement('p');
+  hint.className = 'hint';
+  hint.textContent = 'ลูกศรสีเขียว = หน้ารถ · สีชมพู = ไม่ใส่ในเกม · สีอื่นตามประเภทวัสดุด้านล่าง';
+  box.appendChild(hint);
+
+  // Material categories.
+  const det = document.createElement('details');
+  const sum = document.createElement('summary');
+  sum.textContent = `วัสดุในโมเดล (${m.materials.filter((x) => x.tris).length}) — เลือกว่าเป็นส่วนไหนของรถ`;
+  det.appendChild(sum);
+  const names = m.materials.filter((x) => x.tris).map((x) => x.name);
+  let pre = names.length > 1 ? names[0] : '';
+  for (const n of names) while (pre && !n.startsWith(pre)) pre = pre.slice(0, -1);
+  for (const mat of [...m.materials].filter((x) => x.tris).sort((a, b) => b.tris - a.tris)) {
+    const row = document.createElement('label');
+    row.className = 'row row-select mat-row';
+    const sw = document.createElement('i');
+    sw.className = 'swatch';
+    const span = document.createElement('span');
+    span.textContent = `${mat.name.slice(pre.length) || mat.name} (${mat.tris.toLocaleString()})`;
+    span.title = mat.name;
+    const sel = document.createElement('select');
+    for (const [v, l] of CATEGORIES) { const o = document.createElement('option'); o.value = v; o.textContent = l; sel.appendChild(o); }
+    sel.value = srcModel.categories.get(mat.name) || mat.category;
+    sw.style.background = sel.value === 'skip' ? '#ff2bd6' : CAT_COLORS[sel.value] || '#3c3f45';
+    sel.addEventListener('change', () => {
+      srcModel.categories.set(mat.name, sel.value);
+      sw.style.background = sel.value === 'skip' ? '#ff2bd6' : CAT_COLORS[sel.value] || '#3c3f45';
+      showModelPreview();
+    });
+    row.append(sw, span, sel);
+    det.appendChild(row);
+  }
+  box.appendChild(det);
+
+  // Output.
+  const sub = document.createElement('div');
+  sub.className = 'edit-sub';
+  sub.textContent = 'แปลงเป็นรถ RayCity';
+  box.appendChild(sub);
+  const nameRow = document.createElement('label');
+  nameRow.className = 'row';
+  nameRow.innerHTML = '<span>ชื่อรถ (ชื่อไฟล์ .jmd)</span>';
+  const ni = document.createElement('input');
+  ni.type = 'text';
+  ni.value = `rc_${(srcModel.file?.name || 'car').replace(/\.[^.]+$/, '').replace(/[^a-z0-9]+/gi, '_').toLowerCase().replace(/^_|_$/g, '').slice(0, 20)}`;
+  ni.addEventListener('change', () => { ni.value = ni.value.trim().replace(/[^a-z0-9_]/gi, '_').toLowerCase() || 'rc_car'; });
+  nameRow.appendChild(ni);
+  box.appendChild(nameRow);
+  const capSel = pickerRow('จุดสูงสุดต่อไฟล์', [['2000', '2,000 (เท่ารถในเกม)'], ['3000', '3,000'], ['3500', '3,500 (แนะนำ)']], '3500', () => {});
+  const voxSel = pickerRow('ความละเอียดผิว', [['0.01', '1.0 ซม. (ละเอียด ช้า)'], ['0.015', '1.5 ซม. (ปกติ)'], ['0.02', '2.0 ซม. (เร็ว)']], '0.015', () => {});
+  box.append(capSel, voxSel);
+  const go = document.createElement('button');
+  go.className = 'accent';
+  go.textContent = '⚙ สร้างรถ RayCity จากโมเดลนี้';
+  const log = document.createElement('pre');
+  log.id = 'model-build-log';
+  log.className = 'hint';
+  go.addEventListener('click', async () => {
+    go.disabled = true;
+    log.textContent = '';
+    const say = (t) => { log.textContent += `${t}\n`; };
+    try {
+      const name = ni.value || 'rc_car';
+      const out = await convert(m, {
+        name, template: await modelTemplate(), categories: srcModel.categories,
+        maxVerts: Number(capSel.querySelector('select').value), voxel: Number(voxSel.querySelector('select').value), log: say,
+      });
+      say('เปิดรถที่ได้ ตรวจดูแล้วกด "ดาวน์โหลดรถคันนี้ทั้งโฟลเดอร์" ได้เลย');
+      await openCarFolder([...out].map(([rel, bytes]) => ({ path: `${name}/${rel}`, file: new File([bytes], rel.split('/').pop()) })));
+    } catch (e) {
+      console.error(e);
+      say(`ผิดพลาด: ${e.message}`);
+    }
+    go.disabled = false;
+  });
+  const goRow = document.createElement('div');
+  goRow.className = 'btns';
+  goRow.appendChild(go);
+  box.append(goRow, log);
+}
+
+// Click a piece (pick mode): removed ↔ kept.
+{
+  let down = null;
+  renderer.domElement.addEventListener('pointerdown', (e) => { down = [e.clientX, e.clientY]; });
+  renderer.domElement.addEventListener('pointerup', (e) => {
+    if (!down || !srcModel.pick || imported !== srcModel.preview || !srcModel.preview) return;
+    if (Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4) return;
+    const r = renderer.domElement.getBoundingClientRect();
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), camera);
+    const hits = ray.intersectObjects(srcModel.preview.children.filter((o) => o.isMesh && o.visible), false);
+    if (!hits.length) return;
+    const h = hits[0];
+    const m = srcModel.model;
+    const piece = m.C[h.object.userData.tris[h.faceIndex]];
+    m.removed[piece] = m.removed[piece] ? 0 : 1;
+    showModelPreview();
+  });
+}
+
+function bindModelButtons() {
+  const input = document.getElementById('file-model');
+  document.getElementById('btn-model-open').addEventListener('click', () => input.click());
+  input.addEventListener('change', async (e) => { if (e.target.files[0]) await openModelFile(e.target.files[0]); e.target.value = ''; });
+}
+
 // --- Loop --------------------------------------------------------------------
 function resize() {
   const w = viewport.clientWidth;
@@ -1126,6 +1395,7 @@ buildUI();
 buildPresetBar();
 bindButtons();
 bindOmButtons();
+bindModelButtons();
 bindSpecButtons();
 syncUI();
 rebuild();
@@ -1133,4 +1403,4 @@ resize();
 tick();
 
 // Handy for scripting / automated tests.
-window.carGenerator = { setParams, getParams: () => ({ ...params }), exportGLB, exportOBJ, randomParams, openOmFiles, openCarFolder };
+window.carGenerator = { setParams, getParams: () => ({ ...params }), exportGLB, exportOBJ, randomParams, openOmFiles, openCarFolder, openModelFile, srcModel };

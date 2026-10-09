@@ -16,7 +16,7 @@ import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MeshoptSimplifier } from 'meshoptimizer';
 import { buildHull } from '../tools/hull.mjs';
-import { makeReference, materialAt } from '../tools/bake.mjs';
+import { makeReference, materialAt, transferNormals } from '../tools/bake.mjs';
 import { parseOM, writeOM, matchTemplateSubmeshes, omParts } from './om.js';
 import { encodeSpec, decodeSpec } from './carSpec.js';
 import { fitParts } from './carEdit.js';
@@ -438,6 +438,48 @@ function smoothNormals(parts) {
   }
 }
 
+// The simplified shell's points moved onto the model's own surface (the closest point within a few
+// centimetres, on paint and glass where that surface faces the same way), so the voxel ripples and the shrink of
+// simplification go away. Every copy of a point (parts, seams) moves the same way.
+const SMOOTH_SURFACE = new Set(['Body_Color', 'Glass_Gray', 'Wing']);
+function snapToSource(ref, parts, reach = 0.035) {
+  const target = {};
+  const moved = new Map();
+  const tri = new THREE.Triangle(); const A = new THREE.Vector3(); const B = new THREE.Vector3(); const C = new THREE.Vector3();
+  const q = new THREE.Vector3();
+  // Average normal per position over all copies (for the facing test).
+  const key = (P, v) => `${Math.round(P[v * 3] * 1e4)},${Math.round(P[v * 3 + 1] * 1e4)},${Math.round(P[v * 3 + 2] * 1e4)}`;
+  const nAt = new Map();
+  for (const part of parts) for (let v = 0; v < part.positions.length / 3; v++) {
+    const k = key(part.positions, v);
+    const s = nAt.get(k) || [0, 0, 0];
+    for (let j = 0; j < 3; j++) s[j] += part.normals[v * 3 + j];
+    nAt.set(k, s);
+  }
+  for (const part of parts) {
+    const P = part.positions;
+    for (let v = 0; v < P.length / 3; v++) {
+      const k = key(P, v);
+      let to = moved.get(k);
+      if (to === undefined) {
+        to = null;
+        q.set(P[v * 3], P[v * 3 + 1], P[v * 3 + 2]);
+        const hit = ref.bvh.closestPointToPoint(q, target, 0, reach);
+        if (hit && hit.distance <= reach) {
+          const st = ref.tris[hit.faceIndex];
+          if (!SMOOTH_SURFACE.has(st.mat)) { moved.set(k, null); continue; } // grilles, vents: keep the shell
+          A.fromArray(st.a); B.fromArray(st.b); C.fromArray(st.c);
+          const fn = tri.set(A, B, C).getNormal(new THREE.Vector3());
+          const n = norm(nAt.get(k));
+          if (Math.abs(fn.x * n[0] + fn.y * n[1] + fn.z * n[2]) > 0.5) to = [hit.point.x, hit.point.y, hit.point.z];
+        }
+        moved.set(k, to);
+      }
+      if (to) { P[v * 3] = to[0]; P[v * 3 + 1] = to[1]; P[v * 3 + 2] = to[2]; }
+    }
+  }
+}
+
 // Clean index list: no degenerate or duplicate triangles.
 function dedupe(raw) {
   const seen = new Set();
@@ -749,7 +791,7 @@ function renderIcon(bytes) {
 // ---------------------------------------------------------------------------------------------
 // The whole conversion. template: { name, files: Map(rel → Uint8Array) }. Returns Map(rel → Uint8Array).
 
-export async function convert(model, { name, template, categories = new Map(), maxVerts = 3500, voxel = 0.015, raw = false, log = () => {} }) {
+export async function convert(model, { name, template, categories = new Map(), maxVerts = 3500, voxel = 0.015, raw = false, smooth = true, log = () => {} }) {
   await MeshoptSimplifier.ready;
   const tpl = template.files;
   const tplName = template.name;
@@ -772,6 +814,13 @@ export async function convert(model, { name, template, categories = new Map(), m
     await tick();
     // Every part file as detailed as the cap allows.
     lod = await fitShell(hull, ref, m, maxVerts, log);
+    if (smooth) {
+      log('ปรับผิวให้เนียน: วางจุดบนผิวจริงของโมเดล + ใช้เงาผิวจากโมเดลเดิม…');
+      await tick();
+      const all = Object.values(lod).flat();
+      snapToSource(ref, all);
+      transferNormals(ref, all);
+    }
   }
   smoothNormals(Object.values(lod).flat());
 

@@ -875,7 +875,7 @@ async function exportCar() {
     for (const [slot, p] of Object.entries(parts)) if (partVerts(p) > 65000) throw new Error(`${slot} ใหญ่เกินที่ไฟล์ .0m เก็บได้ (${partVerts(p).toLocaleString()} จุด)`);
     smoothNormals(Object.values(parts).flat());
     const bb = mesh.bbox();
-    const out = await writeCar(parts, { name, template: await template(), bounds: [bb.min, bb.max], log: (t) => { log.textContent = t; } });
+    const out = await writeCar(parts, { name, template: await template(), bounds: [bb.min, bb.max], paintAll: $('opt-paintall').checked, log: (t) => { log.textContent = t; } });
     log.textContent = 'บีบอัด .zip…';
     await tick();
     const files = [...out].sort((a, b) => a[0].localeCompare(b[0])).map(([rel, data]) => ({ path: `${name}/${rel}`, data }));

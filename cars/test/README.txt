@@ -39,3 +39,8 @@ hood / roof / spoiler list.xml names a texture that does not exist on purpose (t
 like the body); our transparent stand-ins there were drawn instead. Builds now write only the template's own
 textures; 27, 29-32 had those 14 extra files removed.
 34_canyon_paint_parts.zip  33 without the extra part textures (file set = gtv98's)
+In game 34: repaints (blue), but black areas stay black, wheels off, car too wide (2.30 m; gtv98 1.78).
+35_canyon_narrow_wheels_paintall.zip  34 × 0.78 in width, moved 11 cm back so its arches (-1.34 / +1.04)
+                         sit on the game's wheels (-1.23 / +1.15), mask: every zone paint except glass/lamps
+36_canyon_all_in_body.zip  35 with every part's stock geometry merged into the body (4,989 verts), parts
+                         left as stand-ins: in case the separate part files don't take the paint

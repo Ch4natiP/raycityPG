@@ -914,6 +914,8 @@ async function openEmbeddedCar(name) {
 
 // Test packs (../cars/test/*.zip, embedded at build time): one download button each.
 const TEST_PACK_INFO = {
+  '36_canyon_all_in_body.zip': ['ชุด 36: canyon ทุกชิ้นรวมในตัวถัง (ทาสีได้แน่นอน)', 'เหมือนชุด 35 แต่ฝากระโปรง กันชน ฯลฯ ย้ายมาอยู่ในไฟล์ตัวถัง (4,989 จุด) เผื่อชิ้นแยกยังไม่รับสี'],
+  '35_canyon_narrow_wheels_paintall.zip': ['ชุด 35: canyon แคบลง + ซุ้มล้อตรงล้อเกม + เปลี่ยนสีได้ทั้งคัน ⭐', 'กว้าง 2.30 → 1.80 ม. · เลื่อนตัวรถ 11 ซม. ให้ซุ้มล้อตรงล้อเกม · ทุกส่วนเปลี่ยนสีได้ยกเว้นกระจกและไฟ'],
   '34_canyon_paint_parts.zip': ['ชุด 34: canyon · ฝากระโปรง/หลังคาได้สีรถแล้ว ⭐', 'ต่อจากชุด 33: ลบรูปชิ้นส่วนที่ gtv98 ไม่มี (ฝากระโปรงเคยเป็นน้ำตาล หลังคาดำ) · ไฟล์เหมือน gtv98 ทุกไฟล์'],
   '33_canyon_fixed.zip': ['ชุด 33: canyon (ที่คุณส่งมา) ซ่อมแล้ว ⭐', 'เปลี่ยนชื่อไฟล์ข้างในจาก rc_phoenix445 เป็น canyon ให้ตรงโฟลเดอร์ + แก้ UV แบน (สีเทาโปร่ง) · ไฟล์ครบเหมือน gtv98'],
   '32_phoenix445_fixed_uv.zip': ['ชุด 32: rc_phoenix445 ของคุณ แก้สีเทาโปร่ง/เปลี่ยนสีไม่ได้ ⭐', 'กระจาย UV ให้ทุกสามเหลี่ยม (เดิมแบน 100%) + มาสก์ช่องใหญ่ · ชื่อ rc_phoenix445 เดิม · ทรงเหมือนเดิม'],
@@ -1440,7 +1442,10 @@ function buildModelPanel() {
   });
   capHint.textContent = CAP_HINTS[3500];
   const voxSel = pickerRow('ความละเอียดผิว', [['0.01', '1.0 ซม. (ละเอียด ช้า)'], ['0.015', '1.5 ซม. (ปกติ)'], ['0.02', '2.0 ซม. (เร็ว)']], '0.015', () => {});
-  box.append(capSel, capHint, modeSel, modeHint, hideRow, voxSel);
+  const paintRow = document.createElement('label');
+  paintRow.className = 'row row-check';
+  paintRow.innerHTML = '<input type="checkbox" checked><span>เปลี่ยนสีได้ทั้งคัน (ยกเว้นกระจก ไฟ) · ไม่ติ๊ก = เปลี่ยนสีได้เฉพาะส่วนที่เป็นสีรถในโมเดล ที่เหลือดำ</span>';
+  box.append(capSel, capHint, modeSel, modeHint, hideRow, voxSel, paintRow);
   const go = document.createElement('button');
   go.className = 'accent';
   go.textContent = '⚙ สร้างรถ RayCity จากโมเดลนี้';
@@ -1458,7 +1463,7 @@ function buildModelPanel() {
         : await convert(m, {
         name, template: await modelTemplate(), categories: srcModel.categories,
         maxVerts: Number(capSel.querySelector('select').value), voxel: Number(voxSel.querySelector('select').value),
-        raw: modeSel.querySelector('select').value === 'raw', hideInterior: hideRow.querySelector('input').checked, log: say,
+        raw: modeSel.querySelector('select').value === 'raw', hideInterior: hideRow.querySelector('input').checked, paintAll: paintRow.querySelector('input').checked, log: say,
       });
       say('เปิดรถที่ได้ ตรวจดูแล้วกด "ดาวน์โหลดรถคันนี้ทั้งโฟลเดอร์" ได้เลย');
       const entries = [...out].map(([rel, bytes]) => ({ path: `${name}/${rel}`, file: new File([bytes], rel.split('/').pop()) }));

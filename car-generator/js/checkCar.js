@@ -194,7 +194,7 @@ const flatShare = (om) => {
 // Repairs what can be repaired without touching the shape: the inner name made the folder's name
 // (file names and list.xml), and flat UVs (built before the fix) spread inside their paint-mask
 // zones with a new mask. Returns { files, fixes: [text] }.
-export async function repairCar(files, name, template = null) {
+export async function repairCar(files, name, template = null, paintAll = true) {
   const fixes = [];
   let out = new Map(files);
   const inner = innerName(out);
@@ -235,7 +235,7 @@ export async function repairCar(files, name, template = null) {
     const maskRel = `${name}_base.png`;
     let w = 1024; let h = 1024;
     if (out.has(maskRel)) { const bmp = await createImageBitmap(new Blob([out.get(maskRel)], { type: 'image/png' })); w = bmp.width; h = bmp.height; }
-    const px = maskPixels(w, h);
+    const px = maskPixels(w, h, paintAll);
     out.set(maskRel, await png(px, w, h));
     out.set(`${name}_base_s.dds`, dds(px, w, h, 'full'));
     fixes.push('กระจาย UV ที่แบนให้ทุกสามเหลี่ยม + มาสก์สีแบบช่องใหญ่ (แก้รถสีดำ/เทาโปร่ง เปลี่ยนสีไม่ได้)');

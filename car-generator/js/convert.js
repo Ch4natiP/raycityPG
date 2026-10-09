@@ -94,12 +94,16 @@ export function zoneUVs(mat, P, N) {
   return uv;
 }
 // The paint mask pixels (w × h RGBA).
-export function maskPixels(w, h) {
+// paintAll: every zone takes the garage colour except glass, lamps and the cabin (the car repainted
+// whole in game); otherwise only the model's own paint.
+const NOT_PAINT = new Set(['Glass_Gray', 'Projector_Glass', 'Taillight_Glass', 'Turn_Signal_LED', 'Interior_dark']);
+export function maskPixels(w, h, paintAll = false) {
   const px = new Uint8ClampedArray(w * h * 4);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const mat = ZONES[Math.floor((x / w) * 16)];
-      px.set([isPaint(mat) ? 255 : 0, 0, 0, 255], (y * w + x) * 4);
+      const paint = paintAll ? !NOT_PAINT.has(mat) : isPaint(mat);
+      px.set([paint ? 255 : 0, 0, 0, 255], (y * w + x) * 4);
     }
   }
   return px;
@@ -859,7 +863,7 @@ function renderIcon(bytes) {
 // ---------------------------------------------------------------------------------------------
 // The whole conversion. template: { name, files: Map(rel → Uint8Array) }. Returns Map(rel → Uint8Array).
 
-export async function convert(model, { name, template, categories = new Map(), maxVerts = 3500, voxel = 0.015, raw = false, smooth = true, hideInterior = true, log = () => {} }) {
+export async function convert(model, { name, template, categories = new Map(), maxVerts = 3500, voxel = 0.015, raw = false, smooth = true, hideInterior = true, paintAll = true, log = () => {} }) {
   await MeshoptSimplifier.ready;
   log('อ่านโมเดล…');
   const src = collect(model, categories);
@@ -891,13 +895,13 @@ export async function convert(model, { name, template, categories = new Map(), m
   }
   smoothNormals(Object.values(lod).flat());
   const bounds = [[0, 1, 2].map((k) => m.bodyBounds(k, Math.min)), [0, 1, 2].map((k) => m.bodyBounds(k, Math.max))];
-  return writeCar(lod, { name, template, bounds, log });
+  return writeCar(lod, { name, template, bounds, paintAll, log });
 }
 
 // A car folder in the template's layout from finished geometry. lod: { slot ('body', 'hood', ...):
 // [parts with positions, normals, uvs, indices] }; bounds: [min, max] of the body (mesh.xml).
 // Returns Map(rel → Uint8Array).
-export async function writeCar(lod, { name, template, bounds, log = () => {} }) {
+export async function writeCar(lod, { name, template, bounds, paintAll = true, log = () => {} }) {
   const tpl = template.files;
   const tplName = template.name;
   for (const parts of Object.values(lod)) for (const p of parts) if (ZONES.includes(p.name)) p.uvs = zoneUVs(p.name, p.positions, p.normals);
@@ -948,7 +952,7 @@ export async function writeCar(lod, { name, template, bounds, log = () => {} }) 
   // Paint mask (zone columns) and the transparent body detail layer.
   {
     const [w, h] = pngSize(tpl.get(`${tplName}_base.png`), [512, 512]);
-    const px = maskPixels(w, h);
+    const px = maskPixels(w, h, paintAll);
     out.set(`${name}_base.png`, await png(px, w, h));
     out.set(`${name}_base_s.dds`, dds(px, w, h, 'full'));
     const [cw2, ch2] = pngSize(tpl.get(`${tplName}_color.png`), [128, 64]);
@@ -1136,7 +1140,7 @@ export { omParts, creaseNormals, smoothNormals, cellUV, CELLS, ZONES, merge, dds
 // the new one was registered from), so the model is scaled and moved until its wheels sit there.
 // gtv98 measured from its wheel arches: axles at y −1.23 / +1.15, wheel radius 0.27 (its spec's
 // MS_TractionRadius), wheels ±0.68 from the middle.
-export const GAME_WHEELS = { gtv98: { front: -1.23, rear: 1.15, radius: 0.27, track: 0.68 } };
+export const GAME_WHEELS = { gtv98: { front: -1.23, rear: 1.15, radius: 0.27, track: 0.68, maxWidth: 1.85 } };
 
 // mode 'uniform': one scale for the whole car (shape kept), the axles land exactly, then the car moves
 // up/down so the wheel centres match. 'stretch': length, width and height scaled separately so the
@@ -1151,7 +1155,12 @@ export function fitToWheels(model, game, mode = 'uniform') {
   const mrad = avg(o.wheels, (w) => w.r); const mtrack = avg(o.wheels, (w) => Math.abs(w.p[0]));
   const mmid = (mf + mr) / 2; const gmid = (game.front + game.rear) / 2;
   const sy = (game.rear - game.front) / (mr - mf);
-  const [sx, sz, dz] = mode === 'stretch' ? [game.track / mtrack, game.radius / mrad, 0] : [sy, sy, game.radius - sy * mrad];
+  let [sx, sz, dz] = mode === 'stretch' ? [game.track / mtrack, game.radius / mrad, 0] : [sy, sy, game.radius - sy * mrad];
+  // Never wider than maxWidth: the game's wheels sit only `track` from the middle, a wide body
+  // swallows them (a 2.30 m car looked far too wide in game).
+  let x0 = Infinity; let x1 = -Infinity;
+  for (let i = 0; i < o.P.length; i += 3) { x0 = Math.min(x0, o.P[i]); x1 = Math.max(x1, o.P[i]); }
+  if (game.maxWidth && (x1 - x0) * sx > game.maxWidth) sx = game.maxWidth / (x1 - x0);
   const map = (p) => [p[0] * sx, (p[1] - mmid) * sy + gmid, p[2] * sz + dz];
   for (let i = 0; i < model.P.length; i += 3) model.P.set(map([o.P[i], o.P[i + 1], o.P[i + 2]]), i);
   for (let i = 0; i < model.N.length; i += 3) {
@@ -1162,7 +1171,8 @@ export function fitToWheels(model, game, mode = 'uniform') {
   model.pieces.forEach((p, k) => { const a = map(o.pieces[k].min); const b = map(o.pieces[k].max); p.min = a.map((v, j) => Math.min(v, b[j])); p.max = a.map((v, j) => Math.max(v, b[j])); });
   model.fit = { game, mode };
   const pct = (v) => `${Math.round(v * 100)}%`;
-  return mode === 'stretch' ? `ยาว ×${pct(sy)} กว้าง ×${pct(sx)} สูง ×${pct(sz)}` : `ย่อ/ขยายทั้งคัน ×${pct(sy)}${Math.abs(dz) > 0.005 ? ` · ${dz > 0 ? 'ยก' : 'ลด'}ตัวรถ ${Math.abs(dz * 100).toFixed(0)} ซม.` : ''}`;
+  const w = `กว้าง ${((x1 - x0) * sx).toFixed(2)} ม.`;
+  return mode === 'stretch' ? `ยาว ×${pct(sy)} กว้าง ×${pct(sx)} สูง ×${pct(sz)} · ${w}` : `ย่อ/ขยายทั้งคัน ×${pct(sy)}${sx !== sy ? ` (ความกว้าง ×${pct(sx)})` : ''}${Math.abs(dz) > 0.005 ? ` · ${dz > 0 ? 'ยก' : 'ลด'}ตัวรถ ${Math.abs(dz * 100).toFixed(0)} ซม.` : ''} · ${w}`;
 }
 
 // Back to the model's own size.

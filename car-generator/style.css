@@ -134,3 +134,7 @@ details[open] summary { border-bottom: 1px solid var(--line); }
 #car-edit .edit-sub { margin: 10px 0 4px; font-size: 12px; font-weight: 600; color: var(--accent-2); }
 #car-edit input[type="text"] { width: 100%; }
 #edit-stats { white-space: pre; font-family: ui-monospace, monospace; font-size: 11px; }
+
+.test-pack { margin: 6px 0; }
+.test-pack button { width: 100%; text-align: left; }
+.test-pack .hint { margin: 2px 0 0; }

@@ -19,9 +19,9 @@ let html = fs.readFileSync('index.html', 'utf8');
 html = html
   .replace(/\s*<script type="importmap">[\s\S]*?<\/script>/, '')
   .replace('<link rel="stylesheet" href="style.css">', () => `<style>\n${css}</style>`)
-  .replace('<script type="module" src="js/main.js"></script>', () => `<script>${embedCars()}</script>\n<script>${js}</script>`);
+  .replace('<script type="module" src="js/main.js"></script>', () => `<script>${embedCars()}\n${embedTests()}</script>\n<script>${js}</script>`);
 fs.writeFileSync('RayCity-Car-Generator.html', html);
-fs.writeFileSync('js/embedded-cars.js', `${embedCars()}\n`); // same data for the dev page (index.html)
+fs.writeFileSync('js/embedded-cars.js', `${embedCars()}\n${embedTests()}\n`); // same data for the dev page (index.html)
 console.log(`RayCity-Car-Generator.html: ${(html.length / 1024).toFixed(0)} KB`);
 
 // Built cars in ../cars/<name>/ are embedded whole (every file, so the page can open them with one
@@ -47,4 +47,16 @@ function embedCars() {
     }
   }
   return `window.RC_EMBEDDED_CARS = ${JSON.stringify(cars)};`;
+}
+
+// Test packs in ../cars/test/*.zip: downloadable from the page as they are (base64), in name order.
+function embedTests() {
+  const dir = path.resolve('../cars/test');
+  const packs = [];
+  if (fs.existsSync(dir)) {
+    for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.zip')).sort()) {
+      packs.push({ file: f, data: fs.readFileSync(path.join(dir, f)).toString('base64') });
+    }
+  }
+  return `window.RC_TEST_PACKS = ${JSON.stringify(packs)};`;
 }

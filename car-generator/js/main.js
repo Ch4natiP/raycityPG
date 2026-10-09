@@ -901,6 +901,37 @@ async function openEmbeddedCar(name) {
   await openCarFolder(entries);
 }
 
+// Test packs (../cars/test/*.zip, embedded at build time): one download button each.
+const TEST_PACK_INFO = {
+  'OK_gtv98_as_rc_canyon.zip': ['ชุดฐาน (ใช้ได้แล้ว)', 'gtv98 ของเกมเปลี่ยนชื่อเป็น rc_canyon ไม่มีไฟล์ของเราเลย ใช้สลับกลับเมื่อต้องการ'],
+  '1_all_meshes.zip': ['ชุด 1: โมเดลทั้งหมดของเรา', 'ทรงกะบะทุกชิ้น + ภาพของ gtv98 (สีจะดูแปลก ไม่เป็นไร) · เด้ง = ปัญหาที่ไฟล์โมเดล'],
+  '2_body_mesh_only.zip': ['ชุด 2: เฉพาะตัวถัง', 'เปลี่ยนแค่ body_0/1/2.0m · เด้ง = ปัญหาที่ตัวถัง (ลองเมื่อชุด 1 เด้ง)'],
+  '3_images_only.zip': ['ชุด 3: ภาพทั้งหมดของเรา', 'ทรง gtv98 + ภาพ/ไอคอนของเรา · เด้ง = ปัญหาที่ไฟล์ภาพ'],
+  '4_meshxml_only.zip': ['ชุด 4: เฉพาะกล่องชน', 'เปลี่ยนแค่ mesh.xml · เด้ง = ปัญหาที่กล่องชน'],
+};
+function bindTestPacks() {
+  const box = document.getElementById('test-packs');
+  const packs = window.RC_TEST_PACKS || [];
+  document.getElementById('test-packs-box').hidden = !packs.length;
+  for (const { file, data } of packs) {
+    const [title, desc] = TEST_PACK_INFO[file] || [file, ''];
+    const row = document.createElement('div');
+    row.className = 'test-pack';
+    const b = document.createElement('button');
+    b.textContent = `⬇ ${title}`;
+    b.title = file;
+    b.addEventListener('click', () => {
+      const bin = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+      download(new Blob([bin], { type: 'application/zip' }), file);
+    });
+    const p = document.createElement('p');
+    p.className = 'hint';
+    p.textContent = desc;
+    row.append(b, p);
+    box.appendChild(row);
+  }
+}
+
 function bindEmbeddedCars() {
   const box = document.getElementById('embedded-cars');
   for (const name of Object.keys(window.RC_EMBEDDED_CARS || {})) {
@@ -915,6 +946,7 @@ function bindEmbeddedCars() {
 
 function bindOmButtons() {
   bindEmbeddedCars();
+  bindTestPacks();
   const dirInput = document.getElementById('file-om-dir');
   document.getElementById('btn-om-folder').addEventListener('click', () => dirInput.click());
   dirInput.addEventListener('change', async (e) => {

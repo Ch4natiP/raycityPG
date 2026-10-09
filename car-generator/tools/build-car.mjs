@@ -47,6 +47,9 @@ const SAME_LODS = BAKE && opt('--same-lods', '1') === '1';
 // game lights per vertex, so the source's small details in the normals show up as dark triangles.
 // --normals source: take the source surface's normals (looks finer in a per-pixel viewer).
 const NORMALS = opt('--normals', 'smooth');
+// --crease N: shell normals stay smooth only across edges under N degrees. Low values (~25) give flat,
+// evenly lit facets: the game lights per vertex, and big smooth triangles show up as dark patches.
+const CREASE = Number(opt('--crease', NORMALS === 'flat' ? '25' : '70'));
 const KEEP_LOGOS = flag('--keep-logos') || RAW || BAKE;
 // --max-verts N: hard cap of vertices per .0m file (the game's own files stay under ~2,000).
 const MAX_VERTS = Math.min(65000, Number(opt('--max-verts', BAKE ? '2000' : '65000')));
@@ -1088,7 +1091,7 @@ if (BAKE) {
     for (const [slot, g] of groups) {
       out[slot] = [];
       for (const [mat, list] of g) {
-        const nm = withNormals(P, new Uint32Array(list), 70);
+        const nm = withNormals(P, new Uint32Array(list), CREASE);
         const [u, v] = STRIP.uv(STRIP_COLORS[mat] ? mat : 'plastic_gray');
         out[slot].push({ name: mat, kind: 0, ...nm, uvs: new Float32Array((nm.positions.length / 3) * 2).map((_, i) => (i % 2 ? v : u)) });
       }
@@ -1265,7 +1268,7 @@ if (BAKE) {
   const jobs = pending.filter(([dir]) => dir !== 'mainspoiler');
   const parts = jobs.flatMap(([, , , byLod]) => byLod[2]);
   if (NORMALS === 'source') transferNormals(REFM, parts);
-  else smoothNormals(parts);
+  else if (NORMALS !== 'flat') smoothNormals(parts);
   const ppm = unwrapParts(parts, ATLAS, Math.ceil(ATLAS / 32) + 2);
   console.log(`  mask ${ATLAS}×${ATLAS}: ${(1000 / ppm).toFixed(1)} mm per texel`);
   const over = bakeAtlas(REFM, parts, ATLAS);

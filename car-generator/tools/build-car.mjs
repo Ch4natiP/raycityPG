@@ -50,6 +50,10 @@ const NORMALS = opt('--normals', 'smooth');
 // --crease N: shell normals stay smooth only across edges under N degrees. Low values (~25) give flat,
 // evenly lit facets: the game lights per vertex, and big smooth triangles show up as dark patches.
 const CREASE = Number(opt('--crease', NORMALS === 'flat' ? '25' : '70'));
+// --colors palette (default): every triangle gets one flat mask cell for its material (paint = red,
+// the rest black), like the original cars, whose masks are flat blocks: the game reads the mask per
+// vertex, so baked detail turns into dark triangle patches in game. --colors bake: the baked mask.
+const COLORS = opt('--colors', 'palette');
 const KEEP_LOGOS = flag('--keep-logos') || RAW || BAKE;
 // --max-verts N: hard cap of vertices per .0m file (the game's own files stay under ~2,000).
 const MAX_VERTS = Math.min(65000, Number(opt('--max-verts', BAKE ? '2000' : '65000')));
@@ -1074,18 +1078,54 @@ if (BAKE) {
     }
     const idx = Uint32Array.from(keepT);
     const P = hull.pos;
-    const groups = new Map(); // slot → mat → [indices]
-    for (let t = 0; t < idx.length; t += 3) {
-      const v = [idx[t], idx[t + 1], idx[t + 2]].map((i) => [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]);
+    const nt = idx.length / 3;
+    const isPaint = (m) => m === 'Body_Color';
+    // Material per triangle: majority of the centroid and three points towards the corners.
+    const mats = new Array(nt);
+    const info = new Array(nt);
+    for (let t = 0; t < nt; t++) {
+      const v = [idx[t * 3], idx[t * 3 + 1], idx[t * 3 + 2]].map((i) => [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]);
       const c0 = [0, 1, 2].map((k) => (v[0][k] + v[1][k] + v[2][k]) / 3);
       const n = norm(cross(sub(v[1], v[0]), sub(v[2], v[0])));
-      const mat = materialAt(REFM, c0, n) || 'Underbody';
+      const votes = new Map();
+      for (const w of [[1 / 3, 1 / 3, 1 / 3], [0.6, 0.2, 0.2], [0.2, 0.6, 0.2], [0.2, 0.2, 0.6]]) {
+        const q = [0, 1, 2].map((k) => v[0][k] * w[0] + v[1][k] * w[1] + v[2][k] * w[2]);
+        const m = materialAt(REFM, q, n) || 'Underbody';
+        votes.set(m, (votes.get(m) || 0) + 1);
+      }
+      mats[t] = [...votes].sort((a, b) => b[1] - a[1])[0][0];
+      info[t] = { c0, n };
+    }
+    // Lone triangles: paint/dark islands of one triangle whose edge neighbours all agree take their color.
+    const edgeTris = new Map();
+    for (let t = 0; t < nt; t++) for (let e = 0; e < 3; e++) {
+      const a = idx[t * 3 + e]; const b = idx[t * 3 + ((e + 1) % 3)];
+      const k = a < b ? `${a},${b}` : `${b},${a}`;
+      if (!edgeTris.has(k)) edgeTris.set(k, []);
+      edgeTris.get(k).push(t);
+    }
+    for (let pass = 0; pass < 2; pass++) {
+      for (let t = 0; t < nt; t++) {
+        const nb = [];
+        for (let e = 0; e < 3; e++) {
+          const a = idx[t * 3 + e]; const b = idx[t * 3 + ((e + 1) % 3)];
+          for (const o of edgeTris.get(a < b ? `${a},${b}` : `${b},${a}`)) if (o !== t) nb.push(o);
+        }
+        if (nb.length < 2) continue;
+        const others = nb.filter((o) => isPaint(mats[o]) !== isPaint(mats[t]));
+        if (others.length === nb.length) mats[t] = mats[others[0]];
+      }
+    }
+    const groups = new Map(); // slot → mat → [indices]
+    for (let t = 0; t < nt; t++) {
+      const { c0, n } = info[t];
+      const mat = mats[t];
       // Lamps by where the source's lamps are (small lamps would otherwise go to the body).
       const slot = inBox(headBox, { c0 }, 0.02) ? 'headlight' : inBox(tailBox, { c0 }, 0.02) ? 'rearlight' : slotOf({ c0, n, mat });
       if (!groups.has(slot)) groups.set(slot, new Map());
       const g = groups.get(slot);
       if (!g.has(mat)) g.set(mat, []);
-      g.get(mat).push(idx[t], idx[t + 1], idx[t + 2]);
+      g.get(mat).push(idx[t * 3], idx[t * 3 + 1], idx[t * 3 + 2]);
     }
     const out = {};
     for (const [slot, g] of groups) {
@@ -1269,11 +1309,17 @@ if (BAKE) {
   const parts = jobs.flatMap(([, , , byLod]) => byLod[2]);
   if (NORMALS === 'source') transferNormals(REFM, parts);
   else if (NORMALS !== 'flat') smoothNormals(parts);
-  const ppm = unwrapParts(parts, ATLAS, Math.ceil(ATLAS / 32) + 2);
-  console.log(`  mask ${ATLAS}×${ATLAS}: ${(1000 / ppm).toFixed(1)} mm per texel`);
-  const over = bakeAtlas(REFM, parts, ATLAS);
   const mask = new Uint8ClampedArray(ATLAS * ATLAS * 4);
-  for (let i = 0; i < mask.length; i += 4) { mask[i] = 255 - over[i + 3]; mask[i + 3] = 255; }
+  if (COLORS === 'bake') {
+    const ppm = unwrapParts(parts, ATLAS, Math.ceil(ATLAS / 32) + 2);
+    console.log(`  mask ${ATLAS}×${ATLAS}: ${(1000 / ppm).toFixed(1)} mm per texel`);
+    const over = bakeAtlas(REFM, parts, ATLAS);
+    for (let i = 0; i < mask.length; i += 4) { mask[i] = 255 - over[i + 3]; mask[i + 3] = 255; }
+  } else {
+    // Parts keep their flat-cell UVs (one cell per material, set in buildLod).
+    for (let i = 0; i < mask.length; i += 4) { mask[i] = 255; mask[i + 3] = 255; }
+    console.log(`  mask ${ATLAS}×${ATLAS}: flat cells per material`);
+  }
   const cw = ATLAS / 32;
   STRIP.keys.forEach((k, i) => {
     const paint = STRIP_COLORS[k][3] === 0;

@@ -7,7 +7,7 @@ import { buildCar, disposeObject } from './carBuilder.js';
 import { parseOM, omToObject, writeOM, objectToParts, mergePartsByName } from './om.js';
 import { SPEC_TEMPLATE, SPEC_FIELDS, readSpec, writeSpec, encodeSpec, decodeSpec, suggestSpec } from './carSpec.js';
 import { makeZip } from './zip.js';
-import { IDENTITY, slotOfPath, bboxOf, editFile, editMeshXml, renamePath, countsOf, ready as editReady } from './carEdit.js';
+import { IDENTITY, slotOfPath, bboxOf, editFile, editFileInfo, editMeshXml, renamePath, countsOf, ready as editReady } from './carEdit.js';
 import { SCHEMA, PRESETS, presetParams, randomParams } from './params.js';
 
 const STORAGE_KEY = 'raycity-car-generator:params';
@@ -770,6 +770,12 @@ function buildEditPanel() {
   box.appendChild(sliderRow('ยาว ×', 0.7, 1.4, 0.01, car.scale[1], (v) => { car.scale[1] = v; queueReassemble(); }));
   box.appendChild(sliderRow('สูง ×', 0.7, 1.4, 0.01, car.scale[2], (v) => { car.scale[2] = v; queueReassemble(); }));
   box.appendChild(sliderRow('เก็บ poly ทั้งคัน %', 5, 100, 1, car.keep * 100, (v) => { car.keep = v / 100; queueReassemble(); }, (v) => `${v.toFixed(0)}%`));
+  box.appendChild(pickerRow('จุดสูงสุดต่อไฟล์', [['0', 'ไม่จำกัด'], ['2000', '2,000 (เท่ารถในเกม)'], ['3000', '3,000'], ['4000', '4,000'], ['1500', '1,500'], ['1000', '1,000']],
+    String(car.maxVerts || 0), (v) => { car.maxVerts = Number(v); queueReassemble(); }));
+  const capHint = document.createElement('p');
+  capHint.className = 'hint';
+  capHint.textContent = 'ลดเฉพาะไฟล์ที่เกิน ลดน้อยที่สุดเท่าที่ต้องลด รวมจุดซ้อนก่อน ล็อกขอบชิ้นและรอยต่อภาพ ไม่ให้รูปทรงเสีย · ชุดที่ 8,000+ จุดเด้งในเกม';
+  box.appendChild(capHint);
   // One part
   sub('ทีละชิ้น');
   const opts = folder.slots.map((sl) => [sl.dir, sl.dir || 'body (ตัวถัง)']);
@@ -804,15 +810,16 @@ function updateEditStats() {
   statsTimer = setTimeout(async () => {
     const el = document.getElementById('edit-stats');
     if (!el || !folder?.edits) return;
-    const lines = ['ชิ้น            จุด (LOD2)  สามเหลี่ยม'];
+    const lines = ['ชิ้น            จุด (LOD2)  สามเหลี่ยม  เพี้ยนสูงสุด'];
     for (const slot of folder.slots) {
       const v = slot.variants.find((x) => x.name === folder.choice.get(slot.dir)) || slot.variants[0];
       const rel = `${slot.dir ? `${slot.dir}/` : ''}${v.mesh}_2.0m`;
       if (!folder.files.has(rel)) continue;
       const raw = new Uint8Array(await folder.files.get(rel).arrayBuffer());
-      const out = editFile(raw, folder.edits.get(slot.dir), folder.car, folder.pivots.get(slot.dir) || [0, 0, 0], folder.carPivot) || raw;
-      const c = countsOf(out);
-      lines.push(`${(slot.dir || 'body').padEnd(15)} ${String(c.verts).padStart(6)}${c.verts > 2000 ? ' ⚠' : '  '}   ${String(c.tris).padStart(6)}`);
+      const info = editFileInfo(raw, folder.edits.get(slot.dir), folder.car, folder.pivots.get(slot.dir) || [0, 0, 0], folder.carPivot);
+      const c = countsOf(info ? info.bytes : raw);
+      const err = info && info.error ? `${(info.error * 1000).toFixed(0)} มม.` : '-';
+      lines.push(`${(slot.dir || 'body').padEnd(15)} ${String(c.verts).padStart(6)}${c.verts > 2000 ? ' ⚠' : '  '}   ${String(c.tris).padStart(6)}     ${err}`);
     }
     lines.push('⚠ = เกิน 2,000 จุด (รถในเกมไม่เกินนี้)');
     el.textContent = lines.join('\n');
@@ -905,9 +912,9 @@ async function openEmbeddedCar(name) {
 
 // Test packs (../cars/test/*.zip, embedded at build time): one download button each.
 const TEST_PACK_INFO = {
-  '21_more_poly_3800.zip': ['ชุด 21: ละเอียดขึ้น (ไม่เกิน 3,800 จุดต่อไฟล์)', 'สามเหลี่ยมเล็กลง แสงเนียนขึ้น · ใช้ทดสอบเพดานจุดไปด้วย (18/19 ที่ 8,000+ เด้ง)'],
-  '20_flat_shading.zip': ['ชุด 20: ผิวแบนแสงสม่ำเสมอ ⭐', 'แต่ละสามเหลี่ยมได้แสงเท่ากันทั้งแผ่น แก้ปื้นมืด · ดูเป็นเหลี่ยมเพชร · ไม่เกิน 2,000 จุด'],
-  '17_full_mask_textures.zip': ['ชุด 17: ✅ เข้าเกมได้ แต่มีปื้นมืด', 'เปลือกนอก ~3,000 สามเหลี่ยม รายละเอียดในภาพมาสก์สี'],
+  '22_flat_colors_3500.zip': ['ชุด 22: สีเรียบต่อสามเหลี่ยม แบบรถในเกม ⭐', 'ทุกสามเหลี่ยมใช้สีเดียว (สีรถ/ดำ) ไม่มีปื้นดำมั่ว · ไม่เกิน 3,500 จุดต่อไฟล์'],
+  '21_more_poly_3800.zip': ['ชุด 21: ✅ เข้าเกมได้ (3,631 จุด) แต่มีปื้นดำ', 'ใช้ทดสอบเพดาน: 3,800 ผ่าน'],
+  '17_full_mask_textures.zip': ['ชุด 17: ✅ เข้าเกมได้ แต่มีปื้นดำ', 'เปลือกนอก ~3,000 สามเหลี่ยม'],
   'OK_gtv98_as_rc_canyon.zip': ['ชุดฐาน (ใช้ได้แล้ว)', 'gtv98 ของเกมเปลี่ยนชื่อเป็น rc_canyon ไม่มีไฟล์ของเราเลย ใช้สลับกลับเมื่อต้องการ'],
 };
 function bindTestPacks() {

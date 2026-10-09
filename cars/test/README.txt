@@ -72,3 +72,7 @@ against flat UVs. Windows the model filed as "lights" (above 60 % of the height)
 In game 41: decals work, glass see-through (driver visible). Black / see-through patches remain: gtv98's part
 textures (about half alpha 0, half dark brown) drawn as the parts' own colour. -> 42 (no part textures).
 Web default now: template layout without part textures (⚡ button, builder, Studio export).
+In game 42 = 43 except the headlights (blue in 43 = gtv98's headlight texture): the dark areas are not the mask
+nor the part textures. Likely frontbumper / headlight / skirt are not drawn (38's red frontbumper texture never
+showed). 44_canyon_front_into_hood.zip: 42 with frontbumper + headlight geometry in the hood file and the skirt in
+the roof file (files known to draw); those part folders keep stand-ins only (mesh file set = gtv98's).

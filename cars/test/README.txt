@@ -172,3 +172,12 @@ triangles (packs 44-47) whose cause is still open.
                          faces) and a mask of 4x4 cells coloured colour 1 / 2 / 3 in turn. With colour 1 red,
                          2 green, 3 blue the car should look like 53_expected.png; cells that come out black or
                          wrong show which parts of the texture the game does not use that way. Also try a decal.
+In game 53 (unpainted): white, a black strip with a patch in the wheels' colour (lime) along the shoulders
+(where a triangle's corners took the side and the top projection: stretched UVs). With a decal: the decal
+pattern spread over the whole car — decals work once the UVs spread over the texture.
+=> Black / "wheel picture" areas are triangles whose UVs stretch across the texture (packs 44-53), not the textures.
+54_canyon_atlas_decals_three_colours.zip  "atlas" layout: every triangle projected by its own face direction into
+                         its own region (left side, right side, top, front, rear; points split where regions meet,
+                         0 stretched triangles), mask drawn triangle by triangle with 52's colour slots
+                         (body 1, lower band 2, hood 3, trim black), glass / trim / lamps on flat points in a
+                         reserved strip, colour layer clear except gtv98's under-window value under the glass point.

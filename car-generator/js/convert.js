@@ -1183,6 +1183,94 @@ export async function convert(model, { name, template, categories = new Map(), m
   return writeCar(lod, { name, template, bounds, paintAll, slots, partTextures, layout, log });
 }
 
+// "Atlas" layout: every triangle projected by its own face direction into one region of the texture —
+// left side, right side, top, front, rear, each its own rectangle (no overlaps), so a shop decal spreads
+// over the car like on a game car (pack 53) and no triangle stretches across the texture (stretched
+// triangles showed black / the wheels' picture, packs 44-53). Points shared across regions are split.
+// Glass, trim and lamps take one point each in a reserved strip (flat UVs on a known texel are how game
+// cars colour whole pieces: polestar1). The mask is drawn triangle by triangle with its colour slot.
+// Returns { mask (1024² RGBA), colour (cw×ch RGBA) }.
+const ATLAS_FLAT = { 1: [0.05, 0.315], 2: [0.10, 0.315], 3: [0.15, 0.315], glass: [0.20, 0.315], black: [0.25, 0.315] };
+function atlasLayout(lod, { slots, paintAll, cw = 128, ch = 64 }) {
+  const lo = [Infinity, Infinity, Infinity]; const hi = [-Infinity, -Infinity, -Infinity];
+  for (const parts of Object.values(lod)) for (const p of parts) for (let i = 0; i < p.positions.length; i += 3) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p.positions[i + k]); hi[k] = Math.max(hi[k], p.positions[i + k]); }
+  const L = hi[1] - lo[1] || 1; const Wd = hi[0] - lo[0] || 1; const H = hi[2] - lo[2] || 1;
+  const fx = (x) => (x - lo[0]) / Wd; const fy = (y) => (y - lo[1]) / L; const fz = (z) => (hi[2] - z) / H;
+  const proj = {
+    left: (q) => [0.02 + 0.96 * fy(q[1]), 0.02 + 0.27 * fz(q[2])],
+    right: (q) => [0.02 + 0.96 * fy(q[1]), 0.71 + 0.27 * fz(q[2])],
+    top: (q) => [0.02 + 0.66 * fy(q[1]), 0.34 + 0.32 * fx(q[0])],
+    front: (q) => [0.70 + 0.13 * fx(q[0]), 0.34 + 0.32 * fz(q[2])],
+    rear: (q) => [0.85 + 0.13 * fx(q[0]), 0.34 + 0.32 * fz(q[2])],
+  };
+  const SIZE = 1024;
+  const mask = new Uint8ClampedArray(SIZE * SIZE * 4);
+  for (let i = 0; i < mask.length; i += 4) mask.set([255, 0, 0, 255], i);
+  const RGB = { 1: [255, 0, 0], 2: [0, 255, 0], 3: [0, 0, 255], glass: [255, 0, 0], black: [0, 0, 0] };
+  const square = (uv, c) => { const cx = Math.round(uv[0] * SIZE); const cy = Math.round(uv[1] * SIZE); for (let y = cy - 6; y <= cy + 6; y++) for (let x = cx - 6; x <= cx + 6; x++) mask.set([...c, 255], (y * SIZE + x) * 4); };
+  for (const k of Object.keys(ATLAS_FLAT)) square(ATLAS_FLAT[k], RGB[k]);
+  const fill = (uvs, c) => {
+    const xs = uvs.map((t) => t[0] * SIZE); const ys = uvs.map((t) => t[1] * SIZE);
+    const d = (xs[1] - xs[0]) * (ys[2] - ys[0]) - (xs[2] - xs[0]) * (ys[1] - ys[0]);
+    if (Math.abs(d) < 1e-9) return;
+    const tol = 2.5 / Math.sqrt(Math.abs(d)); // about two pixels around the triangle
+    for (let y = Math.max(0, Math.floor(Math.min(...ys)) - 3); y <= Math.min(SIZE - 1, Math.ceil(Math.max(...ys)) + 3); y++) {
+      for (let x = Math.max(0, Math.floor(Math.min(...xs)) - 3); x <= Math.min(SIZE - 1, Math.ceil(Math.max(...xs)) + 3); x++) {
+        const px = x + 0.5; const py = y + 0.5;
+        const a = ((xs[1] - px) * (ys[2] - py) - (xs[2] - px) * (ys[1] - py)) / d;
+        const b = ((xs[2] - px) * (ys[0] - py) - (xs[0] - px) * (ys[2] - py)) / d;
+        if (a > -tol && b > -tol && 1 - a - b > -tol) mask.set([...c, 255], (y * SIZE + x) * 4);
+      }
+    }
+  };
+  const slotOfMat = (m) => {
+    if (m === 'Glass_Gray') return 'glass';
+    if (NOT_PAINT.has(m)) return 'black';
+    if (!slots) return 1;
+    if (m === 'Hood_Paint') return 3;
+    if (m === 'Lower_Paint') return 2;
+    if (m === 'Body_Color' || m === 'Wing') return 1;
+    return 'black'; // trim, grille, chrome, plastic: no garage colour (like Escarabajo)
+  };
+  // Paint first, then the triangles of the other slots over it where they meet.
+  const order = [];
+  for (const parts of Object.values(lod)) for (const p of parts) order.push(p);
+  for (const p of order) {
+    const k = slotOfMat(p.name);
+    const P = p.positions; const N = p.normals; const I = p.indices;
+    const nP = []; const nN = []; const nUV = []; const nI = []; const keyOf = new Map();
+    const flat = typeof k !== 'number' || (k === 1 && false);
+    for (let t = 0; t < I.length; t += 3) {
+      const v = [I[t], I[t + 1], I[t + 2]];
+      const q = v.map((i) => [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]);
+      const e1 = q[1].map((x, j) => x - q[0][j]); const e2 = q[2].map((x, j) => x - q[0][j]);
+      const fn = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+      const ax = Math.abs(fn[0]); const ay = Math.abs(fn[1]); const az = Math.abs(fn[2]);
+      let region;
+      if (flat) region = 'flat';
+      else if (az >= ax && az >= ay) region = fn[2] >= 0 ? 'top' : 'flat';
+      else if (ax >= ay) region = fn[0] >= 0 ? 'left' : 'right';
+      else region = fn[1] < 0 ? 'front' : 'rear';
+      const uvT = [];
+      for (let j = 0; j < 3; j++) {
+        const key = `${v[j]}|${region}`;
+        let id = keyOf.get(key);
+        const uv = region === 'flat' ? ATLAS_FLAT[typeof k === 'number' ? k : k] : proj[region](q[j]);
+        if (id === undefined) { id = nP.length / 3; keyOf.set(key, id); nP.push(...q[j]); nN.push(N[v[j] * 3], N[v[j] * 3 + 1], N[v[j] * 3 + 2]); nUV.push(uv[0], uv[1]); }
+        nI.push(id);
+        uvT.push(uv);
+      }
+      if (region !== 'flat' && typeof k === 'number' && k !== 1) fill(uvT, RGB[k]);
+    }
+    p.positions = new Float32Array(nP); p.normals = new Float32Array(nN); p.uvs = new Float32Array(nUV); p.indices = Uint32Array.from(nI);
+  }
+  // The colour layer: clear, gtv98's under-window value under the glass point.
+  const colour = new Uint8ClampedArray(cw * ch * 4);
+  const gx = Math.round(ATLAS_FLAT.glass[0] * cw); const gy = Math.round(ATLAS_FLAT.glass[1] * ch);
+  for (let y = gy - 2; y <= gy + 2; y++) for (let x = gx - 2; x <= gx + 2; x++) colour.set([56, 59, 59, 0], (y * cw + x) * 4);
+  return { mask, colour, size: SIZE };
+}
+
 // A car folder in the template's layout from finished geometry. lod: { slot ('body', 'hood', ...):
 // [parts with positions, normals, uvs, indices] }; bounds: [min, max] of the body (mesh.xml).
 // Returns Map(rel → Uint8Array).
@@ -1206,9 +1294,10 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, s
   }
   // paintAll: everything but glass / lamps / cabin samples the paint column. In game the colour follows
   // the UV column (a car with the whole mask red still showed its trim black and the hood brown).
+  const atlas = layout === 'atlas' ? atlasLayout(lod, { slots, paintAll, ...(() => { const [cw, ch] = pngSize(tpl.get(`${tplName}_color.png`), [128, 64]); return { cw, ch }; })() }) : null;
   for (const [slot, parts] of Object.entries(lod)) {
     for (const p of parts) {
-      if (asTemplate || !ZONES.includes(p.name)) continue;
+      if (asTemplate || atlas || !ZONES.includes(p.name)) continue;
       // slots: each material on its own column (colour 1 / 2 / 3 by the mask; the hood's paint was
       // named Hood_Paint where the template's hood is).
       const mat = slots ? p.name : paintAll && !NOT_PAINT.has(p.name) ? 'Body_Color' : p.name;
@@ -1303,6 +1392,12 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, s
       out.set(`${name}_base.png`, await png(px, w, h));
       out.set(`${name}_base_s.dds`, dds(px, w, h, 'full'));
     }
+  } else if (atlas) {
+    out.set(`${name}_base.png`, await png(atlas.mask, atlas.size, atlas.size));
+    out.set(`${name}_base_s.dds`, dds(atlas.mask, atlas.size, atlas.size, 'full'));
+    const [cw2, ch2] = pngSize(tpl.get(`${tplName}_color.png`), [128, 64]);
+    out.set(`${name}_color.png`, await png(atlas.colour, cw2, ch2));
+    out.set(`${name}_color_s.dds`, dds(atlas.colour, cw2, ch2, 'half'));
   } else {
     const [w, h] = pngSize(tpl.get(`${tplName}_base.png`), [512, 512]);
     const px = maskPixels(w, h, paintAll, slots);

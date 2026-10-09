@@ -957,7 +957,7 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, p
     for (const [from, to] of Object.entries(INTO_DRAWN)) {
       if (!lod[from]?.length) continue;
       const n = vertsOf(lod[from]) + vertsOf(lod[to] || []);
-      if (n > 5005) { log(`${from}: ย้ายไป ${to} ไม่ได้ (รวม ${n.toLocaleString()} จุด เกิน 5,005) เกมอาจไม่ทาสีชิ้นนี้`); continue; }
+      if (n > 64000) { log(`${from}: ย้ายไป ${to} ไม่ได้ (รวม ${n.toLocaleString()} จุด เกินที่ไฟล์ .0m เก็บได้) เกมอาจไม่ทาสีชิ้นนี้`); continue; }
       lod[to] = [...(lod[to] || []), ...lod[from]];
       delete lod[from];
       log(`${from} → ${to} (ไฟล์ ${from} เกมไม่ทาสี)`);
@@ -1002,6 +1002,7 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, p
     const tplHas = (mesh) => tpl.has(`${dir}/${mesh}_0.0m`);
     if (ours) {
       writeLods(dir, 'default', tplHas('default') ? 'default' : (variants[0]?.mesh || 'default'), ours);
+      // Tuning-set variants (rbrc_001...: the template's extra shop parts) are this car's default as is.
       for (const v of variants) if (v.mesh !== 'default' && tplHas(v.mesh)) for (let l = 0; l < 3; l++) out.set(`${dir}/${v.mesh}_${l}.0m`, out.get(`${dir}/default_${l}.0m`));
     } else {
       for (const v of variants) if (tplHas(v.mesh)) writeLods(dir, v.mesh, v.mesh, []);
@@ -1016,7 +1017,9 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, p
     // In game a part texture is drawn as the part's own colour (pack 38: red texture → red trunk) and a
     // part with no texture takes the body's paint (pack 39: whole rear repaintable). So by default the
     // parts get no textures at all; `partTextures` keeps the template's.
-    if (asTemplate && partTextures) {
+    // A folder with no geometry of ours (only the template's stand-in boxes) keeps the template's
+    // textures, so the file set is the template's wherever nothing of this car is drawn.
+    if (asTemplate && (partTextures || !ours)) {
       for (const r of tplPngs) {
         out.set(r.split(tplName).join(name), tpl.get(r));
         const d = r.replace(/\.png$/, '_s.dds');

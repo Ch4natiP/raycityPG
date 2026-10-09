@@ -26,6 +26,17 @@ function ddsInfo(b) {
   return { h: dv.getUint32(12, true), w: dv.getUint32(16, true), fourcc: String.fromCharCode(b[84], b[85], b[86], b[87]) };
 }
 
+// A part folder holding geometry of the car (not only the template's tiny stand-in boxes): only there
+// does a part texture change what is seen.
+const drawnDir = (files, rel) => {
+  const d = rel.split('/')[0];
+  for (const [r, b] of files) {
+    if (!r.startsWith(`${d}/`) || !r.endsWith('_2.0m')) continue;
+    try { if (omOf(b).submeshes.some((s) => s.vertexCount > 8)) return true; } catch { return true; }
+  }
+  return false;
+};
+
 // Returns [{ level: 'ok' | 'warn' | 'bad', text }].
 export async function checkCar(files, name, template = null) {
   const out = [];
@@ -48,7 +59,9 @@ export async function checkCar(files, name, template = null) {
     if (!list) { missing.push(`${d}/list.xml`); continue; }
     const text = decodeSpec(list);
     for (const m of text.matchAll(/<part\b[^>]*mesh='([^']*)'[^>]*tex='([^']*)'/g)) {
-      for (let l = 0; l < 3; l++) if (!files.has(`${d}/${m[1]}_${l}.0m`)) missing.push(`${d}/${m[1]}_${l}.0m`);
+      // (A mesh the template's own list names but does not ship — gtv98's skirt default — is not needed.)
+      const tplHasMesh = !template || template.files.has(`${d}/${m[1]}_0.0m`);
+      for (let l = 0; l < 3; l++) if (tplHasMesh && !files.has(`${d}/${m[1]}_${l}.0m`)) missing.push(`${d}/${m[1]}_${l}.0m`);
       // A texture the list names may be missing on purpose (gtv98's hood / roof: painted like the
       // body); it is needed only where the base car has it.
       // (Part textures are left out on purpose: without one a part takes the body's paint in game;
@@ -65,7 +78,7 @@ export async function checkCar(files, name, template = null) {
   if (template) {
     const extra = [...files.keys()].filter((r) => /\/[^/]+\.png$/.test(r) && !r.startsWith('icon/')
       && ![...template.files.keys()].some((t) => t.split(template.name).join(name) === r));
-    const partTex = [...files.keys()].filter((r) => /\/[^/]+\.png$/.test(r) && !r.startsWith('icon/'));
+    const partTex = [...files.keys()].filter((r) => /\/[^/]+\.png$/.test(r) && !r.startsWith('icon/') && drawnDir(files, r));
     if (partTex.length) warn(`มีรูปของชิ้นส่วน ${partTex.length} ไฟล์ (${partTex.slice(0, 3).join(', ')}) ชิ้นที่มีรูปจะเป็นสีตามรูป ไม่ใช่สีรถ (ทดสอบแล้วในชุด 38/39) · ถ้าอยากให้เปลี่ยนสีได้ทั้งคัน กด 🔧 ซ่อมให้อัตโนมัติ`);
     else if (extra.length === 0) ok('ชิ้นส่วนไม่มีรูปของตัวเอง → รับสีรถจากตัวถังทุกชิ้น');
   }
@@ -102,13 +115,46 @@ export async function checkCar(files, name, template = null) {
   });
   if (undrawn.length) warn(`มีชิ้นรถอยู่ในไฟล์ ${undrawn.join(', ')} ที่เกมไม่ทาสี (ชุด 40 ออกมาดำ) สร้างใหม่ด้วยแบบ "ตามรถแม่แบบ" จะย้ายไปไว้ใน hood / roof ให้`);
   if (broken) bad(`ไฟล์ .0m เสีย ${broken} ไฟล์ (อ่านไม่ได้)`);
-  if (worst > CRASH) bad(`${worstRel} มี ${worst.toLocaleString()} จุด เกิน ${CRASH.toLocaleString()} ที่เคยเด้ง`);
+  // The file format holds 65,535 vertices; the game's own limit was lifted (2026-10-10, the owner).
+  if (worst > 65535) bad(`${worstRel} มี ${worst.toLocaleString()} จุด เกิน 65,535 ที่ไฟล์ .0m เก็บได้`);
+  else if (worst > CRASH) warn(`${worstRel} มี ${worst.toLocaleString()} จุด (ก่อนปลดล็อก poly เกิน ${CRASH.toLocaleString()} เคยเด้ง)`);
   else if (worst > TESTED_OK) warn(`${worstRel} มี ${worst.toLocaleString()} จุด เกินที่เคยผ่าน (${TESTED_OK.toLocaleString()}) ยังไม่รู้ว่าเด้งไหม`);
   else ok(`จุดต่อไฟล์สูงสุด ${worst.toLocaleString()} (${worstRel}) ไม่เกิน ${TESTED_OK.toLocaleString()} ที่เคยผ่าน`);
   if (tiny) bad(`มีชิ้นเล็กกว่า 6 จุด ${tiny} ชิ้น (สามเหลี่ยมเดี่ยว เคยทำเกมเด้งตอนเปิดโรงรถ)`);
   else ok('ไม่มีชิ้นสามเหลี่ยมเดี่ยว');
   if (flagsDiff) bad(`ชิ้นที่โรงรถขยับ (ประตู/ฝากระโปรง) ไม่ตรงกับรถแม่แบบ ${flagsDiff} ไฟล์ (เคยทำเด้งตอนเปิดหน้ารถ)`);
   else if (template) ok('ชิ้นที่โรงรถขยับ ตรงกับรถแม่แบบ');
+
+  // Byte-level layout against the template, file by file: what the game reads besides the geometry
+  // must be the template's (header before the piece table, piece kinds, xml, texture formats).
+  if (template) {
+    const diff = [];
+    const pngDim = (b) => (b && b.length > 24 ? `${(b[16] << 24 | b[17] << 16 | b[18] << 8 | b[19]) >>> 0}x${(b[20] << 24 | b[21] << 16 | b[22] << 8 | b[23]) >>> 0}` : '?');
+    for (const [tr, tb] of template.files) {
+      const rel = tr.split(template.name).join(name);
+      const b = files.get(rel);
+      if (!b) continue;
+      try {
+        // Tuning-set variants (rbrc_001...) are copies of the car's default on purpose.
+        if (rel.endsWith('.0m') && rel.includes('/') && !/\/default_\d\.0m$/.test(rel) && files.has(rel.replace(/[^/]+_(\d)\.0m$/, 'default_$1.0m'))) continue;
+        if (rel.endsWith('.0m')) {
+          const x = omOf(b); const y = omOf(tb);
+          const head = (o) => new Uint8Array(o.buffer, 0, o.tableOffset);
+          const hx = head(x); const hy = head(y);
+          if (hx.length !== hy.length || hx.some((v, i) => v !== hy[i])) diff.push(`${rel}: ส่วนหัวไฟล์`);
+          const fl = (o) => o.submeshes.map((m) => m.flags.join(',')).join(' ');
+          if (fl(x) !== fl(y)) diff.push(`${rel}: ชนิดชิ้น [${fl(x)}] ต้นแบบ [${fl(y)}]`);
+        } else if (rel.endsWith('.xml') && rel !== 'mesh.xml') {
+          if (decodeSpec(b) !== decodeSpec(tb).split(template.name).join(name)) diff.push(`${rel}: เนื้อหา`);
+        } else if (rel.endsWith('.dds')) {
+          const a = ddsInfo(b); const t = ddsInfo(tb);
+          if (!a || !t || a.w !== t.w || a.h !== t.h || a.fourcc !== t.fourcc) diff.push(`${rel}: ขนาด/ชนิด ${a ? `${a.w}x${a.h} ${a.fourcc}` : '?'} ต้นแบบ ${t.w}x${t.h} ${t.fourcc}`);
+        } else if (rel.endsWith('.png') && pngDim(b) !== pngDim(tb)) diff.push(`${rel}: ขนาด ${pngDim(b)} ต้นแบบ ${pngDim(tb)}`);
+      } catch { diff.push(`${rel}: อ่านไม่ได้`); }
+    }
+    if (diff.length) bad(`โครงไฟล์ไม่ตรงต้นแบบ ${template.name} ${diff.length} จุด: ${diff.slice(0, 4).join(' · ')}${diff.length > 4 ? ' …' : ''}`);
+    else ok(`โครงไฟล์ตรงต้นแบบ ${template.name} ทุกไฟล์ (ส่วนหัว .0m ชนิดชิ้น xml ขนาดรูป)`);
+  }
 
   // Size and placement.
   if (box.min[0] < Infinity) {
@@ -217,7 +263,7 @@ export async function repairCar(files, name, template = null, paintAll = true) {
     fixes.push(`เปลี่ยนชื่อไฟล์และ list.xml จาก ${inner} เป็น ${name}`);
   }
   if (template) {
-    const keep = (r) => !(/\/[^/]+\.(png|dds)$/.test(r) && !r.startsWith('icon/')) || (!paintAll && [...template.files.keys()].some((t) => t.split(template.name).join(name) === r));
+    const keep = (r) => !(/\/[^/]+\.(png|dds)$/.test(r) && !r.startsWith('icon/')) || !drawnDir(out, r) || (!paintAll && [...template.files.keys()].some((t) => t.split(template.name).join(name) === r));
     const extra = [...out.keys()].filter((r) => !keep(r));
     if (extra.length) {
       for (const r of extra) out.delete(r);

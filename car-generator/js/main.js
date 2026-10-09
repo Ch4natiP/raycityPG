@@ -1307,8 +1307,8 @@ function buildModelPanel() {
   // which crashed the game before (the check after the build says which files).
   const qpoly = document.createElement('select');
   qpoly.title = 'ลด poly หรือใช้ผิวเต็มของโมเดล';
-  qpoly.innerHTML = `<option value="4800">🔻 ลด poly (แนะนำ · ไม่เกิน 4,800 จุดต่อไฟล์ เข้าเกมได้)</option>
-    <option value="60000">💎 ไม่ลด poly (ผิวเต็มของโมเดล · ไฟล์ไหนเกิน 8,000 จุดเกมเคยเด้ง)</option>`;
+  qpoly.innerHTML = `<option value="60000">💎 ไม่ลด poly (ผิวเต็มของโมเดล)</option>
+    <option value="4800">🔻 ลด poly (ไม่เกิน 4,800 จุดต่อไฟล์)</option>`;
   const qlog = document.createElement('pre');
   qlog.className = 'hint';
   qgo.addEventListener('click', () => quickBuild(qname.value || 'rc_car', qgo, qlog, +qpoly.value));
@@ -1452,7 +1452,7 @@ function buildModelPanel() {
     3000: 'ปลอดภัย',
     3500: 'ละเอียดสุดที่เข้าเกมได้แน่นอน (ทดสอบแล้วถึง 3,631) · แต่ละชิ้น (ตัวถัง ฝากระโปรง หลังคา กันชน ไฟ) ได้ 3,500 ของตัวเอง',
     5000: '⚠ ยังไม่เคยทดสอบในเกม อาจเด้ง (8,000 เด้งแน่)',
-    60000: '⛔ ไม่ลด poly: ใช้โมเดลเดิมตามที่เป็น ลดเฉพาะไฟล์ที่ใหญ่เกินที่ไฟล์ .0m เก็บได้ (65,535 จุด/index ต่อไฟล์) · ใส่เกมเสี่ยงเด้ง (ที่ทดสอบแล้ว: 3,631 ผ่าน 8,000 เด้ง)',
+    60000: 'ไม่ลด poly: ใช้โมเดลเดิมตามที่เป็น ลดเฉพาะไฟล์ที่ใหญ่เกินที่ไฟล์ .0m เก็บได้ (65,535 จุด/index ต่อไฟล์)',
   };
   const modeHint = document.createElement('p');
   modeHint.className = 'hint';
@@ -1579,13 +1579,14 @@ function showBuildResult(name, out, entries) {
     const tr = t.insertRow();
     tr.insertCell().textContent = label;
     tr.insertCell().textContent = `${c.verts.toLocaleString()} จุด · ${c.tris.toLocaleString()} ▲`;
-    tr.insertCell().textContent = c.verts <= 3631 ? '✅' : '⚠ เกิน';
+    tr.insertCell().textContent = c.verts <= 65535 ? '✅' : '❌ เกิน';
   }
   box.appendChild(t);
   const note = document.createElement('p');
   note.className = 'hint';
-  note.textContent = worst <= 3631 ? 'ทุกไฟล์ไม่เกิน 3,631 จุด (ที่ทดสอบแล้วว่าเข้าเกมได้)' : '⚠ มีไฟล์เกิน 3,631 จุด ใส่เกมอาจเด้ง ใช้ดู/เก็บไว้ หรือสร้างใหม่แบบ 3,500';
-  if (worst > 3631) note.style.color = '#ff8a6a';
+  // The game's poly limit was lifted (2026-10-10); a .0m still holds at most 65,535 vertices.
+  note.textContent = worst <= 65535 ? `จุดต่อไฟล์สูงสุด ${worst.toLocaleString()} (ไฟล์ .0m เก็บได้ไม่เกิน 65,535)` : '❌ มีไฟล์เกิน 65,535 จุด ไฟล์ .0m เก็บไม่ได้';
+  if (worst > 65535) note.style.color = '#ff8a6a';
   box.appendChild(note);
   const checks = document.createElement('div');
   checks.className = 'checks';

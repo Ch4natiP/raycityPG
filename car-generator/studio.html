@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RayCity Studio</title>
+  <link rel="stylesheet" href="studio.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+        "meshoptimizer": "./node_modules/meshoptimizer/index.module.js",
+        "three-mesh-bvh": "./node_modules/three-mesh-bvh/src/index.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <header id="toolbar">
+    <div class="brand">RayCity <b>Studio</b></div>
+    <div class="group" title="สิ่งที่จะเลือก">
+      <button data-mode="vert" class="on" title="เลือกจุด (1)">• จุด</button>
+      <button data-mode="face" title="เลือกหน้า (2)">▲ หน้า</button>
+    </div>
+    <div class="group" title="เครื่องมือ">
+      <button data-tool="select" class="on" title="เลือก (Q)">⬚ เลือก</button>
+      <button data-tool="translate" title="ย้าย (W)">✥ ย้าย</button>
+      <button data-tool="rotate" title="หมุน (E)">⟳ หมุน</button>
+      <button data-tool="scale" title="ย่อ/ขยาย (R)">⤢ ย่อขยาย</button>
+      <button data-tool="draw" title="วาดหน้าใหม่ทับโมเดล (D)">✎ วาดหน้า</button>
+    </div>
+    <div class="group">
+      <label class="tog" title="แก้ซีกหนึ่ง อีกซีกตามเอง"><input type="checkbox" id="opt-mirror" checked> ⇋ สมมาตร</label>
+      <label class="tog" title="จุดที่ย้าย/วาด ติดผิวโมเดลต้นแบบ"><input type="checkbox" id="opt-snap" checked> 🧲 ติดผิว</label>
+    </div>
+    <div class="group">
+      <button id="btn-undo" title="ย้อนกลับ (Ctrl+Z)">↶</button>
+      <button id="btn-redo" title="ทำซ้ำ (Ctrl+Y)">↷</button>
+      <button id="btn-delete" title="ลบ (Delete)">🗑 ลบ</button>
+      <button id="btn-weld" title="รวมจุดที่เลือกเป็นจุดเดียว (Ctrl+W)">⊙ รวมจุด</button>
+      <button id="btn-flip" title="กลับด้านหน้า (F)">⇅ กลับด้าน</button>
+      <button id="btn-surface" title="ดึงจุดที่เลือกไปติดผิวโมเดลต้นแบบ">🧲 ติดผิวเลย</button>
+    </div>
+    <div class="group">
+      <button id="btn-max" title="ขยายจอที่เมาส์อยู่ (Alt+W)">⛶ ขยายจอ</button>
+      <button id="btn-zoom" title="ซูมให้เห็นทั้งหมด (Z)">⌖ ดูทั้งหมด</button>
+      <button id="btn-oneside" title="วาดผิวด้านเดียวเหมือนในเกม (เห็นหน้ากลับด้าน)">👁 แบบในเกม</button>
+    </div>
+    <a class="back" href="RayCity-Car-Generator.html" title="กลับไปหน้าแปลง/เปิดรถ">← หน้าหลัก</a>
+  </header>
+
+  <aside id="left">
+    <section>
+      <h2>1. โมเดลต้นแบบ (แบบที่จะปั้นตาม)</h2>
+      <div class="btns">
+        <button id="btn-ref" class="accent">📂 เปิดโมเดล (.glb .fbx .obj)</button>
+        <input id="file-ref" type="file" accept=".glb,.gltf,.fbx,.obj" hidden>
+      </div>
+      <p class="hint">ล้อ ยาง เบรก ถูกถอดออกให้เอง · แสดงเป็นสีเทาโปร่ง ใช้วาดทับ / ดึงจุดไปติดผิว</p>
+      <label class="row"><span>ความทึบ</span><input id="ref-opacity" type="range" min="0" max="1" step="0.05" value="0.35"></label>
+      <label class="row"><span>แสดง</span><input id="ref-show" type="checkbox" checked></label>
+      <pre id="ref-info" class="hint"></pre>
+    </section>
+
+    <section>
+      <h2>2. ตัวรถที่แก้ (ส่งเข้าเกม)</h2>
+      <div class="btns">
+        <button id="btn-auto" class="accent" title="สร้างแบบอัตโนมัติจากโมเดลต้นแบบ แล้วเอามาแก้ต่อ">⚙ สร้างอัตโนมัติแล้วแก้ต่อ</button>
+        <button id="btn-open-car" title="เปิดโฟลเดอร์รถ RayCity (.0m) มาแก้">📂 เปิดโฟลเดอร์รถ</button>
+        <button id="btn-new" title="เริ่มจากว่าง แล้ววาดหน้าทับโมเดลเอง">✚ เริ่มว่าง</button>
+        <input id="file-car" type="file" webkitdirectory multiple hidden>
+      </div>
+      <pre id="auto-log" class="hint"></pre>
+    </section>
+
+    <section>
+      <h2>ไฟล์ในรถ (จุดต่อไฟล์ เกมรับไม่เกิน 3,500)</h2>
+      <table id="files"></table>
+      <label class="row"><span>ชิ้นของหน้าที่วาดใหม่</span><select id="cur-slot"></select></label>
+      <label class="row"><span>สีของหน้าที่วาดใหม่</span><select id="cur-mat"></select></label>
+      <div class="btns">
+        <button id="btn-assign-slot" title="ย้ายหน้าที่เลือกไปเป็นชิ้นที่เลือกด้านบน">→ ย้ายหน้าที่เลือกไปชิ้นนี้</button>
+        <button id="btn-assign-mat" title="เปลี่ยนสีหน้าที่เลือก">🎨 ใช้สีนี้กับหน้าที่เลือก</button>
+      </div>
+      <div class="btns" style="margin-top:6px">
+        <button id="btn-reduce" title="ลด poly ของหน้าที่เลือก (หรือทั้งชิ้นปัจจุบัน) โดยคงรูปทรง">🔻 ลด poly ที่เลือก</button>
+        <select id="reduce-keep"><option value="0.75">เหลือ 75%</option><option value="0.5" selected>เหลือ 50%</option><option value="0.3">เหลือ 30%</option></select>
+        <button id="btn-mirror-all" title="ลบซีกขวา แล้วสะท้อนซีกซ้ายมาแทน">⇋ ทำให้สมมาตรทั้งคัน</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>แบบพิมพ์เขียว (Blueprint)</h2>
+      <div id="blueprints"></div>
+      <p class="hint">ใส่รูปด้านบน / หน้า / ข้าง ไว้ด้านหลังจอแต่ละมุม ปรับขนาดให้ตรงความยาวรถ</p>
+    </section>
+
+    <section>
+      <h2>3. ส่งออก</h2>
+      <label class="row"><span>ชื่อรถ (.jmd)</span><input id="car-name" type="text" value="rc_canyon"></label>
+      <div class="btns">
+        <button id="btn-export" class="accent">⬇ ดาวน์โหลดโฟลเดอร์รถ (.zip)</button>
+        <button id="btn-save">💾 บันทึกงาน</button>
+        <button id="btn-load">📂 เปิดงาน</button>
+        <input id="file-proj" type="file" accept=".json" hidden>
+      </div>
+      <pre id="export-log" class="hint"></pre>
+    </section>
+
+    <section>
+      <h2>ปุ่มลัด</h2>
+      <pre class="hint keys">คลิกซ้าย  เลือก / ลากกรอบเลือกหลายอัน
+Shift+คลิก  เพิ่มที่เลือก · Ctrl+คลิก  เอาออก
+ล้อกลาง / คลิกขวาลาก  เลื่อนจอ · ล้อเมาส์  ซูม
+คลิกขวาลาก (จอ 3D)  หมุนมุมมอง
+1 / 2  โหมดจุด / หน้า · Q W E R  เลือก ย้าย หมุน ย่อขยาย
+D  วาดหน้า: คลิก 3–4 จุดบนโมเดล (Enter = จบสามเหลี่ยม, Esc = ยกเลิก)
+Delete ลบ · Ctrl+Z / Ctrl+Y ย้อน / ทำซ้ำ · Ctrl+A เลือกทั้งหมด
+Alt+W ขยายจอ · Z ดูทั้งหมด · F กลับด้านหน้า</pre>
+    </section>
+  </aside>
+
+  <main id="views">
+    <canvas id="gl"></canvas>
+    <div class="vp" data-i="0"><span class="label">บน (Top)</span></div>
+    <div class="vp" data-i="1"><span class="label">หน้า (Front)</span></div>
+    <div class="vp" data-i="2"><span class="label">ข้าง (Left)</span></div>
+    <div class="vp" data-i="3"><span class="label">3 มิติ (Perspective)</span></div>
+    <div id="marquee" hidden></div>
+  </main>
+  <footer id="status">เปิดโมเดลต้นแบบ แล้วกด "สร้างอัตโนมัติแล้วแก้ต่อ" หรือ "เริ่มว่าง" แล้ววาดหน้าทับ</footer>
+
+  <script src="js/embedded-cars.js"></script>
+  <script type="module" src="js/studio/studio.js"></script>
+</body>
+</html>

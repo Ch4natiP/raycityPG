@@ -157,3 +157,5 @@ body.rc-mode .gen-only, body.rc-mode #controls { display: none; }
 #model-result .result-table { width: 100%; font-size: 12px; border-collapse: collapse; }
 #model-result .result-table td { padding: 2px 4px; border-bottom: 1px solid rgba(255,255,255,0.06); }
 #model-result .btns { margin-top: 8px; }
+.studio-link { display: block; margin: 0 0 10px; padding: 8px 10px; border-radius: 8px; background: #2a2340; border: 1px solid #6b55c9; color: #e3dcff; text-decoration: none; font-weight: 600; }
+.studio-link:hover { background: #352c52; }

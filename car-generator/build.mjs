@@ -24,6 +24,20 @@ fs.writeFileSync('RayCity-Car-Generator.html', html);
 fs.writeFileSync('js/embedded-cars.js', `${embedCars()}\n${embedTests()}\n${embedTemplates()}\n${embedDraco()}\n`); // same data for the dev page (index.html)
 console.log(`RayCity-Car-Generator.html: ${(html.length / 1024).toFixed(0)} KB`);
 
+// RayCity Studio (studio.html): same idea, its own page; only the template car and the decoder.
+{
+  const r = await build({ entryPoints: ['js/studio/studio.js'], bundle: true, minify: true, format: 'iife', write: false, legalComments: 'none' });
+  const sjs = r.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
+  const scss = fs.readFileSync('studio.css', 'utf8');
+  const shtml = fs.readFileSync('studio.html', 'utf8')
+    .replace(/\s*<script type="importmap">[\s\S]*?<\/script>/, '')
+    .replace('<link rel="stylesheet" href="studio.css">', () => `<style>\n${scss}</style>`)
+    .replace('<script src="js/embedded-cars.js"></script>', '')
+    .replace('<script type="module" src="js/studio/studio.js"></script>', () => `<script>${embedTemplates()}\n${embedDraco()}</script>\n<script>${sjs}</script>`);
+  fs.writeFileSync('RayCity-Studio.html', shtml);
+  console.log(`RayCity-Studio.html: ${(shtml.length / 1024).toFixed(0)} KB`);
+}
+
 // Built cars in ../cars/<name>/ are embedded whole (every file, so the page can open them with one
 // click and download the complete folder), as gzip + base64 of a JSON { path: base64 } map.
 function embedCars() {

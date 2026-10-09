@@ -1,0 +1,82 @@
+:root {
+  --bg: #12141a;
+  --panel: #1a1d24;
+  --panel-2: #222631;
+  --line: #2e3340;
+  --text: #e6e8ee;
+  --muted: #8d94a5;
+  --accent: #ff4d5e;
+  --accent-2: #ffb020;
+  --ok: #45d483;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  display: grid;
+  grid-template-columns: 330px 1fr;
+  grid-template-rows: auto 1fr 26px;
+  grid-template-areas: "top top" "left views" "status status";
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.4 system-ui, "Noto Sans Thai", "Segoe UI", sans-serif;
+  overflow: hidden;
+}
+#toolbar {
+  grid-area: top;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+#toolbar .brand { font-size: 16px; margin-right: 6px; }
+#toolbar .brand b { color: var(--accent); }
+#toolbar .group { display: flex; gap: 3px; align-items: center; padding-right: 10px; border-right: 1px solid var(--line); }
+#toolbar .back { margin-left: auto; color: var(--muted); text-decoration: none; }
+#toolbar .back:hover { color: var(--text); }
+.tog { display: flex; align-items: center; gap: 4px; cursor: pointer; padding: 3px 6px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--line); }
+button {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 9px;
+  font: inherit;
+  cursor: pointer;
+}
+button:hover { border-color: #4a5164; }
+button.on { background: #3a2a12; border-color: var(--accent-2); color: #ffd58a; }
+button.accent { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { opacity: 0.5; cursor: default; }
+select, input[type="text"], input[type="number"] {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; font: inherit;
+}
+#left { grid-area: left; overflow-y: auto; background: var(--panel); border-right: 1px solid var(--line); padding: 8px 12px 40px; }
+#left section { margin: 10px 0 16px; }
+#left h2 { font-size: 12px; color: var(--accent-2); margin: 0 0 8px; letter-spacing: 0.3px; }
+.btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.hint { color: var(--muted); font-size: 12px; margin: 6px 0; white-space: pre-wrap; }
+pre.hint { font-family: inherit; }
+.keys { line-height: 1.6; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 5px 0; }
+.row > span { color: var(--muted); }
+.row select, .row input[type="text"] { width: 170px; }
+#files { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 8px; }
+#files td { padding: 3px 4px; border-bottom: 1px solid var(--line); }
+#files td.n { text-align: right; font-variant-numeric: tabular-nums; }
+#files tr.over td.n { color: var(--accent); font-weight: 600; }
+#files tr.cur td:first-child { color: var(--accent-2); }
+#files button { padding: 1px 6px; font-size: 11px; }
+.bp { border: 1px solid var(--line); border-radius: 6px; padding: 6px; margin-bottom: 6px; }
+.bp .row input[type="number"] { width: 70px; }
+#views { grid-area: views; position: relative; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 2px; background: #000; }
+#views.max { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+#views.max .vp:not(.active) { display: none; }
+#gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.vp { position: relative; outline: 1px solid #2b3040; touch-action: none; }
+.vp.active { outline: 2px solid var(--accent-2); outline-offset: -2px; z-index: 1; }
+.vp .label { position: absolute; left: 8px; top: 6px; font-size: 12px; color: #c9cede; background: rgba(0,0,0,0.45); padding: 1px 6px; border-radius: 4px; pointer-events: none; }
+#marquee { position: absolute; border: 1px dashed var(--accent-2); background: rgba(255,176,32,0.08); pointer-events: none; z-index: 5; }
+#status { grid-area: status; padding: 4px 10px; background: var(--panel); border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

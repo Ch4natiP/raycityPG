@@ -793,8 +793,6 @@ function renderIcon(bytes) {
 
 export async function convert(model, { name, template, categories = new Map(), maxVerts = 3500, voxel = 0.015, raw = false, smooth = true, log = () => {} }) {
   await MeshoptSimplifier.ready;
-  const tpl = template.files;
-  const tplName = template.name;
   log('อ่านโมเดล…');
   const src = collect(model, categories);
   log(`ตัวรถ (ถอดล้อแล้ว): ${src.tris.length.toLocaleString()} สามเหลี่ยม, ยาว ${src.length.toFixed(2)} ม., ล้อ ${src.wheels.length}`);
@@ -823,7 +821,16 @@ export async function convert(model, { name, template, categories = new Map(), m
     }
   }
   smoothNormals(Object.values(lod).flat());
+  const bounds = [[0, 1, 2].map((k) => m.bodyBounds(k, Math.min)), [0, 1, 2].map((k) => m.bodyBounds(k, Math.max))];
+  return writeCar(lod, { name, template, bounds, log });
+}
 
+// A car folder in the template's layout from finished geometry. lod: { slot ('body', 'hood', ...):
+// [parts with positions, normals, uvs, indices] }; bounds: [min, max] of the body (mesh.xml).
+// Returns Map(rel → Uint8Array).
+export async function writeCar(lod, { name, template, bounds, log = () => {} }) {
+  const tpl = template.files;
+  const tplName = template.name;
   const out = new Map();
   const readTpl = (rel) => { const b = tpl.get(rel); return b ? parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)) : null; };
   const tplLod = (dir, mesh, l) => {
@@ -886,8 +893,7 @@ export async function convert(model, { name, template, categories = new Map(), m
     const vs = [...text.matchAll(/pos=(["'])([^"']+)\1/g)].map((x) => x[2].trim().split(/\s+/).map(Number));
     const mn = [0, 1, 2].map((k) => Math.min(...vs.map((v) => v[k])));
     const mx = [0, 1, 2].map((k) => Math.max(...vs.map((v) => v[k])));
-    const bmn = [0, 1, 2].map((k) => m.bodyBounds(k, Math.min));
-    const bmx = [0, 1, 2].map((k) => m.bodyBounds(k, Math.max));
+    const [bmn, bmx] = bounds;
     const t2 = text.replace(/pos=(["'])([^"']+)\1/g, (_, q, v) => {
       const p = v.trim().split(/\s+/).map(Number);
       return `pos=${q}${p.map((c, k) => { const f = (c - mn[k]) / (mx[k] - mn[k] || 1); const lo = k === 2 ? bmn[2] + 0.2 : bmn[k]; return (lo + f * (bmx[k] - lo)).toFixed(10); }).join(' ')}${q}`;
@@ -911,4 +917,4 @@ export async function convert(model, { name, template, categories = new Map(), m
   return out;
 }
 
-export { omParts };
+export { omParts, creaseNormals, smoothNormals, cellUV, CELLS, merge };

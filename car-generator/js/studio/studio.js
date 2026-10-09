@@ -819,7 +819,7 @@ async function openReference(file) {
   zoomAll();
 }
 
-async function autoBuild(bend = false) {
+async function autoBuild(how = 'shell') {
   if (!refModel) { status('เปิดโมเดลต้นแบบก่อน'); return; }
   const log = $('auto-log');
   log.textContent = '';
@@ -828,7 +828,7 @@ async function autoBuild(bend = false) {
   busy = true;
   try {
     const opts = { name: $('car-name').value || 'rc_car', template: await template(), maxVerts: GAME_MAX, log: say };
-    const out = bend ? await bendTemplate(refModel, opts) : await convert(refModel, opts);
+    const out = how === 'bend' ? await bendTemplate(refModel, opts) : await convert(refModel, { ...opts, raw: how === 'raw' });
     pushUndo();
     mesh = importCarFiles(out);
     selV.clear(); selF.clear();
@@ -961,8 +961,9 @@ $('car-name').addEventListener('input', (e) => { e.target.dataset.touched = '1';
 
 $('btn-ref').addEventListener('click', () => $('file-ref').click());
 $('file-ref').addEventListener('change', async (e) => { if (e.target.files[0]) await openReference(e.target.files[0]); e.target.value = ''; });
-$('btn-auto').addEventListener('click', () => autoBuild(false));
-$('btn-bend').addEventListener('click', () => autoBuild(true));
+$('btn-auto').addEventListener('click', () => autoBuild('shell'));
+$('btn-bend').addEventListener('click', () => autoBuild('bend'));
+$('btn-raw').addEventListener('click', () => autoBuild('raw'));
 $('btn-new').addEventListener('click', () => { pushUndo(); mesh = new EditMesh(); selV.clear(); selF.clear(); refresh(); setTool('draw'); });
 $('btn-open-car').addEventListener('click', () => $('file-car').click());
 $('file-car').addEventListener('change', async (e) => {

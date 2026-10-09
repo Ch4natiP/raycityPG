@@ -22,3 +22,5 @@ could not repaint it. Packs 22-27 were rewritten to full-height mask zones (same
 old/21_more_poly_3800.zip  loads (limit is above 3,631)
 old/17_full_mask_textures.zip  loads
 OK_gtv98_as_rc_canyon.zip  gtv98 renamed: the working base
+31_urus_outer_surface_3500.zip  the Urus's own outer surface (hidden interior removed: 84k tris), each
+                         file reduced to 3,500 verts, zone mask

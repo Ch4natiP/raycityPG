@@ -60,11 +60,34 @@ const SKIP_NODE = /^\W*(wheel|rim_root|steering|centre)|plates?(\.|_|$)/i;
 const WHEEL_NODE = /wheel.*(front|rear|back|_[fr][lr]?$|_[fr]_)|^wheel_?[fr][lr]?$|(front|rear).*wheel/i;
 const FRONT_NODE = /front|wheel_?f/i;
 
-// Flat mask cells (top 1/32 of the mask, 32 across): paint red, the rest black.
+const isPaint = (m) => m === 'Body_Color' || m === 'Wing';
+// Old flat mask cells (top 1/32 of the mask, 32 across), still read back from earlier builds.
 const CELLS = ['Body_Color', 'Glass_Gray', 'Grille', 'Underbody', 'plastic_gray', 'metal_gray', 'metal_chrome', 'Carbon_Fiber',
   'Leather', 'Interior_dark', 'Taillight_Glass', 'Projector_Glass', 'Turn_Signal_LED', 'Wing', 'WingDark'];
-const cellUV = (mat) => { const i = Math.max(0, CELLS.indexOf(CELLS.includes(mat) ? mat : 'plastic_gray')); return [(i + 0.5) / 32, 0.5 / 32]; };
-const isPaint = (m) => m === 'Body_Color' || m === 'Wing';
+// Paint mask in big zones like the game's own masks (gtv98: 79 % red): 16 full-height columns, one per
+// material, paint red, the rest black. A tiny cell strip (the old layout, 32 px high) came out black
+// in game (the garage could not repaint it); full-height columns survive any resize or flip.
+const ZONES = ['Body_Color', 'Wing', 'Glass_Gray', 'Grille', 'Underbody', 'plastic_gray', 'metal_gray', 'metal_chrome', 'Carbon_Fiber',
+  'Leather', 'Interior_dark', 'Taillight_Glass', 'Projector_Glass', 'Turn_Signal_LED', 'WingDark'];
+const cellUV = (mat) => { const i = Math.max(0, ZONES.indexOf(ZONES.includes(mat) ? mat : 'plastic_gray')); return [(i + 0.5) / 16, 0.5]; };
+// Material of a UV written by this tool (zone column, or the old top-row cell), else null.
+export function matOfUV(u, v) {
+  const z = u * 16 - 0.5;
+  if (Math.abs(v - 0.5) < 1e-3 && Math.abs(z - Math.round(z)) < 1e-3) return ZONES[Math.round(z)] || null;
+  if (v < 1 / 32) return CELLS[Math.floor(u * 32)] || null;
+  return null;
+}
+// The paint mask pixels (w × h RGBA).
+export function maskPixels(w, h) {
+  const px = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const mat = ZONES[Math.floor((x / w) * 16)];
+      px.set([isPaint(mat) ? 255 : 0, 0, 0, 255], (y * w + x) * 4);
+    }
+  }
+  return px;
+}
 
 // ---------------------------------------------------------------------------------------------
 // Small vector helpers
@@ -898,13 +921,10 @@ export async function writeCar(lod, { name, template, bounds, log = () => {} }) 
       out.set(`${dir}/${nm}_s.dds`, dds(px, w, h, 'full'));
     }
   }
-  // Paint mask (red, flat cells in the top row) and the transparent body detail layer.
+  // Paint mask (zone columns) and the transparent body detail layer.
   {
     const [w, h] = pngSize(tpl.get(`${tplName}_base.png`), [512, 512]);
-    const px = new Uint8ClampedArray(w * h * 4);
-    for (let i = 0; i < px.length; i += 4) { px[i] = 255; px[i + 3] = 255; }
-    const cw = Math.max(1, Math.floor(w / 32)); const ch = Math.max(1, Math.floor(h / 32));
-    CELLS.forEach((mat, i) => { for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) px.set([isPaint(mat) ? 255 : 0, 0, 0, 255], (y * w + i * cw + x) * 4); });
+    const px = maskPixels(w, h);
     out.set(`${name}_base.png`, await png(px, w, h));
     out.set(`${name}_base_s.dds`, dds(px, w, h, 'full'));
     const [cw2, ch2] = pngSize(tpl.get(`${tplName}_color.png`), [128, 64]);
@@ -1085,4 +1105,4 @@ export async function bendTemplate(model, { name, template, categories = new Map
   return out;
 }
 
-export { omParts, creaseNormals, smoothNormals, cellUV, CELLS, merge };
+export { omParts, creaseNormals, smoothNormals, cellUV, CELLS, ZONES, merge, dds };

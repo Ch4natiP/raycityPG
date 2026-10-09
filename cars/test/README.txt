@@ -4,6 +4,12 @@ In game (2026-10-09): 17 and 21 load (21 up to 3,631 verts per file); 18 (25k) a
 The dark triangle patches in 17/21: the game reads the paint mask per vertex (the original cars' masks are
 flat color blocks), so a baked, detailed mask turns into triangle patches.
 
+In game (later): a Studio build with the old top-row mask cells showed the car all black and the garage
+could not repaint it. Packs 22-27 were rewritten to full-height mask zones (same shapes).
+
+30_your_car_spread_uv_all_red.zip  the user's car, UVs spread over the whole mask, mask all red: does
+                         the paint work at all with this geometry?
+29_your_car_big_paint_zones.zip    the user's car with the new mask zones (16 full-height columns)
 28_old_body_bent.zip     gtv98 (works in game) bent into the Urus shape: every file has gtv98's structure
                          and vertex counts, only the points moved (safest)
 25_limit_4000.zip        Urus shell, every file at most 4,000 verts (body 3,927)  } finding the game's

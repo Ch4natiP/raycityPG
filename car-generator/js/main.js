@@ -9,6 +9,7 @@ import { SPEC_TEMPLATE, SPEC_FIELDS, readSpec, writeSpec, encodeSpec, decodeSpec
 import { makeZip } from './zip.js';
 import { IDENTITY, slotOfPath, bboxOf, editFile, editFileInfo, editMeshXml, renamePath, countsOf, ready as editReady } from './carEdit.js';
 import { SCHEMA, PRESETS, presetParams, randomParams } from './params.js';
+import { checkCar, renderChecks } from './checkCar.js';
 import { CATEGORIES, MODEL_TYPES, loadModel, convert, bendTemplate, turnAround, categoryOf } from './convert.js';
 
 const STORAGE_KEY = 'raycity-car-generator:params';
@@ -913,6 +914,8 @@ async function openEmbeddedCar(name) {
 
 // Test packs (../cars/test/*.zip, embedded at build time): one download button each.
 const TEST_PACK_INFO = {
+  '30_your_car_spread_uv_all_red.zip': ['ชุด 30: รถที่คุณส่งมา · ทั้งคันเป็นสีรถ (มาสก์แดงทั้งรูป)', 'ใช้ทดสอบว่าโครงนี้เปลี่ยนสีได้ไหม ถ้าชุดนี้ยังดำ = ปัญหาไม่ใช่ที่มาสก์'],
+  '29_your_car_big_paint_zones.zip': ['ชุด 29: รถที่คุณส่งมา · มาสก์สีแบบช่องใหญ่ (แบบใหม่) ⭐', 'แก้ปัญหาสีดำเปลี่ยนสีไม่ได้: สีรถอ่านจากช่องใหญ่เต็มความสูงแทนแถบเล็กบนสุด'],
   '28_old_body_bent.zip': ['ชุด 28: ตัวถัง gtv98 ดัดเป็นทรง Urus 🛡 ปลอดภัยสุด', 'ไฟล์ทุกอย่างเหมือน gtv98 ที่เข้าเกมได้ (จำนวนจุดเท่าเดิม) ขยับแค่ตำแหน่งจุดให้เป็นทรงรถใหม่'],
   '25_limit_4000.zip': ['ชุด 25: หาเพดานเกม — ไม่เกิน 4,000 จุดต่อไฟล์', 'ตัวถัง 3,927 จุด · ลองทีละชุด 25 → 26 → 27 ชุดไหนเด้งบอกด้วย'],
   '26_limit_4500.zip': ['ชุด 26: หาเพดานเกม — ไม่เกิน 4,500 จุดต่อไฟล์', 'ตัวถัง 4,353 จุด'],
@@ -986,6 +989,16 @@ function bindOmButtons() {
   document.getElementById('btn-om-back').addEventListener('click', () => showImported(null));
   document.getElementById('btn-om-export').addEventListener('click', exportOm);
   document.getElementById('btn-car-zip').addEventListener('click', downloadCarZip);
+  document.getElementById('btn-car-check').addEventListener('click', async () => {
+    const el = document.getElementById('car-check');
+    if (!folder) { el.textContent = 'เปิดโฟลเดอร์รถ หรือกดรถด้านบนก่อน'; return; }
+    el.textContent = '🩺 กำลังตรวจ…';
+    const files = new Map();
+    for (const [rel, file] of folder.files) files.set(rel, new Uint8Array(await file.arrayBuffer()));
+    let tpl = null;
+    try { tpl = await modelTemplate(); } catch { /* no template: skip the template checks */ }
+    renderChecks(el, await checkCar(files, folder.name, tpl));
+  });
 }
 
 // --- Car spec (.xml) -------------------------------------------------------------
@@ -1121,7 +1134,7 @@ const CAT_COLORS = {
 };
 const srcModel = { model: null, categories: new Map(), preview: null, pick: false, hideRemoved: false, file: null };
 
-function modelTemplate() {
+async function modelTemplate() {
   if (srcModel.template) return srcModel.template;
   const b64 = (window.RC_TEMPLATES || {}).gtv98;
   if (!b64) throw new Error('ไม่มีรถแม่แบบ (gtv98) ในหน้าเว็บ');
@@ -1422,6 +1435,11 @@ function showBuildResult(name, out, entries) {
   note.textContent = worst <= 3631 ? 'ทุกไฟล์ไม่เกิน 3,631 จุด (ที่ทดสอบแล้วว่าเข้าเกมได้)' : '⚠ มีไฟล์เกิน 3,631 จุด ใส่เกมอาจเด้ง ใช้ดู/เก็บไว้ หรือสร้างใหม่แบบ 3,500';
   if (worst > 3631) note.style.color = '#ff8a6a';
   box.appendChild(note);
+  const checks = document.createElement('div');
+  checks.className = 'checks';
+  checks.textContent = '🩺 กำลังตรวจความพร้อมก่อนเข้าเกม…';
+  box.appendChild(checks);
+  modelTemplate().then((tpl) => checkCar(out, name, tpl)).then((list) => renderChecks(checks, list)).catch((e) => { checks.textContent = `ตรวจไม่ได้: ${e.message}`; });
   const btns = document.createElement('div');
   btns.className = 'btns';
   const mk = (text, fn, cls) => { const b = document.createElement('button'); b.textContent = text; if (cls) b.className = cls; b.addEventListener('click', fn); btns.appendChild(b); return b; };

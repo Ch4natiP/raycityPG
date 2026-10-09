@@ -80,3 +80,13 @@ pre.hint { font-family: inherit; }
 .vp .label { position: absolute; left: 8px; top: 6px; font-size: 12px; color: #c9cede; background: rgba(0,0,0,0.45); padding: 1px 6px; border-radius: 4px; pointer-events: none; }
 #marquee { position: absolute; border: 1px dashed var(--accent-2); background: rgba(255,176,32,0.08); pointer-events: none; z-index: 5; }
 #status { grid-area: status; padding: 4px 10px; background: var(--panel); border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Check before the game */
+.checks { margin-top: 8px; font-size: 12px; }
+.checks .check-head { font-weight: 600; padding: 6px 8px; border-radius: 6px; margin-bottom: 4px; }
+.checks .check-head.ok { background: rgba(69,212,131,0.15); color: #7fe3a8; }
+.checks .check-head.warn { background: rgba(255,176,32,0.14); color: #ffcf73; }
+.checks .check-head.bad { background: rgba(255,77,94,0.16); color: #ff8d98; }
+.checks .check-row { padding: 2px 4px; line-height: 1.45; }
+.checks .check-row.bad { color: #ff8d98; }
+.checks .check-row.warn { color: #ffcf73; }

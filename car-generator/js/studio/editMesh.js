@@ -2,7 +2,7 @@
 // part file (slot: 'body', 'hood', ...) with one material category (its colour cell in the paint mask).
 // RayCity space: x left, y back (front −y), z up, metres.
 import { parseOM, omParts } from '../om.js';
-import { creaseNormals, cellUV, CELLS } from '../convert.js';
+import { creaseNormals, cellUV, matOfUV } from '../convert.js';
 
 export const SLOTS = [
   ['body', 'ตัวถัง (body)'], ['hood', 'ฝากระโปรง (hood)'], ['roof', 'หลังคา (roof)'], ['frontbumper', 'กันชนหน้า'],
@@ -162,9 +162,8 @@ export class EditMesh {
       for (let i = 0; i < n; i++) this.verts.push([part.positions[i * 3], part.positions[i * 3 + 1], part.positions[i * 3 + 2]]);
       for (let t = 0; t < part.indices.length; t += 3) {
         const a = part.indices[t]; const b = part.indices[t + 1]; const c = part.indices[t + 2];
-        const u = (part.uvs[a * 2] + part.uvs[b * 2] + part.uvs[c * 2]) / 3;
-        const v = (part.uvs[a * 2 + 1] + part.uvs[b * 2 + 1] + part.uvs[c * 2 + 1]) / 3;
-        const mat = v < 1 / 32 ? (CELLS[Math.floor(u * 32)] || 'plastic_gray') : 'Body_Color';
+        const u = part.uvs[a * 2]; const v = part.uvs[a * 2 + 1];
+        const mat = matOfUV(u, v) || 'Body_Color';
         this.addFace([base + a, base + b, base + c], slot, mat);
       }
     }

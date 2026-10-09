@@ -13,6 +13,7 @@ import { MeshoptSimplifier } from 'meshoptimizer';
 import { EditMesh, SLOTS, partVerts } from './editMesh.js';
 import { loadModel, convert, bendTemplate, writeCar, smoothNormals, categoryOf, removeHidden, CATEGORIES } from '../convert.js';
 import { makeZip } from '../zip.js';
+import { checkCar, renderChecks } from '../checkCar.js';
 
 const GAME_MAX = 3500; // vertices per file that work in game (3,631 tested)
 const MATS = CATEGORIES.filter(([v]) => v !== 'skip' && v !== 'Lights_Auto');
@@ -245,6 +246,37 @@ function refresh() {
   updateGizmo();
   queueCounts();
   updateStatus();
+  queueAutosave();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Autosave: the work is kept in this browser after every change, so a closed tab loses nothing.
+
+const AUTOSAVE = 'raycity-studio-autosave';
+let autosaveTimer = 0;
+function queueAutosave() {
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => {
+    if (!mesh.faces.length) return;
+    try { localStorage.setItem(AUTOSAVE, JSON.stringify({ time: Date.now(), name: $('car-name').value, mesh: mesh.toJSON() })); } catch { /* full or blocked */ }
+  }, 1500);
+}
+function offerRestore() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(AUTOSAVE) || 'null'); } catch { saved = null; }
+  const b = $('btn-restore');
+  if (!saved || !saved.mesh?.faces?.length) return;
+  b.hidden = false;
+  b.textContent = `↺ กู้งานล่าสุด (${new Date(saved.time).toLocaleString('th-TH')} · ${saved.mesh.faces.length.toLocaleString()} หน้า)`;
+  b.addEventListener('click', () => {
+    pushUndo();
+    mesh = EditMesh.fromJSON(saved.mesh);
+    if (saved.name) $('car-name').value = saved.name;
+    selV.clear(); selF.clear();
+    refresh();
+    zoomAll();
+    b.hidden = true;
+  });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -827,6 +859,10 @@ async function exportCar() {
     download(await makeZip(files), `${name}.zip`);
     const over = Object.entries(parts).filter(([, p]) => partVerts(p) > GAME_MAX).map(([s]) => s);
     log.textContent = `ดาวน์โหลด ${name}.zip แล้ว (${files.length} ไฟล์)` + (over.length ? `\n⚠ เกิน ${GAME_MAX.toLocaleString()} จุด: ${over.join(', ')} ใส่เกมอาจเด้ง` : '\n✅ ทุกไฟล์ไม่เกิน 3,500 จุด');
+    const checks = document.createElement('div');
+    checks.className = 'checks';
+    log.appendChild(checks);
+    renderChecks(checks, await checkCar(out, name, await template()));
   } catch (e) { console.error(e); log.textContent = `ผิดพลาด: ${e.message}`; }
   busy = false;
 }
@@ -1004,6 +1040,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 buildBlueprints();
+offerRestore();
 refresh();
 render();
 // Buttons give the keyboard back to the views (Enter / Space on a focused button would press it again).

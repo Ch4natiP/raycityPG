@@ -10,3 +10,6 @@ OK_gtv98_as_rc_canyon.zip  the working base (nothing of ours)
 
 Crashes in 1 but not 2 -> one of the part meshes. Crashes in 2 -> the body mesh. Crashes in 3 -> our images.
 Crashes in 4 -> mesh.xml.
+
+Result 2026-10-09: 3_images_only works in game -> our images are fine, the problem is in the .0m meshes.
+5_parts_meshes_only.zip    every part .0m is ours, the body is gtv98's (counterpart of 2_body_mesh_only)

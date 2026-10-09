@@ -7,6 +7,11 @@ flat color blocks), so a baked, detailed mask turns into triangle patches.
 In game (later): a Studio build with the old top-row mask cells showed the car all black and the garage
 could not repaint it. Packs 22-27 were rewritten to full-height mask zones (same shapes).
 
+Later: rc_phoenix445 (body 5,005 verts) LOADS in game -> the per-file limit is above 5,005. It showed
+grey see-through and could not be painted: every triangle had all three UVs on one point (100 % flat UV
+triangles); gtv98 has 9 %. All our packs now spread UVs inside their mask zones (writeCar / zoneUVs).
+
+32_phoenix445_fixed_uv.zip   the user's rc_phoenix445 with spread UVs + zone mask (flat UV 0.3 %)
 30_your_car_spread_uv_all_red.zip  the user's car, UVs spread over the whole mask, mask all red: does
                          the paint work at all with this geometry?
 29_your_car_big_paint_zones.zip    the user's car with the new mask zones (16 full-height columns)
@@ -24,3 +29,5 @@ old/17_full_mask_textures.zip  loads
 OK_gtv98_as_rc_canyon.zip  gtv98 renamed: the working base
 31_urus_outer_surface_3500.zip  the Urus's own outer surface (hidden interior removed: 84k tris), each
                          file reduced to 3,500 verts, zone mask
+
+old/ also holds 22-26 (rewritten to spread UVs) — moved out of the page to keep it small.

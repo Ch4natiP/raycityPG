@@ -70,12 +70,28 @@ const CELLS = ['Body_Color', 'Glass_Gray', 'Grille', 'Underbody', 'plastic_gray'
 const ZONES = ['Body_Color', 'Wing', 'Glass_Gray', 'Grille', 'Underbody', 'plastic_gray', 'metal_gray', 'metal_chrome', 'Carbon_Fiber',
   'Leather', 'Interior_dark', 'Taillight_Glass', 'Projector_Glass', 'Turn_Signal_LED', 'WingDark'];
 const cellUV = (mat) => { const i = Math.max(0, ZONES.indexOf(ZONES.includes(mat) ? mat : 'plastic_gray')); return [(i + 0.5) / 16, 0.5]; };
-// Material of a UV written by this tool (zone column, or the old top-row cell), else null.
+// Material of a UV written by this tool: its zone column (any height), or the old top-row cell.
 export function matOfUV(u, v) {
-  const z = u * 16 - 0.5;
-  if (Math.abs(v - 0.5) < 1e-3 && Math.abs(z - Math.round(z)) < 1e-3) return ZONES[Math.round(z)] || null;
   if (v < 1 / 32) return CELLS[Math.floor(u * 32)] || null;
-  return null;
+  return ZONES[Math.floor(u * 16)] || null;
+}
+// UVs inside a material's zone column, spread like a box projection of the car (top / side / front by
+// the normal), so no triangle has all three corners on one texel. The game builds its shading from
+// the UV spread: flat, zero-area UVs (every corner the same point) came out black or see-through
+// grey in the garage and could not be painted.
+export function zoneUVs(mat, P, N) {
+  const z = Math.max(0, ZONES.indexOf(ZONES.includes(mat) ? mat : 'plastic_gray'));
+  const n = P.length / 3;
+  const uv = new Float32Array(n * 2);
+  const c = (v) => Math.min(1, Math.max(0, v));
+  for (let i = 0; i < n; i++) {
+    const x = P[i * 3]; const y = P[i * 3 + 1]; const h = P[i * 3 + 2];
+    const ax = Math.abs(N[i * 3]); const ay = Math.abs(N[i * 3 + 1]); const az = Math.abs(N[i * 3 + 2]);
+    const [a, b] = az >= ax && az >= ay ? [(x + 1.5) / 3, (y + 5) / 10] : ax >= ay ? [(y + 5) / 10, (h + 0.5) / 3] : [(x + 1.5) / 3, (h + 0.5) / 3];
+    uv[i * 2] = (z + 0.08 + 0.84 * c(a)) / 16;
+    uv[i * 2 + 1] = 0.03 + 0.94 * c(b);
+  }
+  return uv;
 }
 // The paint mask pixels (w × h RGBA).
 export function maskPixels(w, h) {
@@ -242,12 +258,16 @@ export async function loadModel(file) {
 
 // Front ↔ back (half a turn around the vertical axis).
 export function turnAround(model) {
+  // A car fitted to the game's wheels turns at its own size, then fits again.
+  const fit = model.fit;
+  if (model.orig) { unfitWheels(model); model.orig = null; }
   for (const A of [model.P, model.N]) for (let i = 0; i < A.length; i += 3) { A[i] = -A[i]; A[i + 1] = -A[i + 1]; }
   for (const p of model.pieces) {
     [p.min[0], p.max[0]] = [-p.max[0], -p.min[0]];
     [p.min[1], p.max[1]] = [-p.max[1], -p.min[1]];
   }
   for (const w of model.wheels) { w.p[0] = -w.p[0]; w.p[1] = -w.p[1]; }
+  if (fit) fitToWheels(model, fit.game, fit.mode);
 }
 
 // Connected pieces: triangles sharing a corner position (0.1 mm) belong together.
@@ -880,6 +900,7 @@ export async function convert(model, { name, template, categories = new Map(), m
 export async function writeCar(lod, { name, template, bounds, log = () => {} }) {
   const tpl = template.files;
   const tplName = template.name;
+  for (const parts of Object.values(lod)) for (const p of parts) if (ZONES.includes(p.name)) p.uvs = zoneUVs(p.name, p.positions, p.normals);
   const out = new Map();
   const readTpl = (rel) => { const b = tpl.get(rel); return b ? parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)) : null; };
   const tplLod = (dir, mesh, l) => {
@@ -1106,3 +1127,47 @@ export async function bendTemplate(model, { name, template, categories = new Map
 }
 
 export { omParts, creaseNormals, smoothNormals, cellUV, CELLS, ZONES, merge, dds };
+
+// ---------------------------------------------------------------------------------------------
+// Fitting the car to the game's wheels. The game puts its own wheels where the base car's are (the car
+// the new one was registered from), so the model is scaled and moved until its wheels sit there.
+// gtv98 measured from its wheel arches: axles at y −1.23 / +1.15, wheel radius 0.27 (its spec's
+// MS_TractionRadius), wheels ±0.68 from the middle.
+export const GAME_WHEELS = { gtv98: { front: -1.23, rear: 1.15, radius: 0.27, track: 0.68 } };
+
+// mode 'uniform': one scale for the whole car (shape kept), the axles land exactly, then the car moves
+// up/down so the wheel centres match. 'stretch': length, width and height scaled separately so the
+// axles, the track and the wheel size all match. Returns a short description, or null (no wheels).
+export function fitToWheels(model, game, mode = 'uniform') {
+  if (!model.orig) model.orig = { P: model.P.slice(), N: model.N.slice(), wheels: model.wheels.map((w) => ({ p: [...w.p], r: w.r })), pieces: model.pieces.map((p) => ({ min: [...p.min], max: [...p.max] })) };
+  const o = model.orig;
+  const fw = o.wheels.filter((w) => w.p[1] < 0); const rw = o.wheels.filter((w) => w.p[1] >= 0);
+  if (!fw.length || !rw.length) return null;
+  const avg = (list, f) => list.reduce((s, w) => s + f(w), 0) / list.length;
+  const mf = avg(fw, (w) => w.p[1]); const mr = avg(rw, (w) => w.p[1]);
+  const mrad = avg(o.wheels, (w) => w.r); const mtrack = avg(o.wheels, (w) => Math.abs(w.p[0]));
+  const mmid = (mf + mr) / 2; const gmid = (game.front + game.rear) / 2;
+  const sy = (game.rear - game.front) / (mr - mf);
+  const [sx, sz, dz] = mode === 'stretch' ? [game.track / mtrack, game.radius / mrad, 0] : [sy, sy, game.radius - sy * mrad];
+  const map = (p) => [p[0] * sx, (p[1] - mmid) * sy + gmid, p[2] * sz + dz];
+  for (let i = 0; i < model.P.length; i += 3) model.P.set(map([o.P[i], o.P[i + 1], o.P[i + 2]]), i);
+  for (let i = 0; i < model.N.length; i += 3) {
+    const n = [o.N[i] / sx, o.N[i + 1] / sy, o.N[i + 2] / sz]; const l = Math.hypot(...n) || 1;
+    model.N[i] = n[0] / l; model.N[i + 1] = n[1] / l; model.N[i + 2] = n[2] / l;
+  }
+  model.wheels = o.wheels.map((w) => ({ p: map(w.p), r: w.r * sz }));
+  model.pieces.forEach((p, k) => { const a = map(o.pieces[k].min); const b = map(o.pieces[k].max); p.min = a.map((v, j) => Math.min(v, b[j])); p.max = a.map((v, j) => Math.max(v, b[j])); });
+  model.fit = { game, mode };
+  const pct = (v) => `${Math.round(v * 100)}%`;
+  return mode === 'stretch' ? `ยาว ×${pct(sy)} กว้าง ×${pct(sx)} สูง ×${pct(sz)}` : `ย่อ/ขยายทั้งคัน ×${pct(sy)}${Math.abs(dz) > 0.005 ? ` · ${dz > 0 ? 'ยก' : 'ลด'}ตัวรถ ${Math.abs(dz * 100).toFixed(0)} ซม.` : ''}`;
+}
+
+// Back to the model's own size.
+export function unfitWheels(model) {
+  const o = model.orig;
+  if (!o) return;
+  model.P.set(o.P); model.N.set(o.N);
+  model.wheels = o.wheels.map((w) => ({ p: [...w.p], r: w.r }));
+  model.pieces.forEach((p, k) => { p.min = [...o.pieces[k].min]; p.max = [...o.pieces[k].max]; });
+  model.fit = null;
+}

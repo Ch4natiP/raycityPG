@@ -10,7 +10,7 @@ import { makeZip } from './zip.js';
 import { IDENTITY, slotOfPath, bboxOf, editFile, editFileInfo, editMeshXml, renamePath, countsOf, ready as editReady } from './carEdit.js';
 import { SCHEMA, PRESETS, presetParams, randomParams } from './params.js';
 import { checkCar, renderChecks } from './checkCar.js';
-import { CATEGORIES, MODEL_TYPES, loadModel, convert, bendTemplate, turnAround, categoryOf } from './convert.js';
+import { CATEGORIES, MODEL_TYPES, loadModel, convert, bendTemplate, turnAround, categoryOf, GAME_WHEELS, fitToWheels, unfitWheels } from './convert.js';
 
 const STORAGE_KEY = 'raycity-car-generator:params';
 
@@ -914,6 +914,7 @@ async function openEmbeddedCar(name) {
 
 // Test packs (../cars/test/*.zip, embedded at build time): one download button each.
 const TEST_PACK_INFO = {
+  '32_phoenix445_fixed_uv.zip': ['ชุด 32: rc_phoenix445 ของคุณ แก้สีเทาโปร่ง/เปลี่ยนสีไม่ได้ ⭐', 'กระจาย UV ให้ทุกสามเหลี่ยม (เดิมแบน 100%) + มาสก์ช่องใหญ่ · ชื่อ rc_phoenix445 เดิม · ทรงเหมือนเดิม'],
   '31_urus_outer_surface_3500.zip': ['ชุด 31: Urus ผิวนอกจริงของโมเดล (ตัดข้างใน) ลดเหลือ 3,500 ⭐', 'ขอบสีคมตามต้นฉบับ ทุกไฟล์ไม่เกิน 3,508 จุด · มาสก์แบบใหม่ · ผ่านตรวจทุกข้อ'],
   '30_your_car_spread_uv_all_red.zip': ['ชุด 30: รถที่คุณส่งมา · ทั้งคันเป็นสีรถ (มาสก์แดงทั้งรูป)', 'ใช้ทดสอบว่าโครงนี้เปลี่ยนสีได้ไหม ถ้าชุดนี้ยังดำ = ปัญหาไม่ใช่ที่มาสก์'],
   '29_your_car_big_paint_zones.zip': ['ชุด 29: รถที่คุณส่งมา · มาสก์สีแบบช่องใหญ่ (แบบใหม่) ⭐', 'แก้ปัญหาสีดำเปลี่ยนสีไม่ได้: สีรถอ่านจากช่องใหญ่เต็มความสูงแทนแถบเล็กบนสุด'],
@@ -1133,7 +1134,7 @@ const CAT_COLORS = {
   Turn_Signal_LED: '#ffa21a', metal_chrome: '#d8dde3', metal_gray: '#8b939c', plastic_gray: '#3c3f45', Carbon_Fiber: '#23262b',
   Interior_dark: '#6a5442',
 };
-const srcModel = { model: null, categories: new Map(), preview: null, pick: false, hideRemoved: false, file: null };
+const srcModel = { model: null, categories: new Map(), preview: null, pick: false, hideRemoved: false, file: null, gameWheels: { ...GAME_WHEELS.gtv98 }, fitMode: 'uniform', fitNote: '' };
 
 async function modelTemplate() {
   if (srcModel.template) return srcModel.template;
@@ -1190,6 +1191,15 @@ function buildModelPreview() {
   group.add(kept, removed);
   let y0 = Infinity; let zTop = 0;
   for (let i = 0; i < m.P.length; i += 3) { y0 = Math.min(y0, m.P[i + 1]); zTop = Math.max(zTop, m.P[i + 2]); }
+  // The game's own wheels (where they will be in game), dark see-through.
+  const gw = srcModel.gameWheels;
+  const tyreMat = new THREE.MeshStandardMaterial({ color: '#15171c', transparent: true, opacity: 0.55, roughness: 0.9, depthWrite: false });
+  for (const y of [gw.front, gw.rear]) for (const x of [-gw.track, gw.track]) {
+    const t = new THREE.Mesh(new THREE.CylinderGeometry(gw.radius, gw.radius, 0.22, 28).rotateZ(Math.PI / 2), tyreMat);
+    t.position.set(x, gw.radius, -y);
+    t.renderOrder = 3;
+    group.add(t);
+  }
   const arrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, zTop * 0.5, -y0 + 0.15), 0.9, '#3ee07a', 0.3, 0.2);
   group.add(arrow);
   group.userData.files = `โมเดลต้นฉบับ (ยังไม่แปลง) · ตัวรถ ${keep.length.toLocaleString()} · ถอด ${gone.length.toLocaleString()} สามเหลี่ยม`;
@@ -1234,6 +1244,7 @@ async function openModelFile(file) {
   let y0 = Infinity; let y1 = -Infinity;
   for (let i = 1; i < m.P.length; i += 3) { y0 = Math.min(y0, m.P[i]); y1 = Math.max(y1, m.P[i]); }
   srcModel.length = y1 - y0;
+  srcModel.fitNote = fitToWheels(m, srcModel.gameWheels, srcModel.fitMode) || 'ไม่เจอล้อในโมเดล (ปรับขนาดเองไม่ได้)';
   status.textContent = '';
   buildModelPanel();
   showModelPreview();
@@ -1283,8 +1294,52 @@ function buildModelPanel() {
   box.appendChild(btns);
   const hint = document.createElement('p');
   hint.className = 'hint';
-  hint.textContent = 'ลูกศรสีเขียว = หน้ารถ · สีชมพู = ไม่ใส่ในเกม · สีอื่นตามประเภทวัสดุด้านล่าง';
+  hint.textContent = 'ลูกศรสีเขียว = หน้ารถ · สีชมพู = ไม่ใส่ในเกม · ล้อดำโปร่ง = ล้อของเกม · สีอื่นตามประเภทวัสดุด้านล่าง';
   box.appendChild(hint);
+
+  // Fit to the game's wheels.
+  const wsub = document.createElement('div');
+  wsub.className = 'edit-sub';
+  wsub.textContent = '🛞 ให้ซุ้มล้อตรงกับล้อในเกม';
+  box.appendChild(wsub);
+  const gw = srcModel.gameWheels;
+  const wnote = document.createElement('p');
+  wnote.className = 'hint';
+  const refit = () => {
+    srcModel.fitNote = fitToWheels(m, gw, srcModel.fitMode) || 'ไม่เจอล้อในโมเดล';
+    wnote.textContent = `ปรับแล้ว: ${srcModel.fitNote}`;
+    showModelPreview();
+  };
+  wnote.textContent = `ปรับแล้ว: ${srcModel.fitNote}`;
+  const num = (label, key, step) => {
+    const row = document.createElement('label');
+    row.className = 'row';
+    row.innerHTML = `<span>${label}</span>`;
+    const i = document.createElement('input');
+    i.type = 'number'; i.step = step; i.value = gw[key]; i.style.width = '80px';
+    i.addEventListener('change', () => { gw[key] = Number(i.value) || gw[key]; refit(); });
+    row.appendChild(i);
+    box.appendChild(row);
+  };
+  box.appendChild(pickerRow('วิธีปรับ', [['uniform', 'ย่อ/ขยายทั้งคันเท่ากัน (ทรงเดิม)'], ['stretch', 'ยืดให้ตรงทุกด้าน (ยาว กว้าง สูง)']], srcModel.fitMode, (v) => { srcModel.fitMode = v; refit(); }));
+  num('ล้อหน้าอยู่ที่ (ม. จากกลางรถ)', 'front', 0.01);
+  num('ล้อหลังอยู่ที่ (ม.)', 'rear', 0.01);
+  num('รัศมีล้อ (ม.)', 'radius', 0.01);
+  num('ล้อห่างจากกลางรถ (ม.)', 'track', 0.01);
+  const wb = document.createElement('div');
+  wb.className = 'btns';
+  const fitB = document.createElement('button');
+  fitB.textContent = '🛞 ปรับให้ตรงล้อเกม';
+  fitB.addEventListener('click', refit);
+  const origB = document.createElement('button');
+  origB.textContent = '↺ ขนาดเดิมของโมเดล';
+  origB.addEventListener('click', () => { unfitWheels(m); wnote.textContent = 'ใช้ขนาดเดิมของโมเดล (ล้อเกมอาจไม่ตรงซุ้มล้อ)'; showModelPreview(); });
+  wb.append(fitB, origB);
+  box.append(wb, wnote);
+  const wh = document.createElement('p');
+  wh.className = 'hint';
+  wh.textContent = 'ค่าเริ่มต้น = ล้อของ gtv98 (รถที่ใช้ลงทะเบียน) ถ้าลงทะเบียนจากรถคันอื่น ใส่ตำแหน่งล้อของคันนั้น · ดูในเกมแล้วล้อเลื่อนไปทางไหน ปรับตัวเลขตามได้';
+  box.appendChild(wh);
 
   // Material categories.
   const det = document.createElement('details');

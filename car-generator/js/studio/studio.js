@@ -11,7 +11,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
 import { MeshoptSimplifier } from 'meshoptimizer';
 import { EditMesh, SLOTS, partVerts } from './editMesh.js';
-import { loadModel, convert, bendTemplate, writeCar, smoothNormals, categoryOf, removeHidden, CATEGORIES } from '../convert.js';
+import { loadModel, convert, bendTemplate, GAME_WHEELS, fitToWheels, unfitWheels, writeCar, smoothNormals, categoryOf, removeHidden, CATEGORIES } from '../convert.js';
 import { makeZip } from '../zip.js';
 import { checkCar, renderChecks } from '../checkCar.js';
 
@@ -808,13 +808,36 @@ function importCarFiles(files) {
   return m;
 }
 
+// The game's wheels (gtv98's places), dark see-through, in every view.
+const gameWheelGroup = new THREE.Group();
+world.add(gameWheelGroup);
+function showGameWheels(on) {
+  gameWheelGroup.clear();
+  if (!on) return;
+  const gw = GAME_WHEELS.gtv98;
+  const mat = new THREE.MeshStandardMaterial({ color: '#111318', transparent: true, opacity: 0.6, depthWrite: false });
+  for (const y of [gw.front, gw.rear]) for (const x of [-gw.track, gw.track]) {
+    const t = new THREE.Mesh(new THREE.CylinderGeometry(gw.radius, gw.radius, 0.22, 28).rotateZ(Math.PI / 2), mat);
+    t.position.set(x, y, gw.radius);
+    gameWheelGroup.add(t);
+  }
+}
+function applyWheelFit() {
+  if (!refModel) return '';
+  if ($('ref-fit').checked) return fitToWheels(refModel, GAME_WHEELS.gtv98) || 'ไม่เจอล้อในโมเดล';
+  unfitWheels(refModel);
+  return 'ขนาดเดิมของโมเดล';
+}
+
 async function openReference(file) {
   $('ref-info').textContent = `กำลังเปิด ${file.name}…`;
   await tick();
   try {
     refModel = await loadModel(file);
   } catch (e) { $('ref-info').textContent = `เปิดไม่ได้: ${e.message}`; return; }
+  const note = applyWheelFit();
   await showReference(refModel, $('ref-outside').checked);
+  $('ref-info').textContent += ` · ${note}`;
   if (!$('car-name').dataset.touched) $('car-name').value = 'rc_canyon';
   zoomAll();
 }
@@ -954,6 +977,7 @@ $('btn-assign-mat').addEventListener('click', () => assignSelected('mat', $('cur
 $('btn-reduce').addEventListener('click', reduceSelected);
 $('btn-mirror-all').addEventListener('click', mirrorAll);
 $('btn-hidden').addEventListener('click', removeHiddenFaces);
+$('ref-fit').addEventListener('change', async () => { showGameWheels($('ref-fit').checked); if (refModel) { const note = applyWheelFit(); await showReference(refModel, $('ref-outside').checked); $('ref-info').textContent += ` · ${note}`; } });
 $('ref-outside').addEventListener('change', async (e) => { if (refModel) await showReference(refModel, e.target.checked); });
 $('ref-opacity').addEventListener('input', (e) => { refMat.opacity = Number(e.target.value); });
 $('ref-show').addEventListener('change', (e) => { if (refMesh) refMesh.visible = e.target.checked; });
@@ -1041,6 +1065,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 buildBlueprints();
+showGameWheels(true);
 offerRestore();
 refresh();
 render();

@@ -107,7 +107,15 @@ export async function checkCar(files, name, template = null) {
     try {
       const img = await imagePixels(mask);
       const om = omOf(body);
-      let red = 0; let n = 0; let strip = 0;
+      let red = 0; let n = 0; let strip = 0; let flat = 0; let tris = 0;
+      for (const s of om.submeshes) {
+        for (let i = s.indexStart; i + 2 < s.indexStart + s.indexCount; i += 3) {
+          const [a, b, c] = [0, 1, 2].map((k) => om.indices[i + k] + s.vertexStart);
+          const area = (om.uvs[b * 2] - om.uvs[a * 2]) * (om.uvs[c * 2 + 1] - om.uvs[a * 2 + 1]) - (om.uvs[c * 2] - om.uvs[a * 2]) * (om.uvs[b * 2 + 1] - om.uvs[a * 2 + 1]);
+          if (Math.abs(area) < 1e-12) flat++;
+          tris++;
+        }
+      }
       for (let i = 0; i < om.uvs.length; i += 2) {
         const u = om.uvs[i]; const v = om.uvs[i + 1];
         const x = Math.min(img.w - 1, Math.max(0, Math.floor((((u % 1) + 1) % 1) * img.w)));
@@ -117,7 +125,8 @@ export async function checkCar(files, name, template = null) {
         n++;
       }
       const pct = Math.round((red / Math.max(1, n)) * 100);
-      if (strip > n * 0.9) warn('สีรถอ่านจากแถบเล็กบนสุดของมาสก์ (แบบที่เข้าเกมแล้วเป็นสีดำ เปลี่ยนสีไม่ได้) · สร้างใหม่ด้วยเว็บเวอร์ชันนี้จะใช้มาสก์แบบช่องใหญ่');
+      if (flat > tris * 0.3) bad(`UV แบน: ${Math.round((flat / tris) * 100)}% ของสามเหลี่ยมมีทุกมุมอยู่จุดเดียวบนรูป (แบบที่ในเกมเป็นสีดำ/เทาโปร่ง และเปลี่ยนสีไม่ได้) · สร้างใหม่ด้วยเว็บเวอร์ชันนี้`);
+      else if (strip > n * 0.9) warn('สีรถอ่านจากแถบเล็กบนสุดของมาสก์ (แบบเก่า) · สร้างใหม่ด้วยเว็บเวอร์ชันนี้');
       else if (pct < 20) warn(`ตัวถังเปลี่ยนสีได้แค่ ${pct}% (ส่วนที่เหลือเป็นสีดำตายตัว)`);
       else ok(`ตัวถังส่วนที่เปลี่ยนสีได้ประมาณ ${pct}%`);
     } catch { warn('อ่านรูปมาสก์สีไม่ได้'); }

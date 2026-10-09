@@ -160,10 +160,18 @@ export class EditMesh {
       if (n <= 8 && span < 0.02) continue;
       const base = this.verts.length;
       for (let i = 0; i < n; i++) this.verts.push([part.positions[i * 3], part.positions[i * 3 + 1], part.positions[i * 3 + 2]]);
+      // UVs written by this tool stay inside zone columns (or the old top-row cells); a game car's own
+      // UVs spread over the whole texture, so its faces start as paint.
+      let ours = true;
+      for (let i = 0; i < part.uvs.length && ours; i += 2) {
+        const u = part.uvs[i]; const v = part.uvs[i + 1];
+        const fz = u * 16 - Math.floor(u * 16);
+        ours = v < 1 / 32 || (fz > 0.07 && fz < 0.93 && v > 0.025 && v < 0.975);
+      }
       for (let t = 0; t < part.indices.length; t += 3) {
         const a = part.indices[t]; const b = part.indices[t + 1]; const c = part.indices[t + 2];
         const u = part.uvs[a * 2]; const v = part.uvs[a * 2 + 1];
-        const mat = matOfUV(u, v) || 'Body_Color';
+        const mat = (ours && matOfUV(u, v)) || 'Body_Color';
         this.addFace([base + a, base + b, base + c], slot, mat);
       }
     }

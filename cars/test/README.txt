@@ -163,3 +163,12 @@ lower band all around (sills, lower bumpers), colour 3 the front lid only; vents
                          its blue hood → colour 3, the rest colour 1), smoothed by neighbour vote; the model's
                          trim / grille / chrome / plastic materials black (no garage colour). The ⚡ build
                          does the same with "three colours".
+In game 52: the three colours like Escarabajo (kept). A shop decal turns the car a flat beige: the zone UVs
+squeeze the whole car into one thin column of the texture, so the decal shows one spot of itself.
+Decals (and maybe film / plate items) need UVs spread over the texture like gtv98's; that layout gave the black
+triangles (packs 44-47) whose cause is still open.
+53_canyon_uv_ruler_diagnostic.zip  diagnostic: 52's car with every paint piece spread over the whole texture
+                         (u along the car; v by height on the sides, 0 at the roof; across the car on top
+                         faces) and a mask of 4x4 cells coloured colour 1 / 2 / 3 in turn. With colour 1 red,
+                         2 green, 3 blue the car should look like 53_expected.png; cells that come out black or
+                         wrong show which parts of the texture the game does not use that way. Also try a decal.

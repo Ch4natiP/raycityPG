@@ -1,7 +1,7 @@
 // "Check before the game": a car folder (Map rel → Uint8Array) against everything known to break a car
 // in RayCity (2026-10 tests): missing files, broken .0m files, too many vertices per file, single-
 // triangle pieces, pieces the garage animates, paint mask, size, textures.
-import { parseOM, writeOM, omParts } from './om.js';
+import { parseOM, writeOM, omParts, matchTemplateSubmeshes } from './om.js';
 import { decodeSpec, encodeSpec } from './carSpec.js';
 import { matOfUV, zoneUVs, maskPixels, dds, png } from './convert.js';
 
@@ -177,7 +177,7 @@ export async function checkCar(files, name, template = null) {
         for (let i = s.indexStart; i + 2 < s.indexStart + s.indexCount; i += 3) {
           const [a, b, c] = [0, 1, 2].map((k) => om.indices[i + k] + s.vertexStart);
           const area = (om.uvs[b * 2] - om.uvs[a * 2]) * (om.uvs[c * 2 + 1] - om.uvs[a * 2 + 1]) - (om.uvs[c * 2] - om.uvs[a * 2]) * (om.uvs[b * 2 + 1] - om.uvs[a * 2 + 1]);
-          if (Math.abs(area) < 1e-12) flat++;
+          if (Math.abs(area) < 1e-12 && !redAt(img, om.uvs[a * 2], om.uvs[a * 2 + 1])) flat++;
           tris++;
         }
       }
@@ -190,7 +190,7 @@ export async function checkCar(files, name, template = null) {
         n++;
       }
       const pct = Math.round((red / Math.max(1, n)) * 100);
-      if (flat > tris * 0.3) bad(`UV แบน: ${Math.round((flat / tris) * 100)}% ของสามเหลี่ยมมีทุกมุมอยู่จุดเดียวบนรูป (แบบที่ในเกมเป็นสีดำ/เทาโปร่ง และเปลี่ยนสีไม่ได้) · สร้างใหม่ด้วยเว็บเวอร์ชันนี้`);
+      if (flat > tris * 0.3) bad(`UV แบนบนจุดที่มาสก์ไม่ใช่สีแดง: ${Math.round((flat / tris) * 100)}% ของสามเหลี่ยม (ในเกมเป็นสีดำ/เทาโปร่ง เปลี่ยนสีไม่ได้) · กด 🔧 ซ่อม`);
       else if (strip > n * 0.9) warn('สีรถอ่านจากแถบเล็กบนสุดของมาสก์ (แบบเก่า) · สร้างใหม่ด้วยเว็บเวอร์ชันนี้');
       else if (pct < 20) warn(`ตัวถังเปลี่ยนสีได้แค่ ${pct}% (ส่วนที่เหลือเป็นสีดำตายตัว)`);
       else ok(`ตัวถังส่วนที่เปลี่ยนสีได้ประมาณ ${pct}%`);
@@ -233,12 +233,22 @@ export function innerName(files) {
   return base ? base.replace(/_base\.png$/i, '') : null;
 }
 
-const flatShare = (om) => {
+// Is the paint mask red (colour slot 1) under this uv? null mask: unknown → no.
+const redAt = (img, u, v) => {
+  if (!img) return false;
+  const x = Math.min(img.w - 1, Math.max(0, Math.floor((((u % 1) + 1) % 1) * img.w)));
+  const y = Math.min(img.h - 1, Math.max(0, Math.floor((((v % 1) + 1) % 1) * img.h)));
+  return img.data[(y * img.w + x) * 4] > 128;
+};
+
+// Share of triangles with flat UVs (all corners on one texel) on a texel that is not paint. Flat UVs on
+// a red texel are how game cars colour whole pieces (polestar1: 17,706 body points on one red texel).
+const flatShare = (om, img = null) => {
   let flat = 0; let n = 0;
   for (const s of om.submeshes) {
     for (let i = s.indexStart; i + 2 < s.indexStart + s.indexCount; i += 3) {
       const [a, b, c] = [0, 1, 2].map((k) => om.indices[i + k] + s.vertexStart); const U = om.uvs;
-      if (Math.abs((U[b * 2] - U[a * 2]) * (U[c * 2 + 1] - U[a * 2 + 1]) - (U[c * 2] - U[a * 2]) * (U[b * 2 + 1] - U[a * 2 + 1])) < 1e-12) flat++;
+      if (Math.abs((U[b * 2] - U[a * 2]) * (U[c * 2 + 1] - U[a * 2 + 1]) - (U[c * 2] - U[a * 2]) * (U[b * 2 + 1] - U[a * 2 + 1])) < 1e-12 && !redAt(img, U[a * 2], U[a * 2 + 1])) flat++;
       n++;
     }
   }
@@ -271,7 +281,9 @@ export async function repairCar(files, name, template = null, paintAll = true) {
     }
   }
   const body = out.get('body_2.0m');
-  if (body && flatShare(parseOM(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength))) > 0.3) {
+  let maskImg = null;
+  try { if (out.has(`${name}_base.png`)) maskImg = await imagePixels(out.get(`${name}_base.png`)); } catch { maskImg = null; }
+  if (body && flatShare(parseOM(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength)), maskImg) > 0.3) {
     for (const [rel, b] of out) {
       if (!rel.endsWith('.0m')) continue;
       const om = parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
@@ -297,4 +309,81 @@ export async function repairCar(files, name, template = null, paintAll = true) {
     fixes.push('กระจาย UV ที่แบนให้ทุกสามเหลี่ยม + มาสก์สีแบบช่องใหญ่ (แก้รถสีดำ/เทาโปร่ง เปลี่ยนสีไม่ได้)');
   }
   return { files: out, fixes };
+}
+
+// Fills in what a car folder lacks, from the folder itself first and the template second:
+//   - a missing LOD (_0 / _1 / _2) of a mesh: a copy of one it has (game cars ship identical LODs),
+//     else the folder's default mesh, else the template's stand-in
+//   - root files (body LODs, _base / _color png + _s.dds, mesh.xml), dooropen, whole part folders
+//     the template has: the template's, renamed
+//   - an _s.dds next to a png: made from that png
+// Part textures a list.xml names but the folder lacks stay missing (on purpose: the part takes the paint).
+// Returns { files, added: [{ rel, from }] }.
+export async function completeCar(files, name, template) {
+  const out = new Map(files);
+  const added = [];
+  const put = (rel, bytes, from) => { if (!out.has(rel) && bytes) { out.set(rel, bytes); added.push({ rel, from }); } };
+  const tplRel = (rel) => template && [...template.files.keys()].find((t) => t.split(template.name).join(name) === rel);
+  const fromTpl = (rel) => {
+    const t = tplRel(rel);
+    if (!t) return null;
+    const b = template.files.get(t);
+    if (t.endsWith('list.xml')) return encodeSpec(decodeSpec(b).split(template.name).join(name));
+    // A part mesh from the template: its pieces as tiny stand-ins (the template's own shape would
+    // show up on this car); the body is taken whole only when the car has none.
+    if (t.endsWith('.0m') && t.includes('/')) { try { const om = omOf(b); return writeOM(om, matchTemplateSubmeshes(om, [])); } catch { return b; } }
+    return b;
+  };
+  const lodFill = (pre, mesh) => {
+    const have = [0, 1, 2].map((l) => out.get(`${pre}${mesh}_${l}.0m`));
+    const any = have.find(Boolean) || out.get(`${pre}default_2.0m`) || out.get(`${pre}default_0.0m`);
+    for (let l = 0; l < 3; l++) {
+      const rel = `${pre}${mesh}_${l}.0m`;
+      if (out.has(rel)) continue;
+      if (any) put(rel, any, have.find(Boolean) ? `ระดับอื่นของ ${mesh}` : 'default ของชิ้นนี้');
+      else put(rel, fromTpl(rel), `แม่แบบ ${template?.name || ''}`);
+    }
+  };
+  // Root.
+  lodFill('', 'body');
+  for (const suf of ['_base', '_color']) {
+    const png = `${name}${suf}.png`; const dds2 = `${name}${suf}_s.dds`;
+    if (!out.has(png)) put(png, fromTpl(png), `แม่แบบ ${template?.name || ''}`);
+    if (!out.has(dds2) && !out.has(`${name}${suf}_s.png`)) {
+      let made = null;
+      try { const img = await imagePixels(out.get(png)); made = dds(img.data, img.w, img.h, 'full'); } catch { made = null; }
+      put(dds2, made || fromTpl(dds2), made ? `ทำจาก ${png}` : `แม่แบบ ${template?.name || ''}`);
+    }
+  }
+  if (!out.has('mesh.xml')) put('mesh.xml', fromTpl('mesh.xml'), 'แม่แบบ (กล่องชนอาจไม่พอดีรถ)');
+  for (const r of ['dooropen/list.xml', 'dooropen/default.xml']) if (!out.has(r)) put(r, fromTpl(r), 'แม่แบบ');
+  // Part folders: the template's that the car lacks, then every mesh its own list names.
+  const tplDirs = template ? [...new Set([...template.files.keys()].filter((r) => r.includes('/')).map((r) => r.split('/')[0]))].filter((d) => !/^(dooropen|icon)$/i.test(d)) : [];
+  const dirs = new Set([...out.keys()].filter((r) => r.includes('/')).map((r) => r.split('/')[0]));
+  for (const d of tplDirs) {
+    if (dirs.has(d)) continue;
+    for (const t of template.files.keys()) if (t.startsWith(`${d}/`)) { const rel = t.split(template.name).join(name); put(rel, fromTpl(rel), `แม่แบบ (ทั้งโฟลเดอร์ ${d})`); }
+    dirs.add(d);
+  }
+  for (const d of dirs) {
+    if (/^(dooropen|icon)$/i.test(d)) continue;
+    if (!out.has(`${d}/list.xml`)) put(`${d}/list.xml`, fromTpl(`${d}/list.xml`), 'แม่แบบ');
+    const list = out.get(`${d}/list.xml`);
+    if (!list) continue;
+    for (const m of decodeSpec(list).matchAll(/<part\b[^>]*mesh='([^']*)'/g)) {
+      // A mesh the template lists but does not ship (gtv98's skirt default) is not needed.
+      const ownAny = [0, 1, 2].some((l) => out.has(`${d}/${m[1]}_${l}.0m`));
+      const tplLists = template && new RegExp(`mesh='${m[1]}'`).test(decodeSpec(template.files.get(`${d}/list.xml`) || new Uint8Array()));
+      if (!ownAny && tplLists && !template.files.has(`${d}/${m[1]}_0.0m`)) continue;
+      lodFill(`${d}/`, m[1]);
+    }
+    // An _s.dds for each png of this folder.
+    for (const r of [...out.keys()]) {
+      if (!r.startsWith(`${d}/`) || !/\.png$/i.test(r) || /_s\.png$/i.test(r)) continue;
+      const dd = r.replace(/\.png$/i, '_s.dds');
+      if (out.has(dd) || out.has(r.replace(/\.png$/i, '_s.png'))) continue;
+      try { const img = await imagePixels(out.get(r)); put(dd, dds(img.data, img.w, img.h, 'full'), `ทำจาก ${r.split('/').pop()}`); } catch { /* unreadable png */ }
+    }
+  }
+  return { files: out, added };
 }

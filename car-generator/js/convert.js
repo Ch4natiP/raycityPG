@@ -1090,9 +1090,23 @@ export async function convert(model, { name, template, categories = new Map(), m
   log(`ตัวรถ (ถอดล้อแล้ว): ${src.tris.length.toLocaleString()} สามเหลี่ยม, ยาว ${src.length.toFixed(2)} ม., ล้อ ${src.wheels.length}`);
   await tick();
   const m = metrics(src.tris, src.wheels);
+  let bent = null;
   if (layout === 'template') {
+    // The template bent onto this car first: every triangle goes into the file the template has at that
+    // spot (gtv98's doors are in its roof file, not the body) so the UVs copied later come from the
+    // same file and never jump across the texture (pack 44 / 45: black doors).
+    log('ดัดรถแม่แบบเข้าหาทรงรถ แล้วแบ่งชิ้นตามไฟล์ของแม่แบบ…');
+    await tick();
+    const outsideForBend = src.outside || await removeHidden(src.tris, log);
+    ({ bent } = await bendTemplate(model, { name, template, outside: outsideForBend, geometryOnly: true, log }));
+    const near = nearestTemplateFile(bent);
     const slotOf0 = m.slotOf;
-    m.slotOf = (c0, n, mat) => { const s = slotOf0(c0, n, mat); return INTO_DRAWN[s] || s; };
+    m.slotOf = (c0, n, mat) => {
+      const s0 = slotOf0(c0, n, mat);
+      // Lamps stay where the lamp finder put them; everything else follows the template.
+      const s = s0 === 'headlight' || s0 === 'rearlight' ? s0 : near(c0, /glass/i.test(mat) ? 1 : 0) || s0;
+      return INTO_DRAWN[s] || s;
+    };
   }
   let lod;
   if (raw) {
@@ -1119,10 +1133,8 @@ export async function convert(model, { name, template, categories = new Map(), m
   smoothNormals(Object.values(lod).flat());
   const bounds = [[0, 1, 2].map((k) => m.bodyBounds(k, Math.min)), [0, 1, 2].map((k) => m.bodyBounds(k, Math.max))];
   if (layout === 'template') {
-    log('ใช้ UV / รูป / กระจกแบบรถแม่แบบ: ดัดแม่แบบเข้าหาทรงรถ แล้วคัดลอก UV…');
+    log('คัดลอก UV จากรถแม่แบบ…');
     await tick();
-    const outsideForBend = src.outside || await removeHidden(src.tris, log);
-    const { bent } = await bendTemplate(model, { name, template, outside: outsideForBend, geometryOnly: true, log });
     uvsFromTemplate(lod, bent);
   }
   return writeCar(lod, { name, template, bounds, paintAll, partTextures, layout, log });
@@ -1184,6 +1196,15 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, p
   for (const dir of dirs) {
     const listText = decodeSpec(tpl.get(`${dir}/list.xml`) || new Uint8Array());
     const variants = [...listText.matchAll(/<part\b[^>]*name='([^']*)'[^>]*mesh='([^']*)'[^>]*tex='([^']*)'/g)].map((x) => ({ name: x[1], mesh: x[2], tex: x[3] }));
+    // Tail lamps as game cars build them (polestar1): the lamp shape once as the housing (kind 0) and
+    // the same shape again as the brake / tail light (kind 3) and the indicator (kind 4) pieces,
+    // which the game lights.
+    if (asTemplate && dir === 'rearlight' && lod[dir]?.some((p) => p.kind === 3 || p.kind === 4)) {
+      const lamps = lod[dir].filter((p) => p.kind === 3 || p.kind === 4);
+      const rest = lod[dir].filter((p) => !(p.kind === 3 || p.kind === 4));
+      const shape = merge(lamps);
+      lod[dir] = [...rest, { ...shape, kind: 0 }, { ...shape, kind: 3 }, { ...shape, kind: 4 }];
+    }
     const ours = lod[dir] ? byKind(lod[dir], tplLod(dir, tpl.has(`${dir}/default_2.0m`) ? 'default' : (variants[0]?.mesh || 'default'), 2)) : null;
     const tplHas = (mesh) => tpl.has(`${dir}/${mesh}_0.0m`);
     if (ours) {
@@ -1224,14 +1245,9 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, p
   }
   // Paint mask (zone columns) and the transparent body detail layer — or the template's own.
   if (asTemplate) {
-    for (const suffix of ['_base.png', '_base_s.dds']) if (tpl.has(`${tplName}${suffix}`)) out.set(`${name}${suffix}`, tpl.get(`${tplName}${suffix}`));
-    // The body detail layer stays transparent: gtv98's has its plate (orange) and black / grey swatches,
-    // and triangles whose copied UVs cross a seam smear them over the car (pack 44: black patches with
-    // orange lines on the doors and the rear; packs 39/40 with a transparent layer: doors white).
-    const [cw2, ch2] = pngSize(tpl.get(`${tplName}_color.png`), [128, 64]);
-    const clear = new Uint8ClampedArray(cw2 * ch2 * 4);
-    out.set(`${name}_color.png`, await png(clear, cw2, ch2));
-    out.set(`${name}_color_s.dds`, dds(clear, cw2, ch2, 'half'));
+    // The template's own mask and colour layer as they are (pack 45 with a transparent colour layer
+    // was as black as 44: the layer was not the cause).
+    for (const suffix of ['_base.png', '_base_s.dds', '_color.png', '_color_s.dds']) if (tpl.has(`${tplName}${suffix}`)) out.set(`${name}${suffix}`, tpl.get(`${tplName}${suffix}`));
     if (paintAll) {
       // The whole car on colour slot 1 (red): the template's own slot 2 / 3 areas (gtv98: green trim,
       // blue hood) land as patches on another car's shape.
@@ -1436,6 +1452,40 @@ export { omParts, creaseNormals, smoothNormals, cellUV, CELLS, ZONES, merge, dds
 // from its paint pieces), else anywhere on the car. With it the template's own textures, decals and
 // see-through glass work like on the template.
 const KIND_OF = { Glass_Gray: 1, Taillight_Glass: 3, Turn_Signal_LED: 4 };
+
+// (point, kind) → the slot whose template file has the closest surface there (stock files: body and
+// the parts' default meshes; moving pieces left out), or null.
+export function nearestTemplateFile(bent) {
+  const sets = new Map();
+  for (const [rel, { om, parts }] of bent) {
+    if (!/^body_2\.0m$|\/default_2\.0m$/.test(rel)) continue;
+    const slot = rel === 'body_2.0m' ? 'body' : rel.split('/')[0];
+    parts.forEach((p, k) => {
+      const f = om.submeshes[k].flags;
+      if (f[1] || f[2] || p.positions.length / 3 <= 8) return;
+      const kind = f[0] === 1 ? 1 : 0;
+      const e = sets.get(kind) || { P: [], slots: [] };
+      for (let t = 0; t < p.indices.length; t += 3) {
+        for (let j = 0; j < 3; j++) { const i = p.indices[t + j]; e.P.push(p.positions[i * 3], p.positions[i * 3 + 1], p.positions[i * 3 + 2]); }
+        e.slots.push(slot);
+      }
+      sets.set(kind, e);
+    });
+  }
+  const trees = new Map();
+  for (const [kind, e] of sets) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(e.P), 3));
+    trees.set(kind, { bvh: new MeshBVH(g, { indirect: true }), slots: e.slots });
+  }
+  const q = new THREE.Vector3();
+  return (c, kind = 0) => {
+    const t = trees.get(kind) || trees.get(0);
+    if (!t) return null;
+    const hit = t.bvh.closestPointToPoint(q.set(c[0], c[1], c[2]), {});
+    return hit ? t.slots[hit.faceIndex] : null;
+  };
+}
 export function uvsFromTemplate(lod, bent) {
   const sets = new Map();
   const add = (key, P, UV) => { const e = sets.get(key) || { P: [], UV: [] }; for (const x of P) e.P.push(x); for (const x of UV) e.UV.push(x); sets.set(key, e); };
@@ -1492,6 +1542,44 @@ export function uvsFromTemplate(lod, bent) {
         }
       }
       p.uvs = uvs;
+      // A triangle whose corners took UVs from different template islands would stretch over the whole
+      // texture (black / random patches in game): it gets its own corners, all mapped through the one
+      // template triangle under its middle.
+      const P = p.positions; const I = Uint32Array.from(p.indices); p.indices = I;
+      const addP = []; const addN = []; const addUV = [];
+      let nv = P.length / 3;
+      const lens = (a, b) => Math.hypot(P[a * 3] - P[b * 3], P[a * 3 + 1] - P[b * 3 + 1], P[a * 3 + 2] - P[b * 3 + 2]);
+      const uvl = (a, b) => Math.hypot(uvs[a * 2] - uvs[b * 2], uvs[a * 2 + 1] - uvs[b * 2 + 1]);
+      for (let t = 0; t < I.length; t += 3) {
+        const v = [I[t], I[t + 1], I[t + 2]];
+        const span = Math.max(uvl(v[0], v[1]), uvl(v[1], v[2]), uvl(v[0], v[2]));
+        const size = Math.max(lens(v[0], v[1]), lens(v[1], v[2]), lens(v[0], v[2]));
+        if (!(span > 0.04 && span > size * 0.35)) continue;
+        q.set(0, 0, 0);
+        for (const i of v) q.add(A.set(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]));
+        q.divideScalar(3);
+        let set = local; let hit = local ? local.bvh.closestPointToPoint(q, {}, 0, 0.12) : null;
+        if (!hit) { set = global; hit = global.bvh.closestPointToPoint(q, {}); }
+        const f = hit.faceIndex; const Pp = set.P; const U = set.UV;
+        A.set(Pp[f * 9], Pp[f * 9 + 1], Pp[f * 9 + 2]); B.set(Pp[f * 9 + 3], Pp[f * 9 + 4], Pp[f * 9 + 5]); C.set(Pp[f * 9 + 6], Pp[f * 9 + 7], Pp[f * 9 + 8]);
+        tri.set(A, B, C);
+        const pl = new THREE.Plane(); tri.getPlane(pl);
+        v.forEach((i, j) => {
+          const c = new THREE.Vector3(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]);
+          pl.projectPoint(c, c);
+          tri.getBarycoord(c, bary);
+          const u = U[f * 6] * bary.x + U[f * 6 + 2] * bary.y + U[f * 6 + 4] * bary.z;
+          const w = U[f * 6 + 1] * bary.x + U[f * 6 + 3] * bary.y + U[f * 6 + 5] * bary.z;
+          addP.push(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]); addN.push(p.normals[i * 3], p.normals[i * 3 + 1], p.normals[i * 3 + 2]);
+          addUV.push(Math.min(1, Math.max(0, u)), Math.min(1, Math.max(0, w)));
+          I[t + j] = nv + j;
+        });
+        nv += 3;
+      }
+      if (addP.length) {
+        const cat = (a, b) => { const o = new Float32Array(a.length + b.length); o.set(a); o.set(b, a.length); return o; };
+        p.positions = cat(P, addP); p.normals = cat(p.normals, addN); p.uvs = cat(uvs, addUV);
+      }
     }
   }
 }

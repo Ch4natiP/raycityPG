@@ -9,7 +9,7 @@ import { SPEC_TEMPLATE, SPEC_FIELDS, readSpec, writeSpec, encodeSpec, decodeSpec
 import { makeZip, readZip } from './zip.js';
 import { IDENTITY, slotOfPath, bboxOf, editFile, editFileInfo, editMeshXml, renamePath, countsOf, ready as editReady } from './carEdit.js';
 import { SCHEMA, PRESETS, presetParams, randomParams } from './params.js';
-import { checkCar, renderChecks, repairCar } from './checkCar.js';
+import { checkCar, renderChecks, repairCar, completeCar } from './checkCar.js';
 import { CATEGORIES, MODEL_TYPES, loadModel, convert, bendTemplate, turnAround, categoryOf, GAME_WHEELS, fitToWheels, unfitWheels } from './convert.js';
 
 const STORAGE_KEY = 'raycity-car-generator:params';
@@ -914,7 +914,8 @@ async function openEmbeddedCar(name) {
 
 // Test packs (../cars/test/*.zip, embedded at build time): one download button each.
 const TEST_PACK_INFO = {
-  '45_canyon_clear_detail_layer.zip': ['ชุด 45: แบบ 44 + ชั้นรายละเอียดใส (แก้ประตู/ท้ายดำ) ⭐ ลองอันนี้', 'ต่างจาก 44 แค่ 2 ไฟล์ canyon_color.png / canyon_color_s.dds (เป็นแบบใสเหมือนชุด 39 ที่ประตูขาว)'],
+  '46_canyon_files_like_gtv98.zip': ['ชุด 46: ทุกชิ้นอยู่ไฟล์เดียวกับ gtv98 (ประตูอยู่ใน roof) + สี 3 ช่องแบบ 43 ⭐ ลองอันนี้', 'แก้ประตู/ท้ายดำ: ลาย UV ไม่กระโดดข้ามรูปแล้ว (เหลือ 0.2%) · ไฟท้ายทำแบบ polestar1 (ไฟ 3 ชั้น)'],
+  '45_canyon_clear_detail_layer.zip': ['ชุด 45: แบบ 44 + ชั้นรายละเอียดใส (ในเกมยังดำ)', 'ต่างจาก 44 แค่ 2 ไฟล์ canyon_color.png / canyon_color_s.dds (เป็นแบบใสเหมือนชุด 39 ที่ประตูขาว)'],
   '44_canyon_front_into_hood.zip': ['ชุด 44: แบบ 42 + ย้ายหน้ารถ/สเกิร์ตไปอยู่ในไฟล์ฝากระโปรง/หลังคา', 'เผื่อเกมไม่แสดงไฟล์กันชนหน้า ไฟหน้า สเกิร์ต · ไฟล์ที่เกมแสดงแน่: ตัวถัง ฝากระโปรง หลังคา กันชนหลัง ไฟท้าย'],
   '43_canyon_gtv98_layout_gtv98_paint.zip': ['ชุด 43: แบบ gtv98 + มาสก์สีของ gtv98 (3 ช่องสี)', 'ตัวถัง=สี1 ขอบล่าง/กันชน=สี2 ฝากระโปรง=สี3 แบบ gtv98 · กระจกใส · มีลายจุดเพี้ยนบ้าง'],
   '42_canyon_gtv98_layout_no_part_textures.zip': ['ชุด 42: แบบ gtv98 · ไม่มีรูปชิ้นส่วน ⭐ ลองอันนี้', 'กระจกใส + ใส่ลายได้ (ผ่านในชุด 41) + ชิ้นส่วนรับสีรถจากตัวถัง (แบบชุด 39) แก้ส่วนดำ/โปร่ง'],
@@ -1016,6 +1017,36 @@ function bindOmButtons() {
     try { tpl = await modelTemplate(); } catch { /* no template: skip the template checks */ }
     const list = await checkCar(files, folder.name, tpl);
     renderChecks(el, list);
+    // What the folder lacks, file by file, and a button to fill it in.
+    const { added } = await completeCar(files, folder.name, tpl);
+    const box = document.createElement('div');
+    box.className = 'complete-box';
+    if (!added.length) {
+      box.textContent = '📁 ไฟล์ครบทั้งโฟลเดอร์แล้ว ไม่มีอะไรต้องเติม';
+    } else {
+      const det = document.createElement('details');
+      det.open = added.length <= 12;
+      const sum = document.createElement('summary');
+      sum.textContent = `📁 โฟลเดอร์นี้ขาด ${added.length} ไฟล์ (กดดูรายการ)`;
+      const ul = document.createElement('ul');
+      for (const a of added) { const li = document.createElement('li'); li.textContent = `${a.rel} ← จะใช้ ${a.from}`; ul.appendChild(li); }
+      det.append(sum, ul);
+      const go = document.createElement('button');
+      go.className = 'accent';
+      go.textContent = `➕ เติมไฟล์ที่ขาดให้ครบ แล้วดาวน์โหลด ${folder.name}.zip`;
+      go.addEventListener('click', async () => {
+        go.disabled = true;
+        const { files: full } = await completeCar(files, folder.name, tpl);
+        const zipFiles = [...full].sort((a, b) => a[0].localeCompare(b[0])).map(([rel, data]) => ({ path: `${folder.name}/${rel}`, data }));
+        download(await makeZip(zipFiles), `${folder.name}.zip`);
+        const entries = zipFiles.map((z) => ({ path: z.path, file: new File([z.data], z.path.split('/').pop()) }));
+        await openCarFolder(entries);
+        const after = await checkCar(full, folder.name, tpl);
+        renderChecks(el, [{ level: 'ok', text: `➕ เติมแล้ว ${added.length} ไฟล์ · เปิดโฟลเดอร์ที่ครบแล้วในจอ 3D` }, ...after]);
+      });
+      box.append(det, go);
+    }
+    el.appendChild(box);
     if (list.some((c) => /ซ่อมให้อัตโนมัติ|UV แบน/.test(c.text))) {
       const fix = document.createElement('button');
       fix.className = 'accent';

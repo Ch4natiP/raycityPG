@@ -104,3 +104,27 @@ zombie1 (a car from the game, 2026-10-10) studied against gtv98:
   mostly (mean alpha 8-60): low alpha lets the paint show; lamps are opaque where the lamp art is.
 - _base = paint mask: red slot 1 over most, green strips (slot 2), a blue block (slot 3); alpha 199-255.
 - Lamps map into their part texture's lamp art (headlight uv 0.50-0.75 x 0.75-0.87).
+
+In game 45 (44 with a transparent colour layer): doors / rear quarter still black. Not the colour layer.
+In game 43 (gtv98 3-slot mask): slot 1 / 2 / 3 colours show like gtv98, black / see-through patches remain.
+Cause found: gtv98's body file has no door at all (its UV sheet has an empty band between the front and
+rear quarters): gtv98's doors are in its roof file. Our doors sat in the body file, took UVs from the
+nearest body pieces (sills, small inner islands) and 16-33 % of triangles stretched across the texture.
+-> Template layout now: the template is bent onto the car first and every triangle goes into the file the
+   template has at that spot (doors → roof), then UVs are copied from that file; a triangle whose corners
+   still land on different islands gets its own corners mapped through one template triangle.
+   Stretched UVs: 16-33 % → 0.2 %.
+46_canyon_files_like_gtv98.zip  pack 35 shape, every piece in gtv98's file for that spot, gtv98's 3-slot
+                         mask and colour layer (like 43), tail lamps polestar1-style (below).
+
+polestar1 (a high-poly car from the game, 2026-10-10):
+- body_2.0m 52,684 points in one file (pieces up to 30,068), roof 22,000+, every LOD file identical (0 = 1 = 2).
+- Doors (moving pieces [0,1,0] / [0,1,1], door glass [1,1,0] / [1,1,1]) are in the roof file, like gtv98's doors.
+- Flat UVs everywhere (17,706 body points on one texel, all glass on one texel): fine because the texel is
+  red in _base. What matters is the mask colour under the UV, not the UV spread.
+- _base 512: red with a green / blue band; _color 128x64 fully opaque dark cabin art (seats, wheel).
+- Textures: "_s" copies are .png (no .dds at all) the same size as the png.
+- Headlight: a kind 2 lens piece (1,754 points) + the housing (kind 0); the list names polestar1_headlight but
+  the file is mclaren_headlight.png → no part texture, painted from the mask.
+- Rear light: the lamp shape three times: kind 0 (housing), kind 3 (brake / tail) and kind 4 (indicator),
+  same 16,107 points each; the game lights kinds 3 / 4. Builds now do the same with the tail lamps.

@@ -1,10 +1,11 @@
 // "Check before the game": a car folder (Map rel → Uint8Array) against everything known to break a car
 // in RayCity (2026-10 tests): missing files, broken .0m files, too many vertices per file, single-
 // triangle pieces, pieces the garage animates, paint mask, size, textures.
-import { parseOM } from './om.js';
-import { decodeSpec } from './carSpec.js';
+import { parseOM, writeOM, omParts } from './om.js';
+import { decodeSpec, encodeSpec } from './carSpec.js';
+import { matOfUV, zoneUVs, maskPixels, dds, png } from './convert.js';
 
-const TESTED_OK = 3631; // vertices per file seen working in game
+const TESTED_OK = 5005; // vertices per file seen working in game (rc_phoenix445's body)
 const CRASH = 8000; // seen crashing
 
 const omOf = (b) => parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
@@ -32,9 +33,11 @@ export async function checkCar(files, name, template = null) {
   const warn = (text) => out.push({ level: 'warn', text });
   const bad = (text) => out.push({ level: 'bad', text });
 
-  // Name.
+  // Name: the folder's name must be the one inside the files (renaming only the folder breaks the car).
   if (!/^[a-z0-9_]+$/.test(name)) bad(`ชื่อรถ "${name}" ต้องเป็น a-z 0-9 _ ตัวเล็กเท่านั้น`);
   else ok(`ชื่อรถ ${name} ใช้ได้ (แพ็กเป็น ${name}.jmd)`);
+  const inner = innerName(files);
+  if (inner && inner !== name) bad(`โฟลเดอร์ชื่อ "${name}" แต่ไฟล์ข้างในยังใช้ชื่อ "${inner}" (เช่น ${inner}_base.png) เกมจะหาไฟล์ไม่เจอ · กด 🔧 ซ่อมให้อัตโนมัติ`);
 
   // Files the game opens.
   const need = ['body_0.0m', 'body_1.0m', 'body_2.0m', `${name}_base.png`, `${name}_base_s.dds`, `${name}_color.png`, `${name}_color_s.dds`, 'mesh.xml'];
@@ -160,4 +163,66 @@ export function renderChecks(el, list) {
     row.textContent = `${icon[c.level]} ${c.text}`;
     el.appendChild(row);
   }
+}
+
+// The name the files inside use (from <name>_base.png), or null.
+export function innerName(files) {
+  const base = [...files.keys()].find((r) => !r.includes('/') && /_base\.png$/i.test(r));
+  return base ? base.replace(/_base\.png$/i, '') : null;
+}
+
+const flatShare = (om) => {
+  let flat = 0; let n = 0;
+  for (const s of om.submeshes) {
+    for (let i = s.indexStart; i + 2 < s.indexStart + s.indexCount; i += 3) {
+      const [a, b, c] = [0, 1, 2].map((k) => om.indices[i + k] + s.vertexStart); const U = om.uvs;
+      if (Math.abs((U[b * 2] - U[a * 2]) * (U[c * 2 + 1] - U[a * 2 + 1]) - (U[c * 2] - U[a * 2]) * (U[b * 2 + 1] - U[a * 2 + 1])) < 1e-12) flat++;
+      n++;
+    }
+  }
+  return flat / Math.max(1, n);
+};
+
+// Repairs what can be repaired without touching the shape: the inner name made the folder's name
+// (file names and list.xml), and flat UVs (built before the fix) spread inside their paint-mask
+// zones with a new mask. Returns { files, fixes: [text] }.
+export async function repairCar(files, name) {
+  const fixes = [];
+  let out = new Map(files);
+  const inner = innerName(out);
+  if (inner && inner !== name) {
+    const next = new Map();
+    for (const [rel, b] of out) {
+      const parts = rel.split('/');
+      parts[parts.length - 1] = parts[parts.length - 1].split(inner).join(name);
+      next.set(parts.join('/'), /list\.xml$/i.test(rel) ? encodeSpec(decodeSpec(b).split(inner).join(name)) : b);
+    }
+    out = next;
+    fixes.push(`เปลี่ยนชื่อไฟล์และ list.xml จาก ${inner} เป็น ${name}`);
+  }
+  const body = out.get('body_2.0m');
+  if (body && flatShare(parseOM(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength))) > 0.3) {
+    for (const [rel, b] of out) {
+      if (!rel.endsWith('.0m')) continue;
+      const om = parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+      const parts = omParts(om);
+      for (const p of parts) {
+        const n = p.positions.length / 3;
+        if (n <= 8) continue; // stand-ins
+        for (let i = 0; i < n; i++) {
+          const uv = zoneUVs(matOfUV(p.uvs[i * 2], p.uvs[i * 2 + 1]) || 'Body_Color', p.positions.subarray(i * 3, i * 3 + 3), p.normals.subarray(i * 3, i * 3 + 3));
+          p.uvs[i * 2] = uv[0]; p.uvs[i * 2 + 1] = uv[1];
+        }
+      }
+      out.set(rel, writeOM(om, parts));
+    }
+    const maskRel = `${name}_base.png`;
+    let w = 1024; let h = 1024;
+    if (out.has(maskRel)) { const bmp = await createImageBitmap(new Blob([out.get(maskRel)], { type: 'image/png' })); w = bmp.width; h = bmp.height; }
+    const px = maskPixels(w, h);
+    out.set(maskRel, await png(px, w, h));
+    out.set(`${name}_base_s.dds`, dds(px, w, h, 'full'));
+    fixes.push('กระจาย UV ที่แบนให้ทุกสามเหลี่ยม + มาสก์สีแบบช่องใหญ่ (แก้รถสีดำ/เทาโปร่ง เปลี่ยนสีไม่ได้)');
+  }
+  return { files: out, fixes };
 }

@@ -31,3 +31,6 @@ OK_gtv98_as_rc_canyon.zip  gtv98 renamed: the working base
                          file reduced to 3,500 verts, zone mask
 
 old/ also holds 22-26 (rewritten to spread UVs) — moved out of the page to keep it small.
+33_canyon_fixed.zip      the user's canyon_1.zip: the folder had been renamed to canyon but every file and
+                         list.xml still said rc_phoenix445 (the game looks for canyon_*); renamed + flat
+                         UVs spread (the page's 🔧 repair button). Same files as gtv98.

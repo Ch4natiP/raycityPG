@@ -1126,7 +1126,7 @@ export async function bendTemplate(model, { name, template, categories = new Map
   return out;
 }
 
-export { omParts, creaseNormals, smoothNormals, cellUV, CELLS, ZONES, merge, dds };
+export { omParts, creaseNormals, smoothNormals, cellUV, CELLS, ZONES, merge, dds, png };
 
 // ---------------------------------------------------------------------------------------------
 // Fitting the car to the game's wheels. The game puts its own wheels where the base car's are (the car

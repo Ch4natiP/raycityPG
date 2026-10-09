@@ -9,7 +9,7 @@ import { SPEC_TEMPLATE, SPEC_FIELDS, readSpec, writeSpec, encodeSpec, decodeSpec
 import { makeZip } from './zip.js';
 import { IDENTITY, slotOfPath, bboxOf, editFile, editFileInfo, editMeshXml, renamePath, countsOf, ready as editReady } from './carEdit.js';
 import { SCHEMA, PRESETS, presetParams, randomParams } from './params.js';
-import { checkCar, renderChecks } from './checkCar.js';
+import { checkCar, renderChecks, repairCar } from './checkCar.js';
 import { CATEGORIES, MODEL_TYPES, loadModel, convert, bendTemplate, turnAround, categoryOf, GAME_WHEELS, fitToWheels, unfitWheels } from './convert.js';
 
 const STORAGE_KEY = 'raycity-car-generator:params';
@@ -914,6 +914,7 @@ async function openEmbeddedCar(name) {
 
 // Test packs (../cars/test/*.zip, embedded at build time): one download button each.
 const TEST_PACK_INFO = {
+  '33_canyon_fixed.zip': ['ชุด 33: canyon (ที่คุณส่งมา) ซ่อมแล้ว ⭐', 'เปลี่ยนชื่อไฟล์ข้างในจาก rc_phoenix445 เป็น canyon ให้ตรงโฟลเดอร์ + แก้ UV แบน (สีเทาโปร่ง) · ไฟล์ครบเหมือน gtv98'],
   '32_phoenix445_fixed_uv.zip': ['ชุด 32: rc_phoenix445 ของคุณ แก้สีเทาโปร่ง/เปลี่ยนสีไม่ได้ ⭐', 'กระจาย UV ให้ทุกสามเหลี่ยม (เดิมแบน 100%) + มาสก์ช่องใหญ่ · ชื่อ rc_phoenix445 เดิม · ทรงเหมือนเดิม'],
   '31_urus_outer_surface_3500.zip': ['ชุด 31: Urus ผิวนอกจริงของโมเดล (ตัดข้างใน) ลดเหลือ 3,500 ⭐', 'ขอบสีคมตามต้นฉบับ ทุกไฟล์ไม่เกิน 3,508 จุด · มาสก์แบบใหม่ · ผ่านตรวจทุกข้อ'],
   '30_your_car_spread_uv_all_red.zip': ['ชุด 30: รถที่คุณส่งมา · ทั้งคันเป็นสีรถ (มาสก์แดงทั้งรูป)', 'ใช้ทดสอบว่าโครงนี้เปลี่ยนสีได้ไหม ถ้าชุดนี้ยังดำ = ปัญหาไม่ใช่ที่มาสก์'],
@@ -999,7 +1000,22 @@ function bindOmButtons() {
     for (const [rel, file] of folder.files) files.set(rel, new Uint8Array(await file.arrayBuffer()));
     let tpl = null;
     try { tpl = await modelTemplate(); } catch { /* no template: skip the template checks */ }
-    renderChecks(el, await checkCar(files, folder.name, tpl));
+    const list = await checkCar(files, folder.name, tpl);
+    renderChecks(el, list);
+    if (list.some((c) => /ซ่อมให้อัตโนมัติ|UV แบน/.test(c.text))) {
+      const fix = document.createElement('button');
+      fix.className = 'accent';
+      fix.textContent = `🔧 ซ่อมให้อัตโนมัติ แล้วดาวน์โหลด ${folder.name}.zip`;
+      fix.addEventListener('click', async () => {
+        fix.disabled = true;
+        const { files: fixed, fixes } = await repairCar(files, folder.name);
+        const zipFiles = [...fixed].sort((a, b) => a[0].localeCompare(b[0])).map(([rel, data]) => ({ path: `${folder.name}/${rel}`, data }));
+        download(await makeZip(zipFiles), `${folder.name}.zip`);
+        const after = await checkCar(fixed, folder.name, tpl);
+        renderChecks(el, [...fixes.map((t) => ({ level: 'ok', text: `🔧 ${t}` })), ...after]);
+      });
+      el.appendChild(fix);
+    }
   });
 }
 

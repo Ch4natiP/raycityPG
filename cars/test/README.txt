@@ -147,3 +147,7 @@ Those are exactly the faces whose zone UVs had v below ~0.33 (side faces: v from
 from the length). gtv98's windows sit on red in its mask (mask avg 255,0,0 under its glass UVs); ours on black.
 49_canyon_48_fixed_low_and_glass.zip  48 with every UV in v 0.40-0.97 (actual 0.52-0.81) and the glass
                          column red in the mask like gtv98's windows.
+In game 49: white all over including the nose and the lower sides; the rear deck black (its UVs v 0.75-0.81)
+and the glass milky white (glass on red mask, colour layer rgb 0).
+50_canyon_49_fixed_deck_and_glass.zip  49 with every UV in v 0.42-0.70 (the band that came out white) and the
+                         colour layer under the glass column at gtv98's value under its windows (56,59,59, a 0).

@@ -91,10 +91,11 @@ export function zoneUVs(mat, P, N) {
     const ax = Math.abs(N[i * 3]); const ay = Math.abs(N[i * 3 + 1]); const az = Math.abs(N[i * 3 + 2]);
     const [a, b] = az >= ax && az >= ay ? [(x + 1.5) / 3, (y + 5) / 10] : ax >= ay ? [(y + 5) / 10, (h + 0.5) / 3] : [(x + 1.5) / 3, (h + 0.5) / 3];
     uv[i * 2] = (z + 0.08 + 0.84 * c(a)) / 16;
-    // Only the lower part of the texture (v 0.40-0.97): everything that took v below ~0.33 came out black
+    // Only the middle of the texture (v 0.42-0.70): everything that took v below ~0.33 came out black
     // in game whatever the mask said there (pack 48: one straight line around the car at 0.45 m, the
-    // nose of the hood).
-    uv[i * 2 + 1] = 0.40 + 0.57 * c(b);
+    // nose of the hood), and so did v above ~0.74 (pack 49: the rear deck).
+    // Pack 49: v 0.52-0.70 white, the rear deck at 0.75-0.81 black → the middle band only.
+    uv[i * 2 + 1] = 0.42 + 0.28 * c(b);
   }
   return uv;
 }
@@ -1286,6 +1287,10 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, p
     out.set(`${name}_base_s.dds`, dds(px, w, h, 'full'));
     const [cw2, ch2] = pngSize(tpl.get(`${tplName}_color.png`), [128, 64]);
     const clear = new Uint8ClampedArray(cw2 * ch2 * 4);
+    // Under the glass column the colour gtv98 has under its windows (56,59,59, alpha 0): on rgb 0 the
+    // glass came out milky white in game (pack 49), on gtv98's value dark and clear (packs 43-47).
+    const gz = ZONES.indexOf('Glass_Gray');
+    for (let y = 0; y < ch2; y++) for (let x = Math.floor((gz / 16) * cw2); x < Math.ceil(((gz + 1) / 16) * cw2); x++) clear.set([56, 59, 59, 0], (y * cw2 + x) * 4);
     out.set(`${name}_color.png`, await png(clear, cw2, ch2));
     out.set(`${name}_color_s.dds`, dds(clear, cw2, ch2, 'half'));
   }

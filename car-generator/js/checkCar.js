@@ -49,8 +49,11 @@ export async function checkCar(files, name, template = null) {
     const text = decodeSpec(list);
     for (const m of text.matchAll(/<part\b[^>]*mesh='([^']*)'[^>]*tex='([^']*)'/g)) {
       for (let l = 0; l < 3; l++) if (!files.has(`${d}/${m[1]}_${l}.0m`)) missing.push(`${d}/${m[1]}_${l}.0m`);
-      if (m[2] && !files.has(`${d}/${m[2]}.png`)) missing.push(`${d}/${m[2]}.png`);
-      if (m[2] && !files.has(`${d}/${m[2]}_s.dds`)) missing.push(`${d}/${m[2]}_s.dds`);
+      // A texture the list names may be missing on purpose (gtv98's hood / roof: painted like the
+      // body); it is needed only where the base car has it.
+      const tplHas = (ext) => template && template.files.has(`${d}/${m[2].split(name).join(template.name)}${ext}`);
+      if (m[2] && tplHas('.png') && !files.has(`${d}/${m[2]}.png`)) missing.push(`${d}/${m[2]}.png`);
+      if (m[2] && tplHas('_s.dds') && !files.has(`${d}/${m[2]}_s.dds`)) missing.push(`${d}/${m[2]}_s.dds`);
     }
     if (!/<part\b/.test(text)) warn(`${d}/list.xml ไม่มีรายการชิ้นส่วน`);
     if (/gtv98|escarabajo/.test(text) && name !== 'gtv98') warn(`${d}/list.xml ยังมีชื่อรถเก่าอยู่ข้างใน`);
@@ -59,6 +62,11 @@ export async function checkCar(files, name, template = null) {
     const tplDirs = new Set([...template.files.keys()].filter((r) => r.includes('/')).map((r) => r.split('/')[0]));
     for (const d of tplDirs) if (!dirs.includes(d) && !/^(dooropen|icon)$/i.test(d)) missing.push(`${d}/ (ทั้งโฟลเดอร์)`);
     if (!files.has('dooropen/default.xml') && template.files.has('dooropen/default.xml')) missing.push('dooropen/default.xml');
+  }
+  if (template) {
+    const extra = [...files.keys()].filter((r) => /\/[^/]+\.png$/.test(r) && !r.startsWith('icon/')
+      && ![...template.files.keys()].some((t) => t.split(template.name).join(name) === r));
+    if (extra.length) bad(`มีรูปชิ้นส่วนที่รถแม่แบบไม่มี ${extra.length} ไฟล์ (${extra.slice(0, 4).join(', ')}) ชิ้นนั้นในเกมจะไม่ได้สีรถ (เป็นสีน้ำตาล/ดำ) · กด 🔧 ซ่อมให้อัตโนมัติ`);
   }
   if (missing.length) bad(`ไฟล์ขาด ${missing.length} ไฟล์: ${missing.slice(0, 8).join(', ')}${missing.length > 8 ? ' …' : ''}`);
   else ok('ไฟล์ครบทุกไฟล์ที่เกมเปิด');
@@ -186,7 +194,7 @@ const flatShare = (om) => {
 // Repairs what can be repaired without touching the shape: the inner name made the folder's name
 // (file names and list.xml), and flat UVs (built before the fix) spread inside their paint-mask
 // zones with a new mask. Returns { files, fixes: [text] }.
-export async function repairCar(files, name) {
+export async function repairCar(files, name, template = null) {
   const fixes = [];
   let out = new Map(files);
   const inner = innerName(out);
@@ -199,6 +207,14 @@ export async function repairCar(files, name) {
     }
     out = next;
     fixes.push(`เปลี่ยนชื่อไฟล์และ list.xml จาก ${inner} เป็น ${name}`);
+  }
+  if (template) {
+    const keep = (r) => !(/\/[^/]+\.(png|dds)$/.test(r) && !r.startsWith('icon/')) || [...template.files.keys()].some((t) => t.split(template.name).join(name) === r);
+    const extra = [...out.keys()].filter((r) => !keep(r));
+    if (extra.length) {
+      for (const r of extra) out.delete(r);
+      fixes.push(`ลบรูปชิ้นส่วนที่รถแม่แบบไม่มี ${extra.length} ไฟล์ (ฝากระโปรง หลังคา ฯลฯ จะได้สีรถเหมือนตัวถัง)`);
+    }
   }
   const body = out.get('body_2.0m');
   if (body && flatShare(parseOM(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength))) > 0.3) {

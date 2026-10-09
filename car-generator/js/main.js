@@ -914,6 +914,7 @@ async function openEmbeddedCar(name) {
 
 // Test packs (../cars/test/*.zip, embedded at build time): one download button each.
 const TEST_PACK_INFO = {
+  '34_canyon_paint_parts.zip': ['ชุด 34: canyon · ฝากระโปรง/หลังคาได้สีรถแล้ว ⭐', 'ต่อจากชุด 33: ลบรูปชิ้นส่วนที่ gtv98 ไม่มี (ฝากระโปรงเคยเป็นน้ำตาล หลังคาดำ) · ไฟล์เหมือน gtv98 ทุกไฟล์'],
   '33_canyon_fixed.zip': ['ชุด 33: canyon (ที่คุณส่งมา) ซ่อมแล้ว ⭐', 'เปลี่ยนชื่อไฟล์ข้างในจาก rc_phoenix445 เป็น canyon ให้ตรงโฟลเดอร์ + แก้ UV แบน (สีเทาโปร่ง) · ไฟล์ครบเหมือน gtv98'],
   '32_phoenix445_fixed_uv.zip': ['ชุด 32: rc_phoenix445 ของคุณ แก้สีเทาโปร่ง/เปลี่ยนสีไม่ได้ ⭐', 'กระจาย UV ให้ทุกสามเหลี่ยม (เดิมแบน 100%) + มาสก์ช่องใหญ่ · ชื่อ rc_phoenix445 เดิม · ทรงเหมือนเดิม'],
   '31_urus_outer_surface_3500.zip': ['ชุด 31: Urus ผิวนอกจริงของโมเดล (ตัดข้างใน) ลดเหลือ 3,500 ⭐', 'ขอบสีคมตามต้นฉบับ ทุกไฟล์ไม่เกิน 3,508 จุด · มาสก์แบบใหม่ · ผ่านตรวจทุกข้อ'],
@@ -1008,7 +1009,7 @@ function bindOmButtons() {
       fix.textContent = `🔧 ซ่อมให้อัตโนมัติ แล้วดาวน์โหลด ${folder.name}.zip`;
       fix.addEventListener('click', async () => {
         fix.disabled = true;
-        const { files: fixed, fixes } = await repairCar(files, folder.name);
+        const { files: fixed, fixes } = await repairCar(files, folder.name, tpl);
         const zipFiles = [...fixed].sort((a, b) => a[0].localeCompare(b[0])).map(([rel, data]) => ({ path: `${folder.name}/${rel}`, data }));
         download(await makeZip(zipFiles), `${folder.name}.zip`);
         const after = await checkCar(fixed, folder.name, tpl);

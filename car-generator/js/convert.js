@@ -933,7 +933,10 @@ export async function writeCar(lod, { name, template, bounds, log = () => {} }) 
     // Transparent detail textures for every texture the list names or the template ships.
     // (One size per folder, the template's biggest texture there, like the builds that work in game.)
     const tplPngs = [...tpl.keys()].filter((r) => r.startsWith(`${dir}/`) && !r.slice(dir.length + 1).includes('/') && r.endsWith('.png'));
-    const texNames = new Set([`${tplName}_${dir}_default`, ...variants.map((v) => v.tex).filter(Boolean), ...tplPngs.map((r) => r.slice(dir.length + 1, -4))]);
+    // Only the textures the template really has: a list.xml texture missing on purpose (gtv98's hood,
+    // roof, spoiler) makes the game paint that part like the body; a transparent stand-in there came
+    // out brown / black in game.
+    const texNames = new Set(tplPngs.map((r) => r.slice(dir.length + 1, -4)));
     const [w, h] = tplPngs.map((r) => pngSize(tpl.get(r), [128, 128])).sort((a, b) => b[0] * b[1] - a[0] * a[1])[0] || [128, 128];
     for (const t of texNames) {
       const px = new Uint8ClampedArray(w * h * 4);

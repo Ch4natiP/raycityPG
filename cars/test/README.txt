@@ -34,3 +34,8 @@ old/ also holds 22-26 (rewritten to spread UVs) — moved out of the page to kee
 33_canyon_fixed.zip      the user's canyon_1.zip: the folder had been renamed to canyon but every file and
                          list.xml still said rc_phoenix445 (the game looks for canyon_*); renamed + flat
                          UVs spread (the page's 🔧 repair button). Same files as gtv98.
+In game: 33 drives and repaints (body white = the chosen colour). Hood came out brown, roof black: gtv98's
+hood / roof / spoiler list.xml names a texture that does not exist on purpose (those parts are then painted
+like the body); our transparent stand-ins there were drawn instead. Builds now write only the template's own
+textures; 27, 29-32 had those 14 extra files removed.
+34_canyon_paint_parts.zip  33 without the extra part textures (file set = gtv98's)

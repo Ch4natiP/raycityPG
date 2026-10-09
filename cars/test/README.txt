@@ -1,15 +1,12 @@
-Test packs, built from gtv98 (a car that works in game). Back up the game's own folders before testing.
+Finding which of our files the game rejects. Every pack unpacks to rc_canyon/ and starts from
+OK_gtv98_as_rc_canyon (gtv98 renamed: confirmed working in game as "Bullet canyon"), with ONE group
+of files swapped for the pickup's. Pack it to rc_canyon.jmd like always and open it in the garage.
 
-A_gtv98_named_rc_canyon.zip  -> unpacks to rc_canyon/
-  The game's own gtv98, only renamed to rc_canyon. Put it in place of rc_canyon, spawn, open in garage.
-  Crashes -> the problem is registering the new car (database / client data), not the 3D files.
+OK_gtv98_as_rc_canyon.zip  the working base (nothing of ours)
+1_all_meshes.zip           every .0m is ours (the pickup's shape, gtv98's pictures - colors will look wrong)
+2_body_mesh_only.zip       only body_0/1/2.0m is ours
+3_images_only.zip          every .png/.dds (and icons) is ours, gtv98's shape
+4_meshxml_only.zip         only mesh.xml (collision box) is ours
 
-B_pickup_named_gtv98.zip     -> unpacks to gtv98/
-  Our pickup, renamed to gtv98. Back up gtv98, put this in its place, open a gtv98 you own.
-  Works -> our files are fine; only the new car's registration is missing.
-
-C_gtv98_with_pickup_body.zip -> unpacks to gtv98/
-  The game's gtv98 with only body_0/1/2.0m replaced by our pickup body (looks half pickup, half gtv98).
-  Use it when B crashes: works -> the problem is in our parts or textures; crashes -> in the body mesh.
-
-Older test packs are in the git history.
+Crashes in 1 but not 2 -> one of the part meshes. Crashes in 2 -> the body mesh. Crashes in 3 -> our images.
+Crashes in 4 -> mesh.xml.

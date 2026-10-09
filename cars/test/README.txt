@@ -13,3 +13,6 @@ Crashes in 4 -> mesh.xml.
 
 Result 2026-10-09: 3_images_only works in game -> our images are fine, the problem is in the .0m meshes.
 5_parts_meshes_only.zip    every part .0m is ours, the body is gtv98's (counterpart of 2_body_mesh_only)
+Result 2026-10-09: 2_body_mesh_only works in game -> our body mesh is fine; the problem is in a part mesh.
+6_body_bumpers_hood_roof.zip          our body + frontbumper, rearbumper, hood, roof
+7_body_lights_grill_spoiler_skirt.zip our body + headlight, rearlight, grill, mainspoiler, skirt

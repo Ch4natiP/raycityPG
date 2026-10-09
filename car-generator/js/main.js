@@ -9,7 +9,7 @@ import { SPEC_TEMPLATE, SPEC_FIELDS, readSpec, writeSpec, encodeSpec, decodeSpec
 import { makeZip } from './zip.js';
 import { IDENTITY, slotOfPath, bboxOf, editFile, editFileInfo, editMeshXml, renamePath, countsOf, ready as editReady } from './carEdit.js';
 import { SCHEMA, PRESETS, presetParams, randomParams } from './params.js';
-import { CATEGORIES, MODEL_TYPES, loadModel, convert, turnAround, categoryOf } from './convert.js';
+import { CATEGORIES, MODEL_TYPES, loadModel, convert, bendTemplate, turnAround, categoryOf } from './convert.js';
 
 const STORAGE_KEY = 'raycity-car-generator:params';
 
@@ -913,11 +913,13 @@ async function openEmbeddedCar(name) {
 
 // Test packs (../cars/test/*.zip, embedded at build time): one download button each.
 const TEST_PACK_INFO = {
+  '28_old_body_bent.zip': ['ชุด 28: ตัวถัง gtv98 ดัดเป็นทรง Urus 🛡 ปลอดภัยสุด', 'ไฟล์ทุกอย่างเหมือน gtv98 ที่เข้าเกมได้ (จำนวนจุดเท่าเดิม) ขยับแค่ตำแหน่งจุดให้เป็นทรงรถใหม่'],
+  '25_limit_4000.zip': ['ชุด 25: หาเพดานเกม — ไม่เกิน 4,000 จุดต่อไฟล์', 'ตัวถัง 3,927 จุด · ลองทีละชุด 25 → 26 → 27 ชุดไหนเด้งบอกด้วย'],
+  '26_limit_4500.zip': ['ชุด 26: หาเพดานเกม — ไม่เกิน 4,500 จุดต่อไฟล์', 'ตัวถัง 4,353 จุด'],
+  '27_limit_6000.zip': ['ชุด 27: หาเพดานเกม — ไม่เกิน 6,000 จุดต่อไฟล์', 'ตัวถัง 5,825 จุด (8,000 เคยเด้ง)'],
   '24_urus_no_reduce.zip': ['ชุด 24: Urus ไม่ลด poly ใช้ผิวจริงของโมเดล ⚠ ทดลอง', 'ทั้งคัน ~105,000 สามเหลี่ยม (ตัวถัง 19,667 จุด) เกินที่เคยผ่าน (3,631) มาก ลองเพื่อดูว่าเกมรับได้ไหม ถ้าเด้งให้กลับไปใช้ชุดฐาน · ชื่อ rc_canyon เดิม'],
   '23_urus_from_web.zip': ['ชุด 23: Lamborghini Urus (ถอดล้อแล้ว) ทำจากหน้าเว็บ ⭐', 'สร้างด้วยปุ่ม "สร้างรถจากโมเดล 3D" ทุกชิ้นได้ 3,500 จุดของตัวเอง (ทั้งคัน ~17,500 สามเหลี่ยม) · ใช้ชื่อ rc_canyon เดิม'],
   '22_flat_colors_3500.zip': ['ชุด 22: สีเรียบต่อสามเหลี่ยม แบบรถในเกม ⭐', 'ทุกสามเหลี่ยมใช้สีเดียว (สีรถ/ดำ) ไม่มีปื้นดำมั่ว · ไม่เกิน 3,500 จุดต่อไฟล์'],
-  '21_more_poly_3800.zip': ['ชุด 21: ✅ เข้าเกมได้ (3,631 จุด) แต่มีปื้นดำ', 'ใช้ทดสอบเพดาน: 3,800 ผ่าน'],
-  '17_full_mask_textures.zip': ['ชุด 17: ✅ เข้าเกมได้ แต่มีปื้นดำ', 'เปลือกนอก ~3,000 สามเหลี่ยม'],
   'OK_gtv98_as_rc_canyon.zip': ['ชุดฐาน (ใช้ได้แล้ว)', 'gtv98 ของเกมเปลี่ยนชื่อเป็น rc_canyon ไม่มีไฟล์ของเราเลย ใช้สลับกลับเมื่อต้องการ'],
 };
 function bindTestPacks() {
@@ -1334,10 +1336,16 @@ function buildModelPanel() {
     const lowCap = Number(capSel.querySelector('select').value) <= 5000;
     modeHint.textContent = MODE_HINTS[v] + (v === 'raw' && lowCap ? ' · ⚠ ลดเหลือไม่กี่พันจุดแบบนี้รถจะเป็นรู/ยุบ (โมเดลจริงมีหลายหมื่นจุด) ใช้ "สร้างผิวใหม่" จะดีกว่า' : '');
     modeHint.style.color = v === 'raw' && lowCap ? '#ff8a6a' : '';
-    voxSel.hidden = v === 'raw';
+    voxSel.hidden = v !== 'shell';
+    hideRow.hidden = v !== 'raw';
+    capSel.hidden = v === 'bend'; capHint.hidden = v === 'bend';
   };
-  const modeSel = pickerRow('ผิวรถ', [['raw', 'ใช้ผิวจริงของโมเดล'], ['shell', 'สร้างผิวใหม่ (เปลือกนอก)']], 'shell', () => updateModeHint());
+  const modeSel = pickerRow('ผิวรถ', [['raw', 'ใช้ผิวจริงของโมเดล'], ['shell', 'สร้างผิวใหม่ (เปลือกนอก)'], ['bend', 'ดัดตัวถังรถเก่า (gtv98)']], 'shell', () => updateModeHint());
   modeHint.textContent = MODE_HINTS.shell;
+  const hideRow = document.createElement('label');
+  hideRow.className = 'row row-check';
+  hideRow.innerHTML = '<input type="checkbox" checked><span>ตัดชิ้นข้างในที่มองไม่เห็นทิ้ง (เบาะ คอนโซล ห้องเครื่อง) · กระจกทึบอยู่แล้ว มองไม่เห็นข้างใน</span>';
+  hideRow.hidden = true;
   const capSel = pickerRow('ลด poly (จุดสูงสุดต่อไฟล์)', [['2000', '2,000'], ['3000', '3,000'], ['3500', '3,500 (แนะนำ)'], ['5000', '5,000 (ทดลอง)'], ['60000', 'ไม่ลด poly']], '3500', (v) => {
     capHint.textContent = CAP_HINTS[v];
     capHint.style.color = Number(v) > 3500 ? '#ff8a6a' : '';
@@ -1346,7 +1354,7 @@ function buildModelPanel() {
   });
   capHint.textContent = CAP_HINTS[3500];
   const voxSel = pickerRow('ความละเอียดผิว', [['0.01', '1.0 ซม. (ละเอียด ช้า)'], ['0.015', '1.5 ซม. (ปกติ)'], ['0.02', '2.0 ซม. (เร็ว)']], '0.015', () => {});
-  box.append(capSel, capHint, modeSel, modeHint, voxSel);
+  box.append(capSel, capHint, modeSel, modeHint, hideRow, voxSel);
   const go = document.createElement('button');
   go.className = 'accent';
   go.textContent = '⚙ สร้างรถ RayCity จากโมเดลนี้';
@@ -1359,10 +1367,12 @@ function buildModelPanel() {
     const say = (t) => { log.textContent += `${t}\n`; };
     try {
       const name = ni.value || 'rc_car';
-      const out = await convert(m, {
+      const out = modeSel.querySelector('select').value === 'bend'
+        ? await bendTemplate(m, { name, template: await modelTemplate(), categories: srcModel.categories, log: say })
+        : await convert(m, {
         name, template: await modelTemplate(), categories: srcModel.categories,
         maxVerts: Number(capSel.querySelector('select').value), voxel: Number(voxSel.querySelector('select').value),
-        raw: modeSel.querySelector('select').value === 'raw', log: say,
+        raw: modeSel.querySelector('select').value === 'raw', hideInterior: hideRow.querySelector('input').checked, log: say,
       });
       say('เปิดรถที่ได้ ตรวจดูแล้วกด "ดาวน์โหลดรถคันนี้ทั้งโฟลเดอร์" ได้เลย');
       const entries = [...out].map(([rel, bytes]) => ({ path: `${name}/${rel}`, file: new File([bytes], rel.split('/').pop()) }));

@@ -11,7 +11,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
 import { MeshoptSimplifier } from 'meshoptimizer';
 import { EditMesh, SLOTS, partVerts } from './editMesh.js';
-import { loadModel, convert, writeCar, smoothNormals, categoryOf, CATEGORIES } from '../convert.js';
+import { loadModel, convert, bendTemplate, writeCar, smoothNormals, categoryOf, removeHidden, CATEGORIES } from '../convert.js';
 import { makeZip } from '../zip.js';
 
 const GAME_MAX = 3500; // vertices per file that work in game (3,631 tested)
@@ -138,11 +138,16 @@ let refModel = null; // from convert.loadModel (wheels removed)
 let refMesh = null;
 const refMat = new THREE.MeshStandardMaterial({ color: '#b9bec9', transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide, roughness: 0.8 });
 
-function showReference(model) {
-  if (refMesh) { world.remove(refMesh); refMesh.geometry.dispose(); }
-  const keep = [];
+async function showReference(model, outsideOnly = false) {
+  if (refMesh) { world.remove(refMesh); refMesh.geometry.dispose(); refMesh = null; }
+  let keep = [];
   const cats = new Map();
   for (let t = 0; t < model.C.length; t++) if (!model.removed[model.C[t]] && categoryOf(model, cats, t) !== 'skip') keep.push(t);
+  if (outsideOnly) {
+    // Only what can be seen from outside: drawing and snapping never land on seats or the engine.
+    const tris = keep.map((t) => ({ a: [...model.P.subarray(t * 9, t * 9 + 3)], b: [...model.P.subarray(t * 9 + 3, t * 9 + 6)], c: [...model.P.subarray(t * 9 + 6, t * 9 + 9)], t }));
+    keep = (await removeHidden(tris, (m) => { $('ref-info').textContent = m; })).map((x) => x.t);
+  }
   const pos = new Float32Array(keep.length * 9); const nrm = new Float32Array(keep.length * 9);
   keep.forEach((t, i) => { pos.set(model.P.subarray(t * 9, t * 9 + 9), i * 9); nrm.set(model.N.subarray(t * 9, t * 9 + 9), i * 9); });
   const g = new THREE.BufferGeometry();
@@ -153,7 +158,7 @@ function showReference(model) {
   refMesh.raycast = acceleratedRaycast;
   refMesh.renderOrder = 2;
   world.add(refMesh);
-  $('ref-info').textContent = `${keep.length.toLocaleString()} สามเหลี่ยม (ถอดล้อแล้ว) · ล้อ ${model.wheels.length}`;
+  $('ref-info').textContent = `${keep.length.toLocaleString()} สามเหลี่ยม (ถอดล้อแล้ว${outsideOnly ? ', ตัดข้างในแล้ว' : ''}) · ล้อ ${model.wheels.length}`;
 }
 
 // Closest point on the reference surface (RayCity space) within `reach`, or null.
@@ -609,6 +614,26 @@ async function reduceSelected() {
   refresh();
 }
 
+// Faces nobody can see from outside removed (seats, engine, inner panels).
+async function removeHiddenFaces() {
+  if (!mesh.faces.length) return;
+  status('กำลังหาหน้าที่อยู่ข้างใน…');
+  busy = true;
+  await tick();
+  const tris = [];
+  mesh.faces.forEach((f, fi) => { for (const t of mesh.triangles(f)) tris.push({ a: mesh.verts[t[0]], b: mesh.verts[t[1]], c: mesh.verts[t[2]], fi }); });
+  const seen = new Set((await removeHidden(tris, status)).map((t) => t.fi));
+  busy = false;
+  const gone = mesh.faces.length - seen.size;
+  if (!gone) { status('ไม่มีหน้าที่ซ่อนอยู่ข้างใน'); return; }
+  pushUndo();
+  mesh.faces = mesh.faces.filter((_, k) => seen.has(k));
+  mesh.compact();
+  selV.clear(); selF.clear();
+  refresh();
+  status(`ลบหน้าข้างในที่มองไม่เห็น ${gone.toLocaleString()} หน้า`);
+}
+
 // The right half (x < 0) replaced by the mirror of the left half.
 function mirrorAll() {
   pushUndo();
@@ -757,12 +782,12 @@ async function openReference(file) {
   try {
     refModel = await loadModel(file);
   } catch (e) { $('ref-info').textContent = `เปิดไม่ได้: ${e.message}`; return; }
-  showReference(refModel);
+  await showReference(refModel, $('ref-outside').checked);
   if (!$('car-name').dataset.touched) $('car-name').value = 'rc_canyon';
   zoomAll();
 }
 
-async function autoBuild() {
+async function autoBuild(bend = false) {
   if (!refModel) { status('เปิดโมเดลต้นแบบก่อน'); return; }
   const log = $('auto-log');
   log.textContent = '';
@@ -770,7 +795,8 @@ async function autoBuild() {
   $('btn-auto').disabled = true;
   busy = true;
   try {
-    const out = await convert(refModel, { name: $('car-name').value || 'rc_car', template: await template(), maxVerts: GAME_MAX, log: say });
+    const opts = { name: $('car-name').value || 'rc_car', template: await template(), maxVerts: GAME_MAX, log: say };
+    const out = bend ? await bendTemplate(refModel, opts) : await convert(refModel, opts);
     pushUndo();
     mesh = importCarFiles(out);
     selV.clear(); selF.clear();
@@ -891,13 +917,16 @@ $('btn-assign-slot').addEventListener('click', () => assignSelected('slot', $('c
 $('btn-assign-mat').addEventListener('click', () => assignSelected('mat', $('cur-mat').value));
 $('btn-reduce').addEventListener('click', reduceSelected);
 $('btn-mirror-all').addEventListener('click', mirrorAll);
+$('btn-hidden').addEventListener('click', removeHiddenFaces);
+$('ref-outside').addEventListener('change', async (e) => { if (refModel) await showReference(refModel, e.target.checked); });
 $('ref-opacity').addEventListener('input', (e) => { refMat.opacity = Number(e.target.value); });
 $('ref-show').addEventListener('change', (e) => { if (refMesh) refMesh.visible = e.target.checked; });
 $('car-name').addEventListener('input', (e) => { e.target.dataset.touched = '1'; });
 
 $('btn-ref').addEventListener('click', () => $('file-ref').click());
 $('file-ref').addEventListener('change', async (e) => { if (e.target.files[0]) await openReference(e.target.files[0]); e.target.value = ''; });
-$('btn-auto').addEventListener('click', autoBuild);
+$('btn-auto').addEventListener('click', () => autoBuild(false));
+$('btn-bend').addEventListener('click', () => autoBuild(true));
 $('btn-new').addEventListener('click', () => { pushUndo(); mesh = new EditMesh(); selV.clear(); selF.clear(); refresh(); setTool('draw'); });
 $('btn-open-car').addEventListener('click', () => $('file-car').click());
 $('file-car').addEventListener('change', async (e) => {

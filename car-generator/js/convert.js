@@ -593,6 +593,31 @@ async function fitShell(hull, ref, m, cap, log) {
   throw new Error('ลด poly ให้ต่ำกว่าเพดานไม่ได้');
 }
 
+// Triangles nobody can see from outside (cabin, seats, engine, inner panels): from the middle of each
+// triangle, rays in 26 directions; when every ray hits the car (windows count as solid: the game
+// shows our glass opaque), the triangle is hidden. Returns the visible triangles.
+export async function removeHidden(tris, log = () => {}) {
+  const ref = makeReference(tris);
+  const dirs = [];
+  for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) if (x || y || z) dirs.push(new THREE.Vector3(x, y, z).normalize());
+  const ray = new THREE.Ray();
+  const keep = [];
+  for (let i = 0; i < tris.length; i++) {
+    const t = tris[i];
+    const c = [0, 1, 2].map((k) => (t.a[k] + t.b[k] + t.c[k]) / 3);
+    let seen = false;
+    for (const d of dirs) {
+      ray.origin.set(c[0] + d.x * 0.002, c[1] + d.y * 0.002, c[2] + d.z * 0.002);
+      ray.direction.copy(d);
+      if (!ref.bvh.raycastFirst(ray, THREE.DoubleSide)) { seen = true; break; }
+    }
+    if (seen) keep.push(t);
+    if (i % 20000 === 19999) { log(`หาชิ้นข้างใน… ${Math.round((i / tris.length) * 100)}%`); await tick(); }
+  }
+  log(`ตัดชิ้นข้างในที่มองไม่เห็น: ${(tris.length - keep.length).toLocaleString()} สามเหลี่ยม (เหลือ ${keep.length.toLocaleString()})`);
+  return keep;
+}
+
 // "Model's own surface" mode: the source triangles themselves (no shell), cut into the template's
 // files by slot, one part per material (welded: same position, normals within 35°), each file
 // reduced only as far as `cap` and the .0m format (65,535 vertices / indices) require. Material
@@ -791,10 +816,11 @@ function renderIcon(bytes) {
 // ---------------------------------------------------------------------------------------------
 // The whole conversion. template: { name, files: Map(rel → Uint8Array) }. Returns Map(rel → Uint8Array).
 
-export async function convert(model, { name, template, categories = new Map(), maxVerts = 3500, voxel = 0.015, raw = false, smooth = true, log = () => {} }) {
+export async function convert(model, { name, template, categories = new Map(), maxVerts = 3500, voxel = 0.015, raw = false, smooth = true, hideInterior = true, log = () => {} }) {
   await MeshoptSimplifier.ready;
   log('อ่านโมเดล…');
   const src = collect(model, categories);
+  if (raw && hideInterior) src.tris = await removeHidden(src.tris, log);
   log(`ตัวรถ (ถอดล้อแล้ว): ${src.tris.length.toLocaleString()} สามเหลี่ยม, ยาว ${src.length.toFixed(2)} ม., ล้อ ${src.wheels.length}`);
   await tick();
   const m = metrics(src.tris, src.wheels);
@@ -914,6 +940,148 @@ export async function writeCar(lod, { name, template, bounds, log = () => {} }) 
   }
   const nv = (rel) => { const b = out.get(rel); return b ? parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)).positions.length / 3 : 0; };
   log(`เสร็จ: ${out.size} ไฟล์ · ตัวถัง ${nv('body_2.0m')} จุด`);
+  return out;
+}
+
+// ---------------------------------------------------------------------------------------------
+// "Old body" mode: a car that works in game (the template) bent into the new model's shape. Every
+// file keeps its own structure (vertex and triangle counts, pieces, flags, UVs, textures) — only the
+// points move: first stretched to the new car's size, then pulled onto the new car's outer surface,
+// with the pulls smoothed so neighbouring points move together. All files move with the same field,
+// so parts still meet the body.
+export async function bendTemplate(model, { name, template, categories = new Map(), rounds = 3, log = () => {} }) {
+  await MeshoptSimplifier.ready;
+  const tpl = template.files;
+  const tplName = template.name;
+  const src = collect(model, categories);
+  const outside = await removeHidden(src.tris, log);
+  const ref = makeReference(outside);
+  const tmn = [Infinity, Infinity, Infinity]; const tmx = [-Infinity, -Infinity, -Infinity];
+  for (const t of outside) for (const p of [t.a, t.b, t.c]) for (let k = 0; k < 3; k++) { tmn[k] = Math.min(tmn[k], p[k]); tmx[k] = Math.max(tmx[k], p[k]); }
+  // Template files and the stock body's size.
+  const oms = new Map();
+  for (const [rel, b] of tpl) if (rel.endsWith('.0m')) oms.set(rel, parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)));
+  const smn = [Infinity, Infinity, Infinity]; const smx = [-Infinity, -Infinity, -Infinity];
+  for (const [rel, om] of oms) {
+    if (!/(^body|\/default)_2\.0m$/.test(rel)) continue;
+    for (let i = 0; i < om.positions.length; i += 3) for (let k = 0; k < 3; k++) { smn[k] = Math.min(smn[k], om.positions[i + k]); smx[k] = Math.max(smx[k], om.positions[i + k]); }
+  }
+  // Stretch: x and y box to box, z from the ground (0) to the top.
+  const stretch = (p) => [
+    tmn[0] + ((p[0] - smn[0]) / (smx[0] - smn[0])) * (tmx[0] - tmn[0]),
+    tmn[1] + ((p[1] - smn[1]) / (smx[1] - smn[1])) * (tmx[1] - tmn[1]),
+    (p[2] / smx[2]) * tmx[2],
+  ];
+  // Every distinct point of every file (by position), its normal and neighbours.
+  const key = (P, i) => `${Math.round(P[i * 3] * 1e4)},${Math.round(P[i * 3 + 1] * 1e4)},${Math.round(P[i * 3 + 2] * 1e4)}`;
+  const ids = new Map(); const pos = []; const nrm = []; const nbr = [];
+  const idOf = (om, i) => {
+    const k = key(om.positions, i);
+    let id = ids.get(k);
+    if (id === undefined) { id = pos.length; ids.set(k, id); pos.push(stretch([om.positions[i * 3], om.positions[i * 3 + 1], om.positions[i * 3 + 2]])); nrm.push([0, 0, 0]); nbr.push(new Set()); }
+    return id;
+  };
+  for (const om of oms.values()) {
+    for (const s of om.submeshes) {
+      for (let t = s.indexStart; t + 2 < s.indexStart + s.indexCount; t += 3) {
+        const v = [0, 1, 2].map((j) => idOf(om, om.indices[t + j] + s.vertexStart));
+        for (let j = 0; j < 3; j++) { nbr[v[j]].add(v[(j + 1) % 3]); nbr[v[j]].add(v[(j + 2) % 3]); }
+      }
+    }
+    for (let i = 0; i < om.positions.length / 3; i++) { const id = idOf(om, i); for (let k = 0; k < 3; k++) nrm[id][k] += om.normals[i * 3 + k]; }
+  }
+  const n = pos.length;
+  log(`ตัวถังเก่า (${tplName}): ${n.toLocaleString()} จุด ดัดเข้าหาผิวรถใหม่…`);
+  await tick();
+  const ray = new THREE.Ray();
+  const target = {};
+  for (let round = 0; round < rounds; round++) {
+    // Pull: along the point's normal (both ways), else to the closest surface point.
+    const reach = round === 0 ? 0.35 : 0.15;
+    const d = new Array(n); const ok = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
+      const p = pos[i]; const nn = norm(nrm[i]);
+      let best = null;
+      for (const sgn of [1, -1]) {
+        ray.origin.set(p[0] + nn[0] * reach * sgn, p[1] + nn[1] * reach * sgn, p[2] + nn[2] * reach * sgn);
+        ray.direction.set(-nn[0] * sgn, -nn[1] * sgn, -nn[2] * sgn);
+        const hit = ref.bvh.raycastFirst(ray, THREE.DoubleSide);
+        if (hit && hit.distance <= reach * 2) {
+          const dist = Math.abs(hit.distance - reach);
+          if (!best || dist < best.dist) best = { dist, q: [hit.point.x, hit.point.y, hit.point.z] };
+        }
+      }
+      if (!best) {
+        const c = ref.bvh.closestPointToPoint(new THREE.Vector3(...p), target, 0, reach);
+        if (c && c.distance <= reach) best = { q: [c.point.x, c.point.y, c.point.z] };
+      }
+      d[i] = best ? sub(best.q, p) : [0, 0, 0];
+      ok[i] = best ? 1 : 0;
+    }
+    // Smooth the pulls over the mesh; points that found nothing take their neighbours'.
+    for (let it = 0; it < 6; it++) {
+      const nd = d.map((v, i) => {
+        let s = [0, 0, 0]; let w = 0;
+        for (const j of nbr[i]) if (ok[j]) { s = [s[0] + d[j][0], s[1] + d[j][1], s[2] + d[j][2]]; w++; }
+        if (!w) return v;
+        const avg = s.map((x) => x / w);
+        const self = ok[i] ? 0.5 : 0;
+        return v.map((x, k) => x * self + avg[k] * (1 - self));
+      });
+      for (let i = 0; i < n; i++) { d[i] = nd[i]; if (nbr[i].size) ok[i] = ok[i] || [...nbr[i]].some((j) => ok[j]) ? 1 : 0; }
+    }
+    for (let i = 0; i < n; i++) pos[i] = [pos[i][0] + d[i][0], pos[i][1] + d[i][1], pos[i][2] + d[i][2]];
+    log(`ดัดรอบที่ ${round + 1}/${rounds}`);
+    await tick();
+  }
+  // Write every file of the template with the moved points (normals recomputed per piece).
+  const out = new Map();
+  const rename = (rel) => rel.split(tplName).join(name);
+  for (const [rel, om] of oms) {
+    const parts = omParts(om);
+    parts.forEach((part, k) => {
+      const base = om.submeshes[k].vertexStart;
+      const P = part.positions;
+      for (let i = 0; i < P.length / 3; i++) {
+        const id = ids.get(key(om.positions, base + i));
+        P[i * 3] = pos[id][0]; P[i * 3 + 1] = pos[id][1]; P[i * 3 + 2] = pos[id][2];
+      }
+      const N = new Float32Array(P.length);
+      for (let t = 0; t < part.indices.length; t += 3) {
+        const [a, b, c] = [part.indices[t], part.indices[t + 1], part.indices[t + 2]];
+        const fn = cross([P[b * 3] - P[a * 3], P[b * 3 + 1] - P[a * 3 + 1], P[b * 3 + 2] - P[a * 3 + 2]], [P[c * 3] - P[a * 3], P[c * 3 + 1] - P[a * 3 + 1], P[c * 3 + 2] - P[a * 3 + 2]]);
+        for (const v of [a, b, c]) for (let k = 0; k < 3; k++) N[v * 3 + k] += fn[k];
+      }
+      for (let i = 0; i < N.length; i += 3) {
+        const l = Math.hypot(N[i], N[i + 1], N[i + 2]);
+        if (l > 1e-12) { N[i] /= l; N[i + 1] /= l; N[i + 2] /= l; } else { N[i] = part.normals[i]; N[i + 1] = part.normals[i + 1]; N[i + 2] = part.normals[i + 2]; }
+      }
+      part.normals = N;
+    });
+    out.set(rename(rel), writeOM(om, parts));
+  }
+  // Everything else as the template, renamed; list.xml names the renamed textures; mesh.xml stretched
+  // and pulled like the body box.
+  for (const [rel, b] of tpl) {
+    if (rel.endsWith('.0m') || rel.startsWith('icon/')) continue;
+    if (/list\.xml$/i.test(rel)) out.set(rename(rel), encodeSpec(decodeSpec(b).split(tplName).join(name)));
+    else if (rel === 'mesh.xml') {
+      const text = decodeSpec(b).replace(/pos=(["'])([^"']+)\1/g, (_, q, v) => `pos=${q}${stretch(v.trim().split(/\s+/).map(Number)).map((c) => c.toFixed(10)).join(' ')}${q}`);
+      out.set(rel, encodeSpec(text));
+    } else out.set(rename(rel), b);
+  }
+  log('สร้างไอคอน…');
+  await tick();
+  for (const rel of [...tpl.keys()].filter((r) => r.startsWith('icon/') && r.endsWith('.png'))) {
+    const key2 = rel.slice(5 + tplName.length + 1, -4);
+    const dir = key2.split('_')[0];
+    const variant = key2.slice(dir.length + 1);
+    const listText = decodeSpec(tpl.get(`${dir}/list.xml`) || new Uint8Array());
+    const v = [...listText.matchAll(/<part\b[^>]*name='([^']*)'[^>]*mesh='([^']*)'/g)].find((x) => x[1] === variant);
+    const meshFile = out.get(`${dir}/${v ? v[2] : 'default'}_2.0m`) || out.get(`${dir}/default_2.0m`);
+    out.set(`icon/${name}_${key2}.png`, meshFile ? await renderIcon(meshFile) : tpl.get(rel));
+  }
+  log(`เสร็จ: ${out.size} ไฟล์ · โครงเดียวกับ ${tplName} ทุกไฟล์ (จำนวนจุดเท่าเดิม)`);
   return out;
 }
 

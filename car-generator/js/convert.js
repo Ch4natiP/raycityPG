@@ -1126,7 +1126,7 @@ export async function convert(model, { name, template, categories = new Map(), m
   const m = metrics(src.tris, src.wheels);
   let bent = null;
   // Both layouts put every piece into the template's file for that spot (doors in roof like gtv98).
-  if (layout === 'template' || layout === 'zones') {
+  if (layout === 'template' || layout === 'zones' || layout === 'atlas' || layout === 'islands') {
     // The template bent onto this car first: every triangle goes into the file the template has at that
     // spot (gtv98's doors are in its roof file, not the body) so the UVs copied later come from the
     // same file and never jump across the texture (pack 44 / 45: black doors).
@@ -1144,7 +1144,7 @@ export async function convert(model, { name, template, categories = new Map(), m
     };
     // Three garage colours where the template has them: its mask's colour under the closest point of
     // the bent template (gtv98: green lower band → colour 2, blue hood → colour 3).
-    if (slots && layout === 'zones') {
+    if (slots && (layout === 'zones' || layout === 'atlas')) {
       const slotAt = await templateMaskSlots(bent, template);
       const paint = src.tris.filter((t) => t.mat === 'Body_Color' || t.mat === 'Wing');
       const lab = smoothLabels(paint, paint.map((t) => slotAt(t.c0)));
@@ -1179,32 +1179,37 @@ export async function convert(model, { name, template, categories = new Map(), m
     log('คัดลอก UV จากรถแม่แบบ…');
     await tick();
     uvsFromTemplate(lod, bent);
+  } else if (layout === 'islands') {
+    log('ตัด UV ตามเกาะของรถแม่แบบ (แผงเดียวกัน ตำแหน่งเดียวกันบนรูป)…');
+    await tick();
+    islandUVs(lod, bent, { slots });
   }
   return writeCar(lod, { name, template, bounds, paintAll, slots, partTextures, layout, log });
 }
 
 // "Atlas" layout: every triangle projected by its own face direction into one region of the texture —
-// left side, right side, top, front, rear, each its own rectangle in the lower two thirds (no overlaps), so a shop decal spreads
+// left side, right side, top, front, rear, each its own rectangle in the band that works (no overlaps), so a shop decal spreads
 // over the car like on a game car (pack 53) and no triangle stretches across the texture (stretched
 // triangles showed black / the wheels' picture, packs 44-53). Points shared across regions are split.
 // Glass, trim and lamps take one point each in a reserved strip (flat UVs on a known texel are how game
 // cars colour whole pieces: polestar1). The mask is drawn triangle by triangle with its colour slot.
 // Returns { mask (1024² RGBA), colour (cw×ch RGBA) }.
-// The top third of the texture (v < 0.33) is the game's own: whatever maps there shows black with the
-// wheels' picture in their colour (pack 54: the whole left side; pack 48: everything below 0.45 m). So is
-// the bottom-left corner (u < 0.08, v > 0.69; pack 48: the rear deck). Everything stays in v 0.34-0.98.
-const ATLAS_FLAT = { 1: [0.12, 0.35], 2: [0.17, 0.35], 3: [0.22, 0.35], glass: [0.27, 0.35], black: [0.32, 0.35] };
+// Only the band v 0.34-0.73 of the texture works for this car in game: above it (v < 0.33) the wheels'
+// picture shows (pack 54: the whole left side; pack 48: everything below 0.45 m), below it (v > 0.74)
+// black / other pictures (pack 55: hood, roof, rear deck, front and rear; packs 48 / 49: the rear deck).
+// Pack 55's sides in v 0.37-0.73 took the three colours and the shop decals right.
+const ATLAS_FLAT = { 1: [0.05, 0.40], 2: [0.05, 0.45], 3: [0.05, 0.50], glass: [0.05, 0.55], black: [0.05, 0.60] };
 function atlasLayout(lod, { slots, paintAll, cw = 128, ch = 64 }) {
   const lo = [Infinity, Infinity, Infinity]; const hi = [-Infinity, -Infinity, -Infinity];
   for (const parts of Object.values(lod)) for (const p of parts) for (let i = 0; i < p.positions.length; i += 3) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p.positions[i + k]); hi[k] = Math.max(hi[k], p.positions[i + k]); }
   const L = hi[1] - lo[1] || 1; const Wd = hi[0] - lo[0] || 1; const H = hi[2] - lo[2] || 1;
   const fx = (x) => (x - lo[0]) / Wd; const fy = (y) => (y - lo[1]) / L; const fz = (z) => (hi[2] - z) / H;
   const proj = {
-    left: (q) => [0.10 + 0.88 * fy(q[1]), 0.37 + 0.19 * fz(q[2])],
-    right: (q) => [0.10 + 0.88 * fy(q[1]), 0.58 + 0.19 * fz(q[2])],
-    top: (q) => [0.10 + 0.58 * fy(q[1]), 0.79 + 0.18 * fx(q[0])],
-    front: (q) => [0.70 + 0.13 * fx(q[0]), 0.79 + 0.18 * fz(q[2])],
-    rear: (q) => [0.85 + 0.13 * fx(q[0]), 0.79 + 0.18 * fz(q[2])],
+    left: (q) => [0.10 + 0.88 * fy(q[1]), 0.345 + 0.12 * fz(q[2])],
+    right: (q) => [0.10 + 0.88 * fy(q[1]), 0.472 + 0.12 * fz(q[2])],
+    top: (q) => [0.10 + 0.58 * fy(q[1]), 0.599 + 0.126 * fx(q[0])],
+    front: (q) => [0.70 + 0.13 * fx(q[0]), 0.599 + 0.126 * fz(q[2])],
+    rear: (q) => [0.85 + 0.13 * fx(q[0]), 0.599 + 0.126 * fz(q[2])],
   };
   const SIZE = 1024;
   const mask = new Uint8ClampedArray(SIZE * SIZE * 4);
@@ -1282,7 +1287,7 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, s
   const tplName = template.name;
   // layout 'template': the pieces already carry the template's UV layout (uvsFromTemplate), so the
   // template's own textures (paint mask, colour layer, part textures) are used as they are.
-  const asTemplate = layout === 'template';
+  const asTemplate = layout === 'template' || layout === 'islands';
   // Geometry still in a file the game does not paint (Studio, old-body mode) joins its drawn neighbour
   // while that file stays within what has loaded in game.
   if (asTemplate) {
@@ -1394,6 +1399,15 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, s
       for (let i = 0; i < px.length; i += 4) { px[i] = 255; px[i + 3] = 255; }
       out.set(`${name}_base.png`, await png(px, w, h));
       out.set(`${name}_base_s.dds`, dds(px, w, h, 'full'));
+    }
+    if (layout === 'islands') {
+      // The template's mask with one black spot (on empty texture) for trim, grilles, lamps.
+      const img = await decodePNG(out.get(`${name}_base.png`));
+      const px = new Uint8ClampedArray(img.data);
+      const cx = Math.round(ISLAND_BLACK[0] * img.w); const cy = Math.round(ISLAND_BLACK[1] * img.h);
+      for (let y = cy - 8; y <= cy + 8; y++) for (let x = cx - 8; x <= cx + 8; x++) px.set([0, 0, 0, 255], (y * img.w + x) * 4);
+      out.set(`${name}_base.png`, await png(px, img.w, img.h));
+      out.set(`${name}_base_s.dds`, dds(px, img.w, img.h, 'full'));
     }
   } else if (atlas) {
     out.set(`${name}_base.png`, await png(atlas.mask, atlas.size, atlas.size));
@@ -1680,6 +1694,98 @@ export async function templateMaskSlots(bent, template) {
     const o = (y * img.w + x) * 4;
     return img.data[o] > 128 ? 1 : img.data[o + 1] > 128 ? 2 : img.data[o + 2] > 128 ? 3 : 0;
   };
+}
+
+// "Islands" layout: the template's own UV sheet, cut like it. Every island of the template (pieces joined
+// by shared points: a side panel, the hood, the roof...) gets a best-fit map from 3D to its UVs over the
+// bent template; each triangle of the car takes the island of the closest template triangle (same file
+// first) and all three corners go through that island's map — corners split where islands meet, so no
+// triangle stretches across the texture (black / other pictures in game, packs 44-53) and shop decals,
+// films and the mask land where they land on the template. Trim, grilles and lamps sit on one black spot.
+const ISLAND_BLACK = [0.336, 0.383]; // empty in gtv98's sheet
+export function islandUVs(lod, bent, { slots = true } = {}) {
+  const sets = new Map(); // key → { P: [], isl: [] (island per triangle) }
+  const islands = [];
+  const add = (key, tri, id) => { const e = sets.get(key) || { P: [], isl: [] }; e.P.push(...tri); e.isl.push(id); sets.set(key, e); };
+  for (const [rel, { om, parts }] of bent) {
+    if (!/^body_2\.0m$|\/default_2\.0m$/.test(rel)) continue;
+    parts.forEach((p, k) => {
+      const f = om.submeshes[k].flags;
+      if (f[1] || f[2] || p.positions.length / 3 <= 8) return;
+      const kind = f[0] === 1 ? 1 : 0;
+      const n = p.positions.length / 3;
+      const par = new Int32Array(n).map((_, i) => i);
+      const find = (x) => { while (par[x] !== x) { par[x] = par[par[x]]; x = par[x]; } return x; };
+      for (let t = 0; t < p.indices.length; t += 3) { const a = find(p.indices[t]); const b = find(p.indices[t + 1]); const c = find(p.indices[t + 2]); par[a] = b; par[find(c)] = b; }
+      const ids = new Map();
+      for (let i = 0; i < n; i++) { const r = find(i); if (!ids.has(r)) { ids.set(r, islands.length); islands.push({ pts: [] }); } islands[ids.get(r)].pts.push(i); }
+      for (const [r, id] of ids) {
+        // least squares u, v = a·x + b·y + c·z + d over the island's points (a little ridge for flat ones)
+        const isl = islands[id]; const M = Array.from({ length: 4 }, () => new Float64Array(4)); const bu = new Float64Array(4); const bv = new Float64Array(4);
+        let u0 = 0; let v0 = 0;
+        for (const i of isl.pts) {
+          const x = [p.positions[i * 3], p.positions[i * 3 + 1], p.positions[i * 3 + 2], 1];
+          for (let a = 0; a < 4; a++) { for (let b = 0; b < 4; b++) M[a][b] += x[a] * x[b]; bu[a] += x[a] * p.uvs[i * 2]; bv[a] += x[a] * p.uvs[i * 2 + 1]; }
+          u0 += p.uvs[i * 2]; v0 += p.uvs[i * 2 + 1];
+        }
+        for (let a = 0; a < 3; a++) M[a][a] += 1e-4;
+        const solve = (A, bb) => { const m = A.map((row, i) => [...row, bb[i]]); for (let c = 0; c < 4; c++) { let piv = c; for (let r2 = c + 1; r2 < 4; r2++) if (Math.abs(m[r2][c]) > Math.abs(m[piv][c])) piv = r2; [m[c], m[piv]] = [m[piv], m[c]]; if (Math.abs(m[c][c]) < 1e-12) return null; for (let r2 = 0; r2 < 4; r2++) if (r2 !== c) { const fct = m[r2][c] / m[c][c]; for (let k2 = c; k2 < 5; k2++) m[r2][k2] -= fct * m[c][k2]; } } return m.map((row, i) => row[4] / row[i]); };
+        isl.cu = solve(M, bu) || [0, 0, 0, u0 / isl.pts.length]; isl.cv = solve(M, bv) || [0, 0, 0, v0 / isl.pts.length];
+        // its own UV box, the map's output is kept inside it
+        let uMin = 1; let uMax = 0; let vMin = 1; let vMax = 0;
+        for (const i of isl.pts) { uMin = Math.min(uMin, p.uvs[i * 2]); uMax = Math.max(uMax, p.uvs[i * 2]); vMin = Math.min(vMin, p.uvs[i * 2 + 1]); vMax = Math.max(vMax, p.uvs[i * 2 + 1]); }
+        isl.box = [uMin, uMax, vMin, vMax];
+      }
+      for (let t = 0; t < p.indices.length; t += 3) {
+        const tri = []; for (let j = 0; j < 3; j++) { const i = p.indices[t + j]; tri.push(p.positions[i * 3], p.positions[i * 3 + 1], p.positions[i * 3 + 2]); }
+        const id = ids.get(find(p.indices[t]));
+        add(`${rel}|${kind}`, tri, id); add(`*|${kind}`, tri, id);
+      }
+    });
+  }
+  const trees = new Map();
+  for (const [key, e] of sets) { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(e.P), 3)); trees.set(key, { bvh: new MeshBVH(g, { indirect: true }), isl: e.isl }); }
+  const q = new THREE.Vector3();
+  const islandAt = (rel, kind, c) => {
+    const local = trees.get(`${rel}|${kind}`); const global = trees.get(`*|${kind}`) || trees.get('*|0');
+    let hit = local ? local.bvh.closestPointToPoint(q.set(...c), {}, 0, 0.15) : null; let set = local;
+    if (!hit) { set = global; hit = global.bvh.closestPointToPoint(q.set(...c), {}); }
+    return set.isl[hit.faceIndex];
+  };
+  const mapUV = (isl, x) => {
+    const u = isl.cu[0] * x[0] + isl.cu[1] * x[1] + isl.cu[2] * x[2] + isl.cu[3];
+    const v = isl.cv[0] * x[0] + isl.cv[1] * x[1] + isl.cv[2] * x[2] + isl.cv[3];
+    const [a, b, c2, d] = isl.box;
+    return [Math.min(b, Math.max(a, u)), Math.min(d, Math.max(c2, v))];
+  };
+  for (const [slot, parts] of Object.entries(lod)) {
+    const rel = slot === 'body' ? 'body_2.0m' : `${slot}/default_2.0m`;
+    for (const p of parts) {
+      const kind = KIND_OF[p.name] || 0;
+      p.kind = kind;
+      const black = kind === 3 || kind === 4 || p.name === 'Interior_dark' || p.name === 'Projector_Glass' || (slots && !isPaint(p.name) && kind === 0 && !['Lower_Paint', 'Hood_Paint'].includes(p.name));
+      const P = p.positions; const I = p.indices;
+      const nP = []; const nN = []; const nUV = []; const nI = []; const keyOf = new Map();
+      for (let t = 0; t < I.length; t += 3) {
+        const v = [I[t], I[t + 1], I[t + 2]];
+        const x = v.map((i) => [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]);
+        const c = [0, 1, 2].map((k2) => (x[0][k2] + x[1][k2] + x[2][k2]) / 3);
+        const id = black ? -1 : islandAt(rel, kind === 1 ? 1 : 0, c);
+        for (let j = 0; j < 3; j++) {
+          const key = `${v[j]}|${id}`;
+          let n = keyOf.get(key);
+          if (n === undefined) {
+            n = nP.length / 3; keyOf.set(key, n);
+            nP.push(...x[j]); nN.push(p.normals[v[j] * 3], p.normals[v[j] * 3 + 1], p.normals[v[j] * 3 + 2]);
+            const uv = id < 0 ? ISLAND_BLACK : mapUV(islands[id], x[j]);
+            nUV.push(uv[0], uv[1]);
+          }
+          nI.push(n);
+        }
+      }
+      p.positions = new Float32Array(nP); p.normals = new Float32Array(nN); p.uvs = new Float32Array(nUV); p.indices = Uint32Array.from(nI);
+    }
+  }
 }
 
 // (point, kind) → the slot whose template file has the closest surface there (stock files: body and

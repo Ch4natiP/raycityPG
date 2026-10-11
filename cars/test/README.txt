@@ -186,3 +186,12 @@ colour. The left side was the only region in v 0.02-0.29: the top third of the t
 (the wheels' picture), as pack 48 showed (everything mapped below v 0.33 black).
 55_canyon_atlas_lower_two_thirds.zip  54 with every region in v 0.35-0.97 (sides 0.37-0.77, top / front / rear
                          0.79-0.97, flat points at 0.35) and clear of the bottom-left corner (u < 0.08, v > 0.69).
+In game 55: the sides right (three colours, shop decals); hood / roof / rear deck / front / rear black or other
+pictures. Shop decals and films are drawn for the game's UV sheet (gtv98's: sides at the top and bottom, roof in
+the middle, hood the blue block), so an own layout puts them in the wrong place.
+57_canyon_uv_cut_like_gtv98.zip  "islands" layout: gtv98's own UV sheet, cut like it — every gtv98 island gets a
+                         best-fit 3D→UV map over the bent template, each triangle takes the island of the closest
+                         template triangle (same file first) and all corners go through that map (corners split
+                         where islands meet: 0 stretched triangles); gtv98's mask (three colours where gtv98 has
+                         them), trim / grilles / lamps on one black spot in empty texture. 57_uv_vs_gtv98.png
+                         shows the sheet next to gtv98's, 57_colours_preview.png the colours.

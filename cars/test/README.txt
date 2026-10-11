@@ -210,3 +210,8 @@ Escarabajo study (samples/escarabajo.rar, the real car — test3/ was our rc_can
   texture (dark red housing / red brake / amber indicator bands) when it had none.
 - New-body three colours now use our own mask drawn triangle by triangle (sharp borders on panel edges);
   'pickup' colours: colour 1 the whole car, colour 3 the hood, colour 2 the tailgate.
+- Three colours on every car now default to body (1) / hood (3, the template's) / tail lid (2: trunk lid top and
+  back for a sedan, tailgate only for a pickup); old body: the gtv98 mask's band → colour 1 and the tail lid
+  filled green where no other panel shares the texels. Escarabajo's lower band stays as an option.
+- RayCity UV: 🖌 paint tool (colour 1 / 2 / 3 / black; click a panel, brush, whole piece, whole car), saves the
+  mask; RayCity Easy's 🖌 button opens it with the built car.

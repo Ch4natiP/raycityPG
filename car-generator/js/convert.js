@@ -1112,7 +1112,7 @@ function renderIcon(bytes) {
 // ---------------------------------------------------------------------------------------------
 // The whole conversion. template: { name, files: Map(rel → Uint8Array) }. Returns Map(rel → Uint8Array).
 
-export async function convert(model, { name, template, categories = new Map(), maxVerts = 3500, voxel = 0.015, raw = false, smooth = true, hideInterior = true, paintAll = true, slots = false, pickup = false, layout = 'template', partTextures = false, log = () => {} }) {
+export async function convert(model, { name, template, categories = new Map(), maxVerts = 3500, voxel = 0.015, raw = false, smooth = true, hideInterior = true, paintAll = true, slots = false, colours = 'tail', layout = 'template', partTextures = false, log = () => {} }) {
   await MeshoptSimplifier.ready;
   log('อ่านโมเดล…');
   const src = collect(model, categories);
@@ -1148,7 +1148,8 @@ export async function convert(model, { name, template, categories = new Map(), m
       const slotAt = await templateMaskSlots(bent, template);
       const paint = src.tris.filter((t) => t.mat === 'Body_Color' || t.mat === 'Wing');
       let lab = smoothLabels(paint, paint.map((t) => slotAt(t.c0)));
-      {
+      const pickup = colours === 'pickup';
+      if (colours === 'band') {
         // Colour 2 (the lower band all around, like Escarabajo) by height: a straight line along the car
         // instead of the template's band edge, which falls ragged across this car's triangles.
         let z0 = Infinity; let z1 = -Infinity;
@@ -1156,14 +1157,12 @@ export async function convert(model, { name, template, categories = new Map(), m
         const line = z0 + (z1 - z0) * 0.3;
         lab = smoothLabels(paint, lab.map((l, i) => (l === 3 ? 3 : paint[i].c0[2] < line && Math.abs(paint[i].n[2]) < 0.8 ? 2 : 1)));
       }
-      if (pickup) {
-        // Pickup without side skirts: colour 1 the whole car, colour 3 the hood (the template's), colour 2
-        // the tailgate — paint at the rear end facing back, above the bumper.
-        let yMax = -Infinity; let z0 = Infinity; let z1 = -Infinity;
-        for (const t of paint) { yMax = Math.max(yMax, t.c0[1]); z0 = Math.min(z0, t.c0[2]); z1 = Math.max(z1, t.c0[2]); }
-        const tail = paint.map((t) => t.c0[1] > yMax - 0.35 && t.n[1] > 0.6 && t.c0[2] > z0 + (z1 - z0) * 0.3 && t.c0[2] < z0 + (z1 - z0) * 0.75);
+      if (colours === 'tail' || pickup) {
+        // Body / hood / tail lid like game cars: colour 1 the body, colour 3 the hood (the template's),
+        // colour 2 the tail lid (a sedan's trunk lid, a hatch / pickup tailgate).
+        const tail = tailTris(paint.map((t) => ({ c: t.c0, n: t.n })), pickup);
         lab = smoothLabels(paint, lab.map((l, i) => (tail[i] ? 2 : l === 3 ? 3 : 1)));
-        log(`กระบะ: ฝาท้าย ${tail.filter(Boolean).length.toLocaleString()} สามเหลี่ยม = สี 2 · ฝากระโปรง = สี 3 · ที่เหลือสี 1`);
+        log(`3 สี: ฝาท้าย ${tail.filter(Boolean).length.toLocaleString()} สามเหลี่ยม = สี 2 · ฝากระโปรง = สี 3 · ตัวถังสี 1`);
       }
       paint.forEach((t, i) => { if (lab[i] === 3) t.mat = 'Hood_Paint'; else if (lab[i] === 2) t.mat = 'Lower_Paint'; });
     }
@@ -1740,6 +1739,70 @@ export async function templateMaskSlots(bent, template) {
 // triangle stretches across the texture (black / other pictures in game, packs 44-53) and shop decals,
 // films and the mask land where they land on the template. Trim, grilles and lamps sit on one black spot.
 const ISLAND_BLACK = [0.336, 0.383]; // empty in gtv98's sheet
+// The tail lid among paint triangles ({ c: centre, n: normal }, RayCity space: y back, z up): the rear
+// end's back-facing panel between bumper and roof line (tailgate / back of the trunk lid), and for a
+// car that isn't a pickup also the trunk's top (facing up, the last fifth of the length, above the
+// waist). Pickups leave the bed rails out.
+export function tailTris(tris, pickup = false) {
+  let y0 = Infinity; let y1 = -Infinity; let z0 = Infinity; let z1 = -Infinity;
+  for (const t of tris) { y0 = Math.min(y0, t.c[1]); y1 = Math.max(y1, t.c[1]); z0 = Math.min(z0, t.c[2]); z1 = Math.max(z1, t.c[2]); }
+  const L = y1 - y0; const H = z1 - z0;
+  return tris.map((t) => {
+    const back = t.c[1] > y1 - Math.min(0.35, L * 0.1) && t.n[1] > 0.6 && t.c[2] > z0 + H * 0.3 && t.c[2] < z0 + H * 0.75;
+    const deck = !pickup && t.c[1] > y1 - L * 0.2 && t.n[2] > 0.6 && t.c[2] > z0 + H * 0.45 && t.c[2] < z0 + H * 0.8;
+    return back || deck;
+  });
+}
+// Old body (bent template) in three colours body / hood / tail lid: the template mask's lower band
+// becomes colour 1, the hood stays colour 3, and the tail lid's triangles are filled green under
+// their UVs. Changes `out` in place.
+export async function tailColoursOnMask(out, name, { pickup = false } = {}) {
+  const img = await decodePNG(out.get(`${name}_base.png`)); const { w, h } = img; const px = new Uint8ClampedArray(img.data);
+  for (let i = 0; i < px.length; i += 4) if (px[i + 1] > 128 && px[i] < 128 && px[i + 2] < 128) px.set([255, 0, 0, 255], i);
+  const tris = [];
+  for (const [rel, b] of out) {
+    if (!(rel === 'body_2.0m' || /^[^/]+\/default_2\.0m$/.test(rel))) continue;
+    const om = parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+    omParts(om).forEach((p, k) => {
+      const f = om.submeshes[k].flags; if (f[0] !== 0 || p.positions.length / 3 <= 8) return;
+      const P = p.positions; const U = p.uvs; const I = p.indices;
+      for (let t = 0; t < I.length; t += 3) {
+        const [a, b2, c] = [I[t], I[t + 1], I[t + 2]];
+        const e1 = [P[b2 * 3] - P[a * 3], P[b2 * 3 + 1] - P[a * 3 + 1], P[b2 * 3 + 2] - P[a * 3 + 2]]; const e2 = [P[c * 3] - P[a * 3], P[c * 3 + 1] - P[a * 3 + 1], P[c * 3 + 2] - P[a * 3 + 2]];
+        const n = cross(e1, e2); const l = Math.hypot(n[0], n[1], n[2]) || 1;
+        tris.push({ c: [0, 1, 2].map((k2) => (P[a * 3 + k2] + P[b2 * 3 + k2] + P[c * 3 + k2]) / 3), n: [n[0] / l, n[1] / l, n[2] / l], uv: [a, b2, c].map((i) => [U[i * 2] * w, U[i * 2 + 1] * h]) });
+      }
+    });
+  }
+  const tail = tailTris(tris, pickup);
+  // texels of each triangle's UV (grown a little for the tail lid; exact for the others)
+  const texels = (q, grow0, fn) => {
+    const area = (q[1][0] - q[0][0]) * (q[2][1] - q[0][1]) - (q[2][0] - q[0][0]) * (q[1][1] - q[0][1]);
+    const x0 = Math.max(0, Math.floor(Math.min(q[0][0], q[1][0], q[2][0])) - 1); const x1 = Math.min(w - 1, Math.ceil(Math.max(q[0][0], q[1][0], q[2][0])) + 1);
+    const y0 = Math.max(0, Math.floor(Math.min(q[0][1], q[1][1], q[2][1])) - 1); const y1 = Math.min(h - 1, Math.ceil(Math.max(q[0][1], q[1][1], q[2][1])) + 1);
+    // thin / flat UV triangles (frames, trims): their whole box counts as used by them
+    if (Math.abs(area) < Math.max(1e-6, ((x1 - x0) + (y1 - y0)) * 0.6)) { if (!grow0) for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) fn(y * w + x); return false; }
+    const grow = grow0 / Math.sqrt(Math.abs(area));
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const cx = x + 0.5; const cy = y + 0.5;
+      const s0 = ((q[1][0] - q[0][0]) * (cy - q[0][1]) - (q[1][1] - q[0][1]) * (cx - q[0][0])) / area;
+      const s1 = ((q[2][0] - q[1][0]) * (cy - q[1][1]) - (q[2][1] - q[1][1]) * (cx - q[1][0])) / area;
+      const s2 = ((q[0][0] - q[2][0]) * (cy - q[2][1]) - (q[0][1] - q[2][1]) * (cx - q[2][0])) / area;
+      if (s0 >= -grow && s1 >= -grow && s2 >= -grow) fn(y * w + x);
+    }
+    return true;
+  };
+  // the template's sheet overlaps (gtv98: window frames over the trunk lid): texels other panels use stay
+  const other = new Uint8Array(w * h);
+  tris.forEach((t, i) => { if (!tail[i]) texels(t.uv, 0, (o) => { other[o] = 1; }); });
+  let n = 0;
+  tris.forEach((t, i) => { if (tail[i] && texels(t.uv, 1.2, (o) => { if (!other[o]) px.set([0, 255, 0, 255], o * 4); })) n++; });
+  out.set(`${name}_base.png`, await png(px, w, h));
+  const old = out.get(`${name}_base_s.dds`);
+  const mode = old && old.length >= 128 && new DataView(old.buffer, old.byteOffset, 128).getUint32(16, true) !== w ? 'half' : 'full';
+  out.set(`${name}_base_s.dds`, dds(px, w, h, mode));
+  return n;
+}
 // The paint mask drawn from our own triangles (islands layout, three colours): every paint triangle
 // fills its UV triangle with its colour slot — Hood_Paint blue (3), Lower_Paint green (2), the rest red
 // (1) — so a colour border follows the car's triangle edges instead of gtv98's mask under them (whose

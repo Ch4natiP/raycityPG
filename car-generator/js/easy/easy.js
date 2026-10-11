@@ -4,7 +4,7 @@
 // RayCity space: x left, y back, z up; three.js shows it as (x, z, −y).
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { loadModel, convert, bendTemplate, turnAround, GAME_WHEELS, fitToWheels, decodePNG, dds } from '../convert.js';
+import { loadModel, convert, bendTemplate, turnAround, GAME_WHEELS, fitToWheels, decodePNG, dds, tailColoursOnMask } from '../convert.js';
 import { parseOM, writeOM, omParts } from '../om.js';
 import { makeZip, readZip } from '../zip.js';
 import { checkCar, renderChecks, innerName } from '../checkCar.js';
@@ -195,22 +195,18 @@ async function build() {
   try {
     const template = await currentTemplate();
     state.template = template;
-    const oneColour = $('colour-sel').value === 'one';
-    const pickup = $('colour-sel').value === 'pickup';
+    const colours = $('colour-sel').value;
+    const oneColour = colours === 'one';
+    const pickup = colours === 'pickup';
     let out;
     if (document.querySelector('input[name=body]:checked').value === 'old') {
       say(`ดัดตัวถัง ${template.name} ให้เป็นทรงโมเดล…`);
       out = await bendTemplate(state.model, { name, template, log: say });
-      if (pickup) {
-        // pickup on the old body: no lower band (green → colour 1), hood stays colour 3 (a tailgate of its
-        // own needs the new body)
-        const m = await decodePNG(out.get(`${name}_base.png`));
-        const px = new Uint8ClampedArray(m.data); for (let i = 0; i < px.length; i += 4) if (px[i + 1] > 128 && px[i] < 128) px.set([255, 0, 0, 255], i);
-        const { png } = await import('../convert.js');
-        out.set(`${name}_base.png`, await png(px, m.w, m.h)); out.set(`${name}_base_s.dds`, dds(px, m.w, m.h, 'full'));
-        say('ตัวถังเดิม: สีคลุมรถ + ฝากระโปรง (ฝาท้ายแยกสี ใช้ได้กับ "ตัวถังใหม่")');
+      if (colours === 'tail' || pickup) {
+        const n = await tailColoursOnMask(out, name, { pickup });
+        say(`3 สี: ตัวถัง / ฝากระโปรง / ฝาท้าย (${n.toLocaleString()} สามเหลี่ยม)`);
       }
-            if (oneColour) {
+      if (oneColour) {
         // one colour: the template's mask all red (slot 1), same size
         const m = await decodePNG(out.get(`${name}_base.png`));
         const px = new Uint8ClampedArray(m.w * m.h * 4); for (let i = 0; i < px.length; i += 4) px.set([255, 0, 0, 255], i);
@@ -218,12 +214,12 @@ async function build() {
         out.set(`${name}_base.png`, await png(px, m.w, m.h)); out.set(`${name}_base_s.dds`, dds(px, m.w, m.h, 'full'));
       }
     } else {
-      out = await convert(state.model, { name, template, raw: true, hideInterior: true, maxVerts: +$('poly-sel').value, paintAll: oneColour, slots: !oneColour, pickup, layout: 'islands', partTextures: false, log: say });
+      out = await convert(state.model, { name, template, raw: true, hideInterior: true, maxVerts: +$('poly-sel').value, paintAll: oneColour, slots: !oneColour, colours, layout: 'islands', partTextures: false, log: say });
     }
     state.out = out; state.outName = name;
     say(`เสร็จ: ${out.size} ไฟล์`);
     renderChecks($('checks'), await checkCar(out, name, template));
-    $('btn-download').disabled = false; $('btn-blender-out').disabled = false; $('btn-blender-in').disabled = false;
+    $('btn-download').disabled = false; $('btn-paint').disabled = false; $('btn-blender-out').disabled = false; $('btn-blender-in').disabled = false;
     $('s4').classList.add('done');
     await showCar(); setTab('car');
   } catch (e) { console.error(e); say(`ผิดพลาด: ${e.message}`); }
@@ -329,6 +325,14 @@ $('btn-tpl').addEventListener('click', () => $('file-tpl').click());
 $('file-tpl').addEventListener('change', async (e) => { if (e.target.files[0]) await addTemplateZip(e.target.files[0]); e.target.value = ''; });
 $('btn-build').addEventListener('click', build);
 $('btn-download').addEventListener('click', downloadZip);
+// 🖌: the car to the RayCity UV page (paint the colours by clicking panels, edit UVs), sent by message
+$('btn-paint').addEventListener('click', () => {
+  const w = window.open('RayCity-UV.html', '_blank');
+  if (!w) { $('build-log').textContent = 'เบราว์เซอร์บล็อกหน้าต่างใหม่ · อนุญาต pop-up แล้วกดอีกครั้ง'; return; }
+  const files = [...state.out].map(([rel, data]) => ({ path: `${state.outName}/${rel}`, data }));
+  const onMsg = (e) => { if (e.source === w && e.data?.type === 'rc-uv-ready') { w.postMessage({ type: 'rc-car', files }, '*'); window.removeEventListener('message', onMsg); } };
+  window.addEventListener('message', onMsg);
+});
 $('btn-blender-out').addEventListener('click', blenderOut);
 $('btn-blender-in').addEventListener('click', () => $('file-obj').click());
 $('file-obj').addEventListener('change', async (e) => { if (e.target.files[0]) await blenderIn(await e.target.files[0].text()); e.target.value = ''; });

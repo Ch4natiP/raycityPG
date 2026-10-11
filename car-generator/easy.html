@@ -47,7 +47,7 @@
     <section class="step" id="s3">
       <h2><i>3</i> ตั้งค่า</h2>
       <div class="row"><span>ชื่อรถ (.jmd)</span><input id="car-name" type="text" value="rc_canyon"></div>
-      <div class="row"><span>สีในโรงรถ</span><select id="colour-sel"><option value="slots">แยก 3 สี (ตัวถัง / แถบล่าง / ฝากระโปรง)</option><option value="pickup">กระบะ 3 สี (สีคลุมรถ / ฝากระโปรง / ฝาท้าย)</option><option value="one">สีเดียวทั้งคัน (แบบ McQueen)</option></select></div>
+      <div class="row"><span>สีในโรงรถ</span><select id="colour-sel"><option value="tail">3 สี: ตัวถัง / ฝากระโปรง / ฝาท้าย</option><option value="pickup">กระบะ 3 สี: สีคลุมรถ / ฝากระโปรง / ฝาท้าย</option><option value="band">3 สี แบบ Escarabajo: ตัวถัง / แถบล่าง / ฝากระโปรง</option><option value="one">สีเดียวทั้งคัน (แบบ McQueen)</option></select></div>
       <div class="row"><span>ให้ซุ้มล้อตรงล้อเกม</span><input id="fit-wheels" type="checkbox" checked></div>
     </section>
 
@@ -63,6 +63,8 @@
       <div class="row">
         <button id="btn-download" class="accent big" disabled>⬇ ดาวน์โหลด .zip</button>
       </div>
+      <div class="row"><button id="btn-paint" class="big" disabled>🖌 ลงสีเอง / แก้ UV ต่อ (เปิดหน้า RayCity UV)</button></div>
+      <p class="hint">หน้า RayCity UV ต้องอยู่โฟลเดอร์เดียวกับไฟล์นี้ · คลิกแผงบนรถเพื่อเปลี่ยนสี 1/2/3/ดำ แล้วดาวน์โหลดจากหน้านั้น</p>
       <details>
         <summary>แก้ UV ต่อเอง (ไม่บังคับ)</summary>
         <p class="hint">เว็บตัด UV ให้ก่อนแล้ว (ตามแผงของรถต้นแบบ) · อยากให้คมเนียนขึ้น ทำต่อได้ 2 ทาง:

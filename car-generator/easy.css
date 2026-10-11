@@ -42,3 +42,4 @@ details summary { cursor: pointer; color: var(--muted); margin-top: 8px; }
 #tabs button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 #legend { position: absolute; bottom: 8px; left: 12px; z-index: 2; }
 @media (max-width: 800px) { body { grid-template-columns: 1fr; grid-template-rows: auto 60vh; overflow: auto; } #steps { overflow: visible; } }
+[hidden] { display: none !important; }

@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { parseOM, writeOM, omParts } from '../om.js';
 import { makeZip, readZip } from '../zip.js';
-import { decodePNG } from '../convert.js';
+import { decodePNG, png, dds } from '../convert.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (t) => { $('status').textContent = t; };
@@ -110,6 +110,7 @@ function draw2D() {
   const [x0, y0] = toPx(0, 0); const [x1, y1] = toPx(1, 1);
   if (car.maskImg) { g2.globalAlpha = 0.55; g2.drawImage(car.maskImg, x0, y0, x1 - x0, y1 - y0); g2.globalAlpha = 1; }
   g2.strokeStyle = '#777'; g2.strokeRect(x0, y0, x1 - x0, y1 - y0);
+  if (!car.meshes.length) { g2.fillStyle = '#bbb'; g2.font = '16px system-ui, sans-serif'; g2.fillText('กด 📦 เปิด .zip รถ ทางซ้ายก่อน (zip ที่ดาวน์โหลดจาก RayCity Easy)', x0 + 20, y0 + 40); g2.fillText('หรือในหน้า RayCity Easy กดปุ่ม 🖌 ลงสี / แก้ UV ต่อ', x0 + 20, y0 + 66); }
   if (guide && $('opt-guide').checked) {
     g2.strokeStyle = 'rgba(255,255,255,0.18)'; g2.lineWidth = 1; g2.beginPath();
     for (const t of guide) { const p = t.map(([u, v]) => toPx(u, v)); g2.moveTo(...p[0]); g2.lineTo(...p[1]); g2.lineTo(...p[2]); g2.closePath(); }
@@ -165,6 +166,7 @@ function pickUV(u, v) {
 function snapshot() { return car.meshes.map((m) => m.parts.map((p) => ({ positions: p.positions, normals: p.normals, uvs: p.uvs.slice(), indices: p.indices }))); }
 function pushUndo() { undo.push(snapshot()); if (undo.length > 60) undo.shift(); redo.length = 0; }
 function restore(s) {
+  if (s.mask) { car.mask.data.set(s.mask); paint.dirty = true; maskChanged(); return; }
   car.meshes.forEach((m, mi) => { m.parts.forEach((p, pi) => Object.assign(p, s[mi][pi])); m.isl = m.parts.map(islandsOf); m.dirty = true; });
   refresh(); build3D();
 }
@@ -254,18 +256,28 @@ const scene = new THREE.Scene(); scene.background = new THREE.Color('#393939');
 scene.add(new THREE.HemisphereLight('#ffffff', '#555555', 2.2));
 const cam = new THREE.PerspectiveCamera(40, 1, 0.02, 100); cam.position.set(4.5, 2.5, 5.5);
 const controls = new OrbitControls(cam, gl);
-controls.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN };
+controls.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
 controls.target.set(0, 0.6, 0);
 const carGroup = new THREE.Group(); carGroup.rotation.x = -Math.PI / 2; scene.add(carGroup);
 let texCanvas = null; let tex = null;
 function makeTexture() {
   texCanvas = document.createElement('canvas'); texCanvas.width = texCanvas.height = 1024;
   const g = texCanvas.getContext('2d');
-  if (car.maskImg) g.drawImage(car.maskImg, 0, 0, 1024, 1024); else { g.fillStyle = '#c33'; g.fillRect(0, 0, 1024, 1024); }
-  g.globalAlpha = 0.35; g.fillStyle = '#fff';
-  for (let i = 0; i < 32; i++) for (let j = 0; j < 32; j++) if ((i + j) % 2) g.fillRect(i * 32, j * 32, 32, 32);
-  g.globalAlpha = 1;
   tex = new THREE.CanvasTexture(texCanvas); tex.flipY = false; tex.colorSpace = THREE.SRGBColorSpace;
+  drawTexture();
+}
+// the mask on the car; the checker grid (where the UVs go) only outside paint mode
+function drawTexture() {
+  if (!texCanvas) return;
+  const g = texCanvas.getContext('2d');
+  g.clearRect(0, 0, 1024, 1024);
+  if (car.maskImg) g.drawImage(car.maskImg, 0, 0, 1024, 1024); else { g.fillStyle = '#c33'; g.fillRect(0, 0, 1024, 1024); }
+  if (!paint.on) {
+    g.globalAlpha = 0.35; g.fillStyle = '#fff';
+    for (let i = 0; i < 32; i++) for (let j = 0; j < 32; j++) if ((i + j) % 2) g.fillRect(i * 32, j * 32, 32, 32);
+    g.globalAlpha = 1;
+  }
+  if (tex) tex.needsUpdate = true;
 }
 function build3D() {
   carGroup.clear();
@@ -289,6 +301,7 @@ function update3DUVs() {
 const ray = new THREE.Raycaster(); const mouse = new THREE.Vector2();
 gl.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return;
+  if (paint.on) { paintStart(); paintAt3D(e); gl.setPointerCapture(e.pointerId); return; }
   const r = gl.getBoundingClientRect();
   mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
   ray.setFromCamera(mouse, cam);
@@ -310,6 +323,7 @@ uvc.addEventListener('pointerdown', (e) => {
   uvc.setPointerCapture(e.pointerId);
   const r = uvc.getBoundingClientRect(); const x = e.clientX - r.left; const y = e.clientY - r.top;
   if (e.button !== 0) { drag = { pan: true, x, y, vx: view.x, vy: view.y }; return; }
+  if (paint.on && car.mask) { paintStart(); drag = { paint: true }; paintAt2D(...toUV(x, y)); return; }
   const [u, v] = toUV(x, y);
   const key = pickUV(u, v);
   if (key) {
@@ -324,11 +338,12 @@ uvc.addEventListener('pointermove', (e) => {
   if (!drag) return;
   const r = uvc.getBoundingClientRect(); const x = e.clientX - r.left; const y = e.clientY - r.top;
   if (drag.pan) { view.x = drag.vx + x - drag.x; view.y = drag.vy + y - drag.y; refresh(); return; }
+  if (drag.paint) { paintAt2D(...toUV(x, y)); return; }
   const [u, v] = toUV(x, y); const du = u - drag.u; const dv = v - drag.v; drag.u = u; drag.v = v;
   forSelectedVerts((p, i) => { p.uvs[i * 2] += du; p.uvs[i * 2 + 1] += dv; });
   refresh(); update3DUVs();
 });
-uvc.addEventListener('pointerup', () => { drag = null; });
+uvc.addEventListener('pointerup', () => { if (drag?.paint) paintEnd(); drag = null; });
 uvc.addEventListener('wheel', (e) => {
   e.preventDefault();
   const r = uvc.getBoundingClientRect(); const x = e.clientX - r.left; const y = e.clientY - r.top;
@@ -433,10 +448,142 @@ async function saveZip() {
     const bytes = writeOM(m.om, parts);
     for (const [rel, b] of car.files) if (b.length === m.orig.length && b.every((x, i) => x === m.orig[i])) { out.set(rel, bytes); n++; }
   }
+  if (paint.dirty && car.mask) {
+    const { w, h, data } = car.mask; const px = new Uint8ClampedArray(data);
+    out.set(`${car.name}_base.png`, await png(px, w, h));
+    const old = car.files.get(`${car.name}_base_s.dds`);
+    const mode = old && old.length >= 128 && new DataView(old.buffer, old.byteOffset, 128).getUint32(16, true) !== w ? 'half' : 'full';
+    out.set(`${car.name}_base_s.dds`, dds(px, w, h, mode));
+  }
   const zipFiles = [...out].sort((a, b) => a[0].localeCompare(b[0])).map(([rel, data]) => ({ path: `${car.name}/${rel}`, data }));
   const blob = await makeZip(zipFiles);
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${car.name}.zip`; a.click();
-  $('save-log').textContent = `ดาวน์โหลด ${car.name}.zip แล้ว · เขียนใหม่ ${n} ไฟล์ .0m`;
+  $('save-log').textContent = `ดาวน์โหลด ${car.name}.zip แล้ว · เขียนใหม่ ${n} ไฟล์ .0m${paint.dirty ? ' · รูปสี (_base.png + _s.dds) ใหม่' : ''}`;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Paint: the garage colours on the mask. Colour 1 red (the body), 2 green, 3 blue, black = no colour.
+// On the car: a whole panel (flood over the smooth surface, stops at sharp edges), a brush, or the
+// whole piece; on the sheet: a round brush. Each triangle is filled in the mask under its UVs.
+
+const paint = { on: false, slot: 1, mode: 'panel', size: 0.25, dirty: false, stroke: false };
+const SLOT_RGBA = { 0: [0, 0, 0, 255], 1: [255, 0, 0, 255], 2: [0, 255, 0, 255], 3: [0, 0, 255, 255] };
+function paintStart() { if (!car.mask) return; undo.push({ mask: car.mask.data.slice() }); if (undo.length > 60) undo.shift(); redo.length = 0; paint.stroke = true; }
+function paintEnd() { paint.stroke = false; }
+function maskChanged() {
+  const { w, h, data } = car.mask;
+  car.maskImg.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(data), w, h), 0, 0);
+  drawTexture(); refresh();
+}
+function fillTri(U, a, b, c) {
+  const { w, h, data } = car.mask; const rgba = SLOT_RGBA[paint.slot];
+  const q = [a, b, c].map((i) => [U[i * 2] * w, U[i * 2 + 1] * h]);
+  const area = (q[1][0] - q[0][0]) * (q[2][1] - q[0][1]) - (q[2][0] - q[0][0]) * (q[1][1] - q[0][1]);
+  const x0 = Math.max(0, Math.floor(Math.min(q[0][0], q[1][0], q[2][0])) - 1); const x1 = Math.min(w - 1, Math.ceil(Math.max(q[0][0], q[1][0], q[2][0])) + 1);
+  const y0 = Math.max(0, Math.floor(Math.min(q[0][1], q[1][1], q[2][1])) - 1); const y1 = Math.min(h - 1, Math.ceil(Math.max(q[0][1], q[1][1], q[2][1])) + 1);
+  if (Math.abs(area) < 1e-6) { // flat UVs (a whole piece on one texel): that texel and its neighbours
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) data.set(rgba, (y * w + x) * 4);
+    return;
+  }
+  // texel centres inside the triangle grown by about one texel (edges and filtering)
+  const grow = 1.2 / Math.sqrt(Math.abs(area));
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+    const cx = x + 0.5; const cy = y + 0.5;
+    const s0 = ((q[1][0] - q[0][0]) * (cy - q[0][1]) - (q[1][1] - q[0][1]) * (cx - q[0][0])) / area;
+    const s1 = ((q[2][0] - q[1][0]) * (cy - q[1][1]) - (q[2][1] - q[1][1]) * (cx - q[1][0])) / area;
+    const s2 = ((q[0][0] - q[2][0]) * (cy - q[2][1]) - (q[0][1] - q[2][1]) * (cx - q[2][0])) / area;
+    if (s0 >= -grow && s1 >= -grow && s2 >= -grow) data.set(rgba, (y * w + x) * 4);
+  }
+}
+// triangles of a part connected over its smooth surface (shared corner positions, normals within 30°)
+function panelOf(p, start, vertIsl = null) {
+  const key = (i) => `${Math.round(p.positions[i * 3] * 2000)},${Math.round(p.positions[i * 3 + 1] * 2000)},${Math.round(p.positions[i * 3 + 2] * 2000)}`;
+  if (!p._adj) {
+    const byPos = new Map(); const nt = p.indices.length / 3; const fn = new Float32Array(nt * 3);
+    for (let t = 0; t < nt; t++) {
+      const [a, b, c] = [p.indices[t * 3], p.indices[t * 3 + 1], p.indices[t * 3 + 2]]; const P = p.positions;
+      const e1 = [P[b * 3] - P[a * 3], P[b * 3 + 1] - P[a * 3 + 1], P[b * 3 + 2] - P[a * 3 + 2]]; const e2 = [P[c * 3] - P[a * 3], P[c * 3 + 1] - P[a * 3 + 1], P[c * 3 + 2] - P[a * 3 + 2]];
+      const n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]]; const l = Math.hypot(...n) || 1;
+      fn.set([n[0] / l, n[1] / l, n[2] / l], t * 3);
+      for (const v of [a, b, c]) { const k = key(v); if (!byPos.has(k)) byPos.set(k, []); byPos.get(k).push(t); }
+    }
+    p._adj = { byPos, fn };
+  }
+  const { byPos, fn } = p._adj; const cos = Math.cos((25 * Math.PI) / 180);
+  const isl0 = vertIsl ? vertIsl[p.indices[start * 3]] : -1;
+  const seen = new Set([start]); const list = [start];
+  for (let k = 0; k < list.length; k++) {
+    const t = list[k];
+    for (const v of [p.indices[t * 3], p.indices[t * 3 + 1], p.indices[t * 3 + 2]]) for (const u of byPos.get(key(v))) {
+      if (seen.has(u)) continue;
+      if (vertIsl && vertIsl[p.indices[u * 3]] !== isl0) continue; // same UV island only
+      if (fn[t * 3] * fn[u * 3] + fn[t * 3 + 1] * fn[u * 3 + 1] + fn[t * 3 + 2] * fn[u * 3 + 2] < cos) continue;
+      seen.add(u); list.push(u);
+    }
+  }
+  return list;
+}
+function paintAt3D(e) {
+  if (!car.mask) { status('รถคันนี้ไม่มีรูปมาสก์ (_base.png)'); return; }
+  const r = gl.getBoundingClientRect();
+  mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(mouse, cam);
+  const hit = ray.intersectObjects(carGroup.children.filter((o) => o.visible))[0];
+  if (!hit) return;
+  const { mi, pi } = hit.object.userData; const m = car.meshes[mi]; const p = m.parts[pi];
+  if (p.flags[0] === 1) { status('กระจก: ไม่ต้องลงสี (กระจกแบบ Escarabajo ตั้งไว้แล้ว)'); return; }
+  let n = 0;
+  if (paint.mode === 'part') { for (let t = 0; t < p.indices.length; t += 3) { fillTri(p.uvs, p.indices[t], p.indices[t + 1], p.indices[t + 2]); n++; } }
+  else if (paint.mode === 'panel') { for (const t of panelOf(p, hit.faceIndex, m.isl[pi].vertIsl)) { fillTri(p.uvs, p.indices[t * 3], p.indices[t * 3 + 1], p.indices[t * 3 + 2]); n++; } }
+  else {
+    const c = carGroup.worldToLocal(hit.point.clone()); const R2 = paint.size * paint.size;
+    for (const mesh of carGroup.children) {
+      const q = car.meshes[mesh.userData.mi].parts[mesh.userData.pi]; if (q.flags[0] === 1) continue; const P = q.positions;
+      for (let t = 0; t < q.indices.length; t += 3) {
+        const [a, b, d] = [q.indices[t], q.indices[t + 1], q.indices[t + 2]];
+        const x = (P[a * 3] + P[b * 3] + P[d * 3]) / 3 - c.x; const y = (P[a * 3 + 1] + P[b * 3 + 1] + P[d * 3 + 1]) / 3 - c.y; const z = (P[a * 3 + 2] + P[b * 3 + 2] + P[d * 3 + 2]) / 3 - c.z;
+        if (x * x + y * y + z * z <= R2) { fillTri(q.uvs, a, b, d); n++; }
+      }
+    }
+  }
+  paint.dirty = true; maskChanged();
+  status(`ลงสี ${['ดำ (ไม่รับสี)', 'สี 1', 'สี 2', 'สี 3'][paint.slot]} ${n.toLocaleString()} สามเหลี่ยม · Ctrl+Z ย้อน · เสร็จแล้วกด ⬇ ดาวน์โหลด`);
+}
+function paintAt2D(u, v) {
+  const { w, h, data } = car.mask; const rgba = SLOT_RGBA[paint.slot]; const R = Math.max(2, paint.size * 60);
+  const cx = u * w; const cy = v * h;
+  for (let y = Math.max(0, Math.floor(cy - R)); y <= Math.min(h - 1, Math.ceil(cy + R)); y++) for (let x = Math.max(0, Math.floor(cx - R)); x <= Math.min(w - 1, Math.ceil(cx + R)); x++) if ((x - cx) ** 2 + (y - cy) ** 2 <= R * R) data.set(rgba, (y * w + x) * 4);
+  paint.dirty = true; maskChanged();
+}
+gl.addEventListener('pointermove', (e) => { if (paint.on && paint.stroke && paint.mode === 'brush' && (e.buttons & 1)) paintAt3D(e); });
+gl.addEventListener('pointerup', () => { if (paint.stroke) paintEnd(); });
+function setPaint(on) {
+  paint.on = on;
+  $('btn-paint').classList.toggle('accent', on);
+  $('btn-paint').textContent = on ? '🖌 กำลังลงสี (กดอีกครั้งเพื่อเลิก)' : '🖌 เริ่มลงสี';
+  drawTexture();
+  status(on ? 'คลิกบนรถทางขวา = ทาทั้งแผง · ลากเมาส์ขวา = หมุนดู · ล้อเมาส์ = ซูม' : 'เลิกลงสี');
+}
+$('btn-paint').addEventListener('click', () => { if (!car.meshes.length) { status('เปิดรถก่อน'); return; } setPaint(!paint.on); });
+document.querySelectorAll('#paint-slots button').forEach((b) => b.addEventListener('click', () => {
+  paint.slot = +b.dataset.slot;
+  document.querySelectorAll('#paint-slots button').forEach((x) => x.classList.toggle('on', x === b));
+  if (!paint.on && car.meshes.length) setPaint(true);
+}));
+$('paint-mode').addEventListener('change', (e) => { paint.mode = e.target.value; $('paint-size-row').hidden = paint.mode !== 'brush'; });
+$('paint-size').addEventListener('input', (e) => { paint.size = +e.target.value; });
+$('btn-paint-all').addEventListener('click', () => {
+  if (!car.mask) return;
+  paintStart();
+  for (const mesh of carGroup.children) { const q = car.meshes[mesh.userData.mi].parts[mesh.userData.pi]; if (q.flags[0] === 1) continue; for (let t = 0; t < q.indices.length; t += 3) fillTri(q.uvs, q.indices[t], q.indices[t + 1], q.indices[t + 2]); }
+  paintEnd(); paint.dirty = true; maskChanged();
+  status(`ทาทั้งคันเป็น ${['ดำ', 'สี 1', 'สี 2', 'สี 3'][paint.slot]} แล้ว · ต่อไปคลิกแผงที่อยากให้เป็นสีอื่น`);
+});
+
+// Opened from RayCity Easy (🖌 button): the car comes by message
+if (window.opener) {
+  window.addEventListener('message', async (e) => { if (e.data?.type === 'rc-car' && Array.isArray(e.data.files)) { await openFiles(e.data.files); setPaint(true); } });
+  try { window.opener.postMessage({ type: 'rc-uv-ready' }, '*'); } catch { /* opener closed */ }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -468,8 +615,8 @@ zipIn.addEventListener('change', async (e) => { const f = e.target.files[0]; if 
 dirIn.addEventListener('change', async (e) => { const list = []; for (const f of e.target.files) list.push({ path: f.webkitRelativePath || f.name, data: new Uint8Array(await f.arrayBuffer()) }); await openFiles(list); e.target.value = ''; });
 $('file-sel').addEventListener('change', () => { selected = new Set(); refresh(); });
 $('opt-guide').addEventListener('change', refresh);
-$('btn-undo').addEventListener('click', () => { if (undo.length) { redo.push(snapshot()); restore(undo.pop()); } });
-$('btn-redo').addEventListener('click', () => { if (redo.length) { undo.push(snapshot()); restore(redo.pop()); } });
+$('btn-undo').addEventListener('click', () => { if (undo.length) { const s = undo.pop(); redo.push(s.mask ? { mask: car.mask.data.slice() } : snapshot()); restore(s); } });
+$('btn-redo').addEventListener('click', () => { if (redo.length) { const s = redo.pop(); undo.push(s.mask ? { mask: car.mask.data.slice() } : snapshot()); restore(s); } });
 $('btn-rot').addEventListener('click', () => transformSel((u, v) => [-v, u]));
 $('btn-flipu').addEventListener('click', () => transformSel((u, v) => [-u, v]));
 $('btn-flipv').addEventListener('click', () => transformSel((u, v) => [u, -v]));
@@ -493,6 +640,8 @@ window.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); $(e.shiftKey ? 'btn-redo' : 'btn-undo').click(); }
   else if ((e.ctrlKey || e.metaKey) && k === 'y') { e.preventDefault(); $('btn-redo').click(); }
+  else if (k === 'b') $('btn-paint').click();
+  else if (paint.on && ['1', '2', '3', '0'].includes(k)) document.querySelector(`#paint-slots button[data-slot="${k}"]`).click();
   else if (k === 'r') $('btn-rot').click();
   else if (k === '+' || k === '=') $('btn-bigger').click();
   else if (k === '-') $('btn-smaller').click();

@@ -56,8 +56,27 @@
       <select id="file-sel"></select>
       <pre id="stats" class="hint"></pre>
     </section>
+    <section class="paint">
+      <h2>2. 🖌 ลงสี (สีในโรงรถ)</h2>
+      <div class="btns"><button id="btn-paint">🖌 เริ่มลงสี</button></div>
+      <div id="paint-slots" class="slots">
+        <button data-slot="1" class="on"><i style="background:#f00"></i>สี 1 ตัวรถ</button>
+        <button data-slot="2"><i style="background:#0f0"></i>สี 2</button>
+        <button data-slot="3"><i style="background:#00f"></i>สี 3</button>
+        <button data-slot="0"><i style="background:#000"></i>ดำ ไม่รับสี</button>
+      </div>
+      <div class="row"><span>วิธีทา</span><select id="paint-mode"><option value="panel">ทั้งแผง (คลิกเดียว)</option><option value="brush">แปรง (คลิกค้างแล้วลาก)</option><option value="part">ทั้งชิ้น</option></select></div>
+      <div class="row" id="paint-size-row" hidden><span>ขนาดแปรง</span><input id="paint-size" type="range" min="0.05" max="0.8" step="0.05" value="0.25"></div>
+      <div class="btns"><button id="btn-paint-all">ทาทั้งคันด้วยสีที่เลือก</button></div>
+      <ol class="how">
+        <li>เลือกสี แล้ว<b>คลิกบนรถ</b>ทางขวา (ทาทั้งแผง) · ลากเมาส์<b>ขวา</b>หมุนดู · ล้อเมาส์ซูม</li>
+        <li>ตัวอย่างกระบะ: กด "ทาทั้งคัน" ด้วยสี 1 → เลือกสี 3 คลิกฝากระโปรง → เลือกสี 2 คลิกฝาท้าย</li>
+        <li>กระจัง / ยาง / ของตกแต่ง → เลือก ดำ แล้วคลิก</li>
+        <li>ผิด กด Ctrl+Z · เสร็จกด ⬇ ดาวน์โหลดรถ (ข้อ 5)</li>
+      </ol>
+    </section>
     <section>
-      <h2>2. วิธีทำ (ง่ายๆ)</h2>
+      <h2>3. แก้ UV (ไม่บังคับ)</h2>
       <ol class="how">
         <li><b>ซ้าย</b> = ลาย UV บนรูปมาสก์ · แดง = สี 1 · เขียว = สี 2 · น้ำเงิน = สี 3 · ดำ = ไม่รับสี</li>
         <li>เส้นจาง = ตำแหน่งแผงของ gtv98 (ลาย/ฟิล์มในร้านวาดมาตามนี้) ให้แผงของเราทับแผงเดียวกัน</li>
@@ -68,7 +87,7 @@
       </ol>
     </section>
     <section>
-      <h2>3. แก้ละเอียดใน Blender (ฟรี)</h2>
+      <h2>4. แก้ละเอียดใน Blender (ฟรี)</h2>
       <div class="btns">
         <button id="btn-blender-out">⬇ ส่งออกไป Blender (.obj + รูป)</button>
         <button id="btn-blender-in">⬆ นำกลับจาก Blender (.obj)</button>
@@ -83,7 +102,7 @@
       </ol>
     </section>
     <section>
-      <h2>4. ดาวน์โหลด</h2>
+      <h2>5. ดาวน์โหลด</h2>
       <div class="btns"><button id="btn-save" class="accent">⬇ ดาวน์โหลดรถ (.zip)</button></div>
       <div id="save-log" class="hint"></div>
     </section>

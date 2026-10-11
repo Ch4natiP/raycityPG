@@ -1112,7 +1112,7 @@ function renderIcon(bytes) {
 // ---------------------------------------------------------------------------------------------
 // The whole conversion. template: { name, files: Map(rel → Uint8Array) }. Returns Map(rel → Uint8Array).
 
-export async function convert(model, { name, template, categories = new Map(), maxVerts = 3500, voxel = 0.015, raw = false, smooth = true, hideInterior = true, paintAll = true, slots = false, layout = 'template', partTextures = false, log = () => {} }) {
+export async function convert(model, { name, template, categories = new Map(), maxVerts = 3500, voxel = 0.015, raw = false, smooth = true, hideInterior = true, paintAll = true, slots = false, pickup = false, layout = 'template', partTextures = false, log = () => {} }) {
   await MeshoptSimplifier.ready;
   log('อ่านโมเดล…');
   const src = collect(model, categories);
@@ -1144,10 +1144,27 @@ export async function convert(model, { name, template, categories = new Map(), m
     };
     // Three garage colours where the template has them: its mask's colour under the closest point of
     // the bent template (gtv98: green lower band → colour 2, blue hood → colour 3).
-    if (slots && (layout === 'zones' || layout === 'atlas')) {
+    if (slots && (layout === 'zones' || layout === 'atlas' || layout === 'islands')) {
       const slotAt = await templateMaskSlots(bent, template);
       const paint = src.tris.filter((t) => t.mat === 'Body_Color' || t.mat === 'Wing');
-      const lab = smoothLabels(paint, paint.map((t) => slotAt(t.c0)));
+      let lab = smoothLabels(paint, paint.map((t) => slotAt(t.c0)));
+      {
+        // Colour 2 (the lower band all around, like Escarabajo) by height: a straight line along the car
+        // instead of the template's band edge, which falls ragged across this car's triangles.
+        let z0 = Infinity; let z1 = -Infinity;
+        for (const t of paint) { z0 = Math.min(z0, t.c0[2]); z1 = Math.max(z1, t.c0[2]); }
+        const line = z0 + (z1 - z0) * 0.3;
+        lab = smoothLabels(paint, lab.map((l, i) => (l === 3 ? 3 : paint[i].c0[2] < line && Math.abs(paint[i].n[2]) < 0.8 ? 2 : 1)));
+      }
+      if (pickup) {
+        // Pickup without side skirts: colour 1 the whole car, colour 3 the hood (the template's), colour 2
+        // the tailgate — paint at the rear end facing back, above the bumper.
+        let yMax = -Infinity; let z0 = Infinity; let z1 = -Infinity;
+        for (const t of paint) { yMax = Math.max(yMax, t.c0[1]); z0 = Math.min(z0, t.c0[2]); z1 = Math.max(z1, t.c0[2]); }
+        const tail = paint.map((t) => t.c0[1] > yMax - 0.35 && t.n[1] > 0.6 && t.c0[2] > z0 + (z1 - z0) * 0.3 && t.c0[2] < z0 + (z1 - z0) * 0.75);
+        lab = smoothLabels(paint, lab.map((l, i) => (tail[i] ? 2 : l === 3 ? 3 : 1)));
+        log(`กระบะ: ฝาท้าย ${tail.filter(Boolean).length.toLocaleString()} สามเหลี่ยม = สี 2 · ฝากระโปรง = สี 3 · ที่เหลือสี 1`);
+      }
       paint.forEach((t, i) => { if (lab[i] === 3) t.mat = 'Hood_Paint'; else if (lab[i] === 2) t.mat = 'Lower_Paint'; });
     }
   }
@@ -1293,9 +1310,16 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, s
   if (asTemplate) {
     for (const [from, to] of Object.entries(INTO_DRAWN)) {
       if (!lod[from]?.length) continue;
-      const n = vertsOf(lod[from]) + vertsOf(lod[to] || []);
-      if (n > 64000) { log(`${from}: ย้ายไป ${to} ไม่ได้ (รวม ${n.toLocaleString()} จุด เกินที่ไฟล์ .0m เก็บได้) เกมอาจไม่ทาสีชิ้นนี้`); continue; }
-      lod[to] = [...(lod[to] || []), ...lod[from]];
+      let merged = [...(lod[to] || []), ...lod[from]];
+      // a .0m holds 65,535 points and 65,535 indices (21,845 triangles): reduced again when the two together are over
+      const ni = merged.reduce((t, q) => t + q.indices.length, 0);
+      if (vertsOf(merged) > 60000 || ni > 60000) {
+        const fit = fitParts(merged, 1, 60000, 60000);
+        if (fit.verts > 64000 || fit.indices > 64000) { log(`${from}: ย้ายไป ${to} ไม่ได้ (เกินที่ไฟล์ .0m เก็บได้) เกมอาจไม่ทาสีชิ้นนี้`); continue; }
+        log(`${to} + ${from}: ลดเหลือ ${fit.verts.toLocaleString()} จุด ${(fit.indices / 3).toLocaleString()} สามเหลี่ยม (เพดานไฟล์ .0m)`);
+        merged = fit.parts;
+      }
+      lod[to] = merged;
       delete lod[from];
       log(`${from} → ${to} (ไฟล์ ${from} เกมไม่ทาสี)`);
     }
@@ -1320,6 +1344,14 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, s
       || readTpl([...tpl.keys()].find((r) => r.startsWith(pre) && !r.slice(pre.length).includes('/') && r.endsWith(`_${l}.0m`)));
   };
   const writeLods = (dir, mesh, tplMesh, parts) => {
+    // Last guard for the file's limits (65,535 points / 65,535 indices) after the UV cuts added points
+    // and triangles; room left for the template's stand-in pieces.
+    const ni = parts.reduce((t, q) => t + q.indices.length, 0);
+    if (vertsOf(parts) > 62000 || ni > 62000) {
+      const fit = fitParts(parts, 1, 62000, 62000);
+      log(`${dir || 'body'}: ${vertsOf(parts).toLocaleString()} จุด ${(ni / 3).toLocaleString()} สามเหลี่ยม → ${fit.verts.toLocaleString()} จุด ${(fit.indices / 3).toLocaleString()} สามเหลี่ยม (เพดานไฟล์ .0m)`);
+      parts = fit.parts;
+    }
     for (let l = 0; l < 3; l++) {
       const t = tplLod(dir, tplMesh, l);
       out.set(`${dir ? `${dir}/` : ''}${mesh}_${l}.0m`, writeOM(t, matchTemplateSubmeshes(t, parts)));
@@ -1405,6 +1437,7 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, s
       const img = await decodePNG(out.get(`${name}_base.png`));
       const px = new Uint8ClampedArray(img.data);
       const cx = Math.round(ISLAND_BLACK[0] * img.w); const cy = Math.round(ISLAND_BLACK[1] * img.h);
+      if (slots && !paintAll) islandMask(lod, px, img.w, img.h);
       for (let y = cy - 8; y <= cy + 8; y++) for (let x = cx - 8; x <= cx + 8; x++) px.set([0, 0, 0, 255], (y * img.w + x) * 4);
       out.set(`${name}_base.png`, await png(px, img.w, img.h));
       out.set(`${name}_base_s.dds`, dds(px, img.w, img.h, 'full'));
@@ -1429,6 +1462,7 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, s
     out.set(`${name}_color.png`, await png(clear, cw2, ch2));
     out.set(`${name}_color_s.dds`, dds(clear, cw2, ch2, 'half'));
   }
+  await glassLikeEscarabajo(out, name);
   // dooropen as the template; mesh.xml stretched to this car.
   for (const [rel, b] of tpl) if (rel.startsWith('dooropen/')) out.set(rel, b);
   if (tpl.has('mesh.xml')) {
@@ -1457,6 +1491,7 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, s
       try { out.set(`icon/${name}_${key}.png`, await renderIcon(meshFile)); } catch { out.set(`icon/${name}_${key}.png`, tpl.get(rel)); } // no WebGL: the template's icon
     }
   }
+  await defaultPartsLikeEscarabajo(out, name, { log });
   const nv = (rel) => { const b = out.get(rel); return b ? parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)).positions.length / 3 : 0; };
   log(`เสร็จ: ${out.size} ไฟล์ · ตัวถัง ${nv('body_2.0m')} จุด`);
   return out;
@@ -1591,6 +1626,7 @@ export async function bendTemplate(model, { name, template, categories = new Map
       out.set(rel, encodeSpec(text));
     } else out.set(rename(rel), b);
   }
+  await glassLikeEscarabajo(out, name);
   log('สร้างไอคอน…');
   await tick();
   for (const rel of [...tpl.keys()].filter((r) => r.startsWith('icon/') && r.endsWith('.png'))) {
@@ -1602,7 +1638,8 @@ export async function bendTemplate(model, { name, template, categories = new Map
     const meshFile = out.get(`${dir}/${v ? v[2] : 'default'}_2.0m`) || out.get(`${dir}/default_2.0m`);
     out.set(`icon/${name}_${key2}.png`, meshFile ? await renderIcon(meshFile) : tpl.get(rel));
   }
-  log(`เสร็จ: ${out.size} ไฟล์ · โครงเดียวกับ ${tplName} ทุกไฟล์ (จำนวนจุดเท่าเดิม)`);
+  await defaultPartsLikeEscarabajo(out, name, { log });
+  log(`เสร็จ: ${out.size} ไฟล์ · ไฟล์ default ครบแบบ Escarabajo · กระจกแบบ Escarabajo`);
   return out;
 }
 
@@ -1703,6 +1740,72 @@ export async function templateMaskSlots(bent, template) {
 // triangle stretches across the texture (black / other pictures in game, packs 44-53) and shop decals,
 // films and the mask land where they land on the template. Trim, grilles and lamps sit on one black spot.
 const ISLAND_BLACK = [0.336, 0.383]; // empty in gtv98's sheet
+// The paint mask drawn from our own triangles (islands layout, three colours): every paint triangle
+// fills its UV triangle with its colour slot — Hood_Paint blue (3), Lower_Paint green (2), the rest red
+// (1) — so a colour border follows the car's triangle edges instead of gtv98's mask under them (whose
+// band / hood edges fall across our triangles: ragged green / blue patches). Filled 2 px wider than
+// the triangles (mip levels / filtering at edges); texels no triangle touches are colour 1.
+function islandMask(lod, px, w, h) {
+  // votes per texel and colour slot; a texel takes the slot most triangles there have. Triangles the
+  // island map squashed (UV area far below the usual for their size: clamped at the island's edge)
+  // don't vote — they gave the stray patches.
+  const votes = new Uint16Array(w * h * 4);
+  const slotOf = (p) => (p.name === 'Hood_Paint' ? 3 : p.name === 'Lower_Paint' ? 2 : 1);
+  const tris = [];
+  for (const parts of Object.values(lod)) for (const p of parts) {
+    if ((p.kind || 0) !== 0) continue;
+    const U = p.uvs; const I = p.indices; const P = p.positions; const sl = slotOf(p);
+    for (let t = 0; t < I.length; t += 3) {
+      const q = [0, 1, 2].map((k) => [U[I[t + k] * 2] * w, U[I[t + k] * 2 + 1] * h]);
+      const area = (q[1][0] - q[0][0]) * (q[2][1] - q[0][1]) - (q[2][0] - q[0][0]) * (q[1][1] - q[0][1]);
+      if (Math.abs(area) < 1e-6) continue; // flat: trim on the black spot
+      const a = I[t] * 3; const b = I[t + 1] * 3; const c = I[t + 2] * 3;
+      const e1 = [P[b] - P[a], P[b + 1] - P[a + 1], P[b + 2] - P[a + 2]]; const e2 = [P[c] - P[a], P[c + 1] - P[a + 1], P[c + 2] - P[a + 2]];
+      const a3 = Math.hypot(e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]);
+      tris.push({ q, area, sl, ratio: Math.abs(area) / Math.max(1e-12, a3) });
+    }
+  }
+  const ratios = tris.map((t) => t.ratio).sort((x, y) => x - y);
+  const med = ratios[ratios.length >> 1] || 0;
+  for (const { q, area, sl, ratio } of tris) {
+    if (ratio < med * 0.2) continue;
+    const x0 = Math.max(0, Math.floor(Math.min(q[0][0], q[1][0], q[2][0]))); const x1 = Math.min(w - 1, Math.ceil(Math.max(q[0][0], q[1][0], q[2][0])));
+    const y0 = Math.max(0, Math.floor(Math.min(q[0][1], q[1][1], q[2][1]))); const y1 = Math.min(h - 1, Math.ceil(Math.max(q[0][1], q[1][1], q[2][1])));
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const cx = x + 0.5; const cy = y + 0.5;
+      const s0 = ((q[1][0] - q[0][0]) * (cy - q[0][1]) - (q[1][1] - q[0][1]) * (cx - q[0][0])) / area;
+      const s1 = ((q[2][0] - q[1][0]) * (cy - q[1][1]) - (q[2][1] - q[1][1]) * (cx - q[1][0])) / area;
+      const s2 = ((q[0][0] - q[2][0]) * (cy - q[2][1]) - (q[0][1] - q[2][1]) * (cx - q[2][0])) / area;
+      if (s0 >= -0.02 && s1 >= -0.02 && s2 >= -0.02) { const o = (y * w + x) * 4 + sl; if (votes[o] < 65535) votes[o]++; }
+    }
+  }
+  const lab = new Uint8Array(w * h);
+  for (let i = 0; i < lab.length; i++) { let best = 0; let bv = 0; for (let k = 1; k <= 3; k++) if (votes[i * 4 + k] > bv) { bv = votes[i * 4 + k]; best = k; } lab[i] = best; }
+  // a 3×3 majority pass (single stray texels), then 2 px wider (mip levels / filtering at edges)
+  {
+    const next = lab.slice();
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+      const c = [0, 0, 0, 0];
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) c[lab[(y + dy) * w + x + dx]]++;
+      const cur = lab[y * w + x]; if (!cur) continue;
+      let best = cur; for (let k = 1; k <= 3; k++) if (c[k] > c[best]) best = k;
+      if (c[cur] <= 2) next[y * w + x] = best;
+    }
+    lab.set(next);
+  }
+  for (let it = 0; it < 2; it++) {
+    const next = lab.slice();
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      if (lab[y * w + x]) continue;
+      const n = (x > 0 && lab[y * w + x - 1]) || (x < w - 1 && lab[y * w + x + 1]) || (y > 0 && lab[(y - 1) * w + x]) || (y < h - 1 && lab[(y + 1) * w + x]);
+      if (n) next[y * w + x] = n;
+    }
+    lab.set(next);
+  }
+  const RGB = [null, [255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]];
+  // texels no triangle votes for: colour 1 (not the template's band / hood showing through)
+  for (let i = 0; i < lab.length; i++) px.set(RGB[lab[i] || 1], i * 4);
+}
 export function islandUVs(lod, bent, { slots = true } = {}) {
   const sets = new Map(); // key → { P: [], isl: [] (island per triangle) }
   const islands = [];
@@ -2001,4 +2104,183 @@ export function unfitWheels(model) {
   model.wheels = o.wheels.map((w) => ({ p: [...w.p], r: w.r }));
   model.pieces.forEach((p, k) => { p.min = [...o.pieces[k].min]; p.max = [...o.pieces[k].max]; });
   model.fit = null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Glass like Escarabajo's (samples/escarabajo.rar), on every car: the glass pieces (kind 1) have their own
+// rectangle of the texture (Escarabajo: u 0–0.125, v 0.25–0.375), red in the paint mask and near black with
+// alpha 0 in the colour layer (Escarabajo 0–9, alpha 0; gtv98 / our older packs 56,59,59). Each glass
+// piece is projected flat (along its main direction) into that rectangle, so no glass triangle reaches
+// another region. The rectangle is Escarabajo's when nothing else uses it, else the closest free one.
+// Changes the .0m files and both textures (and their _s copies) in place.
+export const ESCARABAJO_GLASS = { rect: [0, 0.25, 0.125, 0.125], colour: [1, 1, 1, 0], mask: [255, 0, 0, 255] };
+export async function glassLikeEscarabajo(out, name) {
+  const maskPng = out.get(`${name}_base.png`); const colPng = out.get(`${name}_color.png`);
+  if (!maskPng) return null;
+  const mask = await decodePNG(maskPng);
+  const col = colPng ? await decodePNG(colPng) : { w: 128, h: 64, data: new Uint8ClampedArray(128 * 64 * 4) };
+  // Cells of the colour layer that other pieces' UVs touch.
+  const GW = col.w; const GH = col.h; const used = new Uint8Array(GW * GH);
+  const meshes = [];
+  for (const [rel, b] of out) {
+    if (!rel.endsWith('.0m')) continue;
+    const om = parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+    const parts = omParts(om);
+    meshes.push({ rel, om, parts });
+    for (const p of parts) {
+      if (p.flags[0] === 1 || p.positions.length / 3 <= 8) continue;
+      const U = p.uvs;
+      for (let t = 0; t < p.indices.length; t += 3) {
+        const q = [0, 1, 2].map((k) => [U[p.indices[t + k] * 2] * GW, U[p.indices[t + k] * 2 + 1] * GH]);
+        const x0 = Math.max(0, Math.floor(Math.min(q[0][0], q[1][0], q[2][0]))); const x1 = Math.min(GW - 1, Math.floor(Math.max(q[0][0], q[1][0], q[2][0])));
+        const y0 = Math.max(0, Math.floor(Math.min(q[0][1], q[1][1], q[2][1]))); const y1 = Math.min(GH - 1, Math.floor(Math.max(q[0][1], q[1][1], q[2][1])));
+        const side = (a, b, x, y) => (b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0]);
+        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+          if ((x1 - x0 + 1) * (y1 - y0 + 1) <= 4) { used[y * GW + x] = 1; continue; }
+          // the cell is touched when its centre or a corner is inside the triangle
+          for (const [px, py] of [[x + 0.5, y + 0.5], [x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]]) {
+            const s0 = side(q[0], q[1], px, py); const s1 = side(q[1], q[2], px, py); const s2 = side(q[2], q[0], px, py);
+            if ((s0 >= 0 && s1 >= 0 && s2 >= 0) || (s0 <= 0 && s1 <= 0 && s2 <= 0)) { used[y * GW + x] = 1; break; }
+          }
+        }
+        for (const [px, py] of q) used[Math.min(GH - 1, Math.max(0, Math.floor(py))) * GW + Math.min(GW - 1, Math.max(0, Math.floor(px)))] = 1;
+      }
+    }
+  }
+  if (!meshes.some((m) => m.parts.some((p) => p.flags[0] === 1 && p.positions.length / 3 > 8))) return null;
+  // A free block the size of Escarabajo's rectangle (in colour-layer cells), closest to it.
+  const [ru, rv, rw, rh] = ESCARABAJO_GLASS.rect;
+  const BW = Math.max(4, Math.round(rw * GW)); const BH = Math.max(4, Math.round(rh * GH));
+  const want = [ru * GW, rv * GH];
+  let best = null; let bd = Infinity;
+  for (let y = 0; y + BH <= GH; y++) for (let x = 0; x + BW <= GW; x++) {
+    const d = (x - want[0]) ** 2 + (y - want[1]) ** 2; if (d >= bd) continue;
+    let free = true;
+    for (let yy = Math.max(0, y - 1); free && yy < Math.min(GH, y + BH + 1); yy++) for (let xx = Math.max(0, x - 1); xx < Math.min(GW, x + BW + 1); xx++) if (used[yy * GW + xx]) { free = false; break; }
+    if (free) { bd = d; best = [x, y]; }
+  }
+  if (!best) best = want.map(Math.round); // nothing free: Escarabajo's own place
+  // UV box inside the block (one cell in from its edge so mip levels stay on the glass colours).
+  const box = [(best[0] + 1) / GW, (best[1] + 1) / GH, (BW - 2) / GW, (BH - 2) / GH];
+  for (const m of meshes) {
+    let changed = false;
+    for (const p of m.parts) {
+      if (p.flags[0] !== 1) continue;
+      const P = p.positions; const n = P.length / 3; if (!n) continue;
+      // flat projection along the piece's main direction (sum of its normals)
+      const dir = [0, 0, 0]; for (let i = 0; i < n; i++) for (let k = 0; k < 3; k++) dir[k] += Math.abs(p.normals[i * 3 + k]);
+      const ax = dir.indexOf(Math.max(...dir)); const [a1, a2] = [0, 1, 2].filter((k) => k !== ax);
+      const lo = [Infinity, Infinity]; const hi = [-Infinity, -Infinity];
+      for (let i = 0; i < n; i++) { lo[0] = Math.min(lo[0], P[i * 3 + a1]); hi[0] = Math.max(hi[0], P[i * 3 + a1]); lo[1] = Math.min(lo[1], P[i * 3 + a2]); hi[1] = Math.max(hi[1], P[i * 3 + a2]); }
+      for (let i = 0; i < n; i++) {
+        p.uvs[i * 2] = box[0] + box[2] * ((P[i * 3 + a1] - lo[0]) / (hi[0] - lo[0] || 1));
+        p.uvs[i * 2 + 1] = box[1] + box[3] * ((P[i * 3 + a2] - lo[1]) / (hi[1] - lo[1] || 1));
+      }
+      changed = true;
+    }
+    if (changed) out.set(m.rel, writeOM(m.om, m.parts));
+  }
+  // Mask red and colour layer near black, alpha 0 under the block — Escarabajo's values.
+  const paint = (img, data, rgba) => {
+    const x0 = Math.floor((best[0] / GW) * img.w); const x1 = Math.ceil(((best[0] + BW) / GW) * img.w);
+    const y0 = Math.floor((best[1] / GH) * img.h); const y1 = Math.ceil(((best[1] + BH) / GH) * img.h);
+    for (let y = y0; y < Math.min(img.h, y1); y++) for (let x = x0; x < Math.min(img.w, x1); x++) data.set(rgba, (y * img.w + x) * 4);
+  };
+  const mpx = new Uint8ClampedArray(mask.data); paint(mask, mpx, ESCARABAJO_GLASS.mask);
+  const cpx = new Uint8ClampedArray(col.data); paint(col, cpx, ESCARABAJO_GLASS.colour);
+  const save = async (base, px, w, h, defMode) => {
+    out.set(`${base}.png`, await png(px, w, h));
+    if (out.has(`${base}_s.png`)) { out.set(`${base}_s.png`, await png(px, w, h)); return; }
+    const old = out.get(`${base}_s.dds`);
+    let mode = defMode;
+    if (old && old.length >= 128) mode = new DataView(old.buffer, old.byteOffset, 128).getUint32(16, true) === w ? 'full' : 'half';
+    out.set(`${base}_s.dds`, dds(px, w, h, mode));
+  };
+  await save(`${name}_base`, mpx, mask.w, mask.h, 'full');
+  await save(`${name}_color`, cpx, col.w, col.h, 'half');
+  return box;
+}
+
+// ---------------------------------------------------------------------------------------------
+// The file set like Escarabajo's, default parts only: every part folder has default_0/1/2.0m (a folder
+// with only a tuning variant takes that variant as its default), list.xml lists just the default
+// (`<part id='0' name='default' mesh='default' tex='…' />`; tex '' where no texture is shipped, as
+// Escarabajo's hood and roof), the variants' meshes / textures / icons are dropped, every folder gets
+// its default icon, and the tail lamps get their own texture like Escarabajo's rearlight (housing,
+// red brake light, amber indicator) with each lamp piece flat in its band. mainspoiler stays as it is
+// (Escarabajo has no default wing either). Changes `out` in place.
+const LAMP_BANDS = { 0: [[150, 20, 24, 255], 0], 3: [[205, 18, 22, 255], 1], 4: [[255, 168, 40, 255], 2] };
+export async function defaultPartsLikeEscarabajo(out, name, { log = () => {} } = {}) {
+  const dirs = [...new Set([...out.keys()].filter((r) => r.includes('/')).map((r) => r.split('/')[0]))].filter((d) => !/^(dooropen|icon|mainspoiler)$/i.test(d));
+  const omOf = (b) => parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+  const added = [];
+  for (const dir of dirs) {
+    const files = [...out.keys()].filter((r) => r.startsWith(`${dir}/`) && !r.slice(dir.length + 1).includes('/'));
+    const meshes = files.filter((r) => /_[0-2]\.0m$/.test(r));
+    // default_0/1/2: from the default's other LODs, else from a variant
+    for (let l = 0; l < 3; l++) {
+      const rel = `${dir}/default_${l}.0m`;
+      if (out.has(rel)) continue;
+      const src = [`${dir}/default_2.0m`, `${dir}/default_1.0m`, `${dir}/default_0.0m`].find((r) => out.has(r)) || meshes.find((r) => r.endsWith(`_${l}.0m`)) || meshes[0];
+      if (!src || !out.has(src)) continue;
+      if (/\/default_[0-2]\.0m$/.test(src)) out.set(rel, out.get(src));
+      else {
+        // from a tuning variant: its pieces and flags, every point on one spot (nothing drawn), so the
+        // default is the plain car (gtv98's sills are in its body) and not the variant's body kit
+        const om = omOf(out.get(src)); const parts = omParts(om);
+        for (const q of parts) { const c = [0, 1, 2].map((k) => q.positions[k] || 0); for (let i = 0; i < q.positions.length; i += 3) q.positions.set(c, i); }
+        out.set(rel, writeOM(om, parts));
+      }
+      added.push(rel);
+    }
+    if (!out.has(`${dir}/default_2.0m`)) continue;
+    for (const r of meshes) if (!/\/default_[0-2]\.0m$/.test(r)) out.delete(r);
+    // the default's texture: kept when shipped (named <name>_<dir>_default or <name>_<dir>), variants' dropped
+    const pngs = files.filter((r) => r.endsWith('.png'));
+    let tex = [`${name}_${dir}_default`, `${name}_${dir}`].find((t) => out.has(`${dir}/${t}.png`)) || '';
+    for (const r of pngs) {
+      const t = r.slice(dir.length + 1, -4);
+      if (t === tex) continue;
+      out.delete(r); out.delete(`${dir}/${t}_s.dds`); out.delete(`${dir}/${t}_s.png`);
+    }
+    for (const r of files.filter((x) => /_s\.dds$/.test(x) && !out.has(x.replace(/_s\.dds$/, '.png')))) out.delete(r);
+    // tail lamps: their own texture, lamp pieces flat in their band
+    // (a rearlight that already has its texture — old body mode, the template's lamp art — keeps it)
+    if (dir === 'rearlight' && !tex) {
+      const S = 128; const px = new Uint8ClampedArray(S * S * 4);
+      for (const [rgba, band] of Object.values(LAMP_BANDS)) for (let y = band * 32; y < band * 32 + 32; y++) for (let x = 0; x < S; x++) px.set(rgba, (y * S + x) * 4);
+      tex = `${name}_rearlight_default`;
+      for (let l = 0; l < 3; l++) {
+        const rel = `${dir}/default_${l}.0m`; const om = omOf(out.get(rel)); const parts = omParts(om);
+        for (const p of parts) {
+          const band = (LAMP_BANDS[p.flags[0]] || LAMP_BANDS[0])[1];
+          const P = p.positions; const n = P.length / 3; if (!n) continue;
+          // projected from behind (x across, z up), inside the band with a 4-texel margin
+          let x0 = Infinity; let x1 = -Infinity; let z0 = Infinity; let z1 = -Infinity;
+          for (let i = 0; i < n; i++) { x0 = Math.min(x0, P[i * 3]); x1 = Math.max(x1, P[i * 3]); z0 = Math.min(z0, P[i * 3 + 2]); z1 = Math.max(z1, P[i * 3 + 2]); }
+          for (let i = 0; i < n; i++) {
+            p.uvs[i * 2] = (4 + 120 * ((P[i * 3] - x0) / (x1 - x0 || 1))) / S;
+            p.uvs[i * 2 + 1] = (band * 32 + 4 + 24 * ((z1 - P[i * 3 + 2]) / (z1 - z0 || 1))) / S;
+          }
+        }
+        out.set(rel, writeOM(om, parts));
+      }
+      out.set(`${dir}/${tex}.png`, await png(px, S, S));
+      out.set(`${dir}/${tex}_s.dds`, dds(px, S, S, 'full'));
+    }
+    out.set(`${dir}/list.xml`, encodeSpec(`<?xml version='1.0' encoding='UTF-16'?>\r\n<partlist>\r\n\t<part id='0' name='default' mesh='default' tex='${tex}' />\r\n</partlist>\r\n`));
+  }
+  // icons: the default of every folder; variants' icons dropped (mainspoiler's kept)
+  for (const r of [...out.keys()].filter((x) => x.startsWith('icon/'))) {
+    const key = r.slice(5 + name.length + 1, -4); const dir = key.split('_')[0];
+    if (dirs.includes(dir) && key !== `${dir}_default`) out.delete(r);
+  }
+  for (const dir of dirs) {
+    const rel = `icon/${name}_${dir}_default.png`;
+    if (out.has(rel) || !out.has(`${dir}/default_2.0m`)) continue;
+    try { out.set(rel, await renderIcon(out.get(`${dir}/default_2.0m`))); } catch { /* no WebGL here */ }
+    if (!out.has(rel)) { const any = [...out.keys()].find((x) => x.startsWith('icon/') && x.endsWith('.png')); if (any) out.set(rel, out.get(any)); }
+  }
+  if (added.length) log(`เติม default ที่ขาด: ${added.join(', ')}`);
+  return out;
 }

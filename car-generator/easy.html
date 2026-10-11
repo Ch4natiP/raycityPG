@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RayCity Easy</title>
+  <link rel="stylesheet" href="easy.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+        "meshoptimizer": "./node_modules/meshoptimizer/index.module.js",
+        "three-mesh-bvh": "./node_modules/three-mesh-bvh/src/index.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <aside id="steps">
+    <h1>RayCity <b>Easy</b> <span>โมเดล → รถในเกม หน้าเดียวจบ</span></h1>
+
+    <section class="step" id="s1">
+      <h2><i>1</i> เปิดโมเดลรถ</h2>
+      <div class="drop" id="drop">ลากไฟล์มาวางตรงนี้ หรือ <button id="btn-open" class="accent">📂 เลือกไฟล์</button>
+        <div class="hint">.glb .fbx .obj (เลือกพร้อมรูป .png .jpg / .mtl ได้ หรือ .zip ทั้งก้อน)</div></div>
+      <input id="file-model" type="file" multiple hidden accept=".glb,.gltf,.fbx,.obj,.mtl,.bin,.zip,.png,.jpg,.jpeg,.webp,.bmp,.tga">
+      <pre id="model-info" class="hint"></pre>
+      <div class="row" id="flip-row" hidden><button id="btn-flip">↻ หน้ารถผิดด้าน กดกลับ</button></div>
+    </section>
+
+    <section class="step" id="s2">
+      <h2><i>2</i> เลือกตัวถัง</h2>
+      <label class="choice"><input type="radio" name="body" value="old" checked>
+        <span><b>ใช้ตัวถังที่มีอยู่</b> (แนะนำ · ชัวร์สุด)<br><small>เอาตัวถังรถที่เข้าเกมได้แล้ว ดัดให้เป็นทรงโมเดล · ไฟล์ ลาย ฟิล์ม 3 สี เหมือนรถต้นแบบทุกอย่าง · รายละเอียดน้อยกว่า</small></span></label>
+      <div class="sub" id="old-opts">
+        <div class="row"><span>ตัวถังต้นแบบ</span><select id="tpl-sel"><option value="gtv98">gtv98 (ในหน้าเว็บ)</option></select></div>
+        <div class="row"><button id="btn-tpl">📂 ใช้โฟลเดอร์/zip รถคันอื่นเป็นต้นแบบ</button><input id="file-tpl" type="file" accept=".zip" hidden></div>
+      </div>
+      <label class="choice"><input type="radio" name="body" value="new">
+        <span><b>ตัวถังใหม่จากโมเดล</b><br><small>ใช้ผิวของโมเดลเอง (ละเอียดเท่าโมเดล) · ตัด UV ตามเกาะของรถต้นแบบ ลาย/สีลงตำแหน่งเดียวกัน</small></span></label>
+      <div class="sub" id="new-opts" hidden>
+        <div class="row"><span>poly</span><select id="poly-sel"><option value="60000">ไม่ลด poly</option><option value="4800">ลด (ไม่เกิน 4,800 จุดต่อไฟล์)</option></select></div>
+      </div>
+    </section>
+
+    <section class="step" id="s3">
+      <h2><i>3</i> ตั้งค่า</h2>
+      <div class="row"><span>ชื่อรถ (.jmd)</span><input id="car-name" type="text" value="rc_canyon"></div>
+      <div class="row"><span>สีในโรงรถ</span><select id="colour-sel"><option value="slots">แยก 3 สี (ตัวถัง / แถบล่าง / ฝากระโปรง)</option><option value="pickup">กระบะ 3 สี (สีคลุมรถ / ฝากระโปรง / ฝาท้าย)</option><option value="one">สีเดียวทั้งคัน (แบบ McQueen)</option></select></div>
+      <div class="row"><span>ให้ซุ้มล้อตรงล้อเกม</span><input id="fit-wheels" type="checkbox" checked></div>
+    </section>
+
+    <section class="step" id="s4">
+      <h2><i>4</i> สร้างรถ</h2>
+      <button id="btn-build" class="accent big" disabled>⚡ สร้างรถ</button>
+      <pre id="build-log" class="hint"></pre>
+    </section>
+
+    <section class="step" id="s5">
+      <h2><i>5</i> ตรวจ แล้วดาวน์โหลด</h2>
+      <div id="checks" class="checks"></div>
+      <div class="row">
+        <button id="btn-download" class="accent big" disabled>⬇ ดาวน์โหลด .zip</button>
+      </div>
+      <details>
+        <summary>แก้ UV ต่อเอง (ไม่บังคับ)</summary>
+        <p class="hint">เว็บตัด UV ให้ก่อนแล้ว (ตามแผงของรถต้นแบบ) · อยากให้คมเนียนขึ้น ทำต่อได้ 2 ทาง:
+1) หน้า RayCity UV: ดาวน์โหลด .zip ด้านบน แล้วเปิดใน <a href="RayCity-UV.html" target="_blank" style="color:#8ab4ff">RayCity-UV.html</a> (ลากเกาะ / 🩹 แก้ลายยืด)
+2) Blender: ตามขั้นตอนข้างล่าง</p>
+        <div class="row"><button id="btn-blender-out" disabled>⬇ ส่งออกไป Blender</button><button id="btn-blender-in" disabled>⬆ นำกลับจาก Blender</button><input id="file-obj" type="file" accept=".obj" hidden></div>
+        <ol class="how">
+          <li>Blender: File › Import › Wavefront (.obj)</li>
+          <li>Tab · Mark Seam ตรงขอบแผง · U › Unwrap · จัดเกาะให้ทับแผงของรถต้นแบบบนรูป</li>
+          <li>File › Export › Wavefront (.obj) ติ๊ก UV · ห้ามแก้รูปทรง</li>
+          <li>กด ⬆ นำกลับ แล้วดาวน์โหลดใหม่</li>
+        </ol>
+      </details>
+    </section>
+  </aside>
+
+  <main id="view">
+    <nav id="tabs"><button data-tab="model" class="on">โมเดล</button><button data-tab="car">รถที่ได้</button><button data-tab="uv">UV</button></nav>
+    <canvas id="gl"></canvas>
+    <canvas id="uv" hidden></canvas>
+    <div id="legend" class="hint">ล้อเมาส์ซูม · ลากซ้ายหมุน · ลากขวาเลื่อน</div>
+  </main>
+
+  <script src="js/embedded-cars.js"></script>
+  <script type="module" src="js/easy/easy.js"></script>
+</body>
+</html>

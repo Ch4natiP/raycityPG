@@ -195,3 +195,18 @@ the middle, hood the blue block), so an own layout puts them in the wrong place.
                          where islands meet: 0 stretched triangles); gtv98's mask (three colours where gtv98 has
                          them), trim / grilles / lamps on one black spot in empty texture. 57_uv_vs_gtv98.png
                          shows the sheet next to gtv98's, 57_colours_preview.png the colours.
+
+Escarabajo study (samples/escarabajo.rar, the real car — test3/ was our rc_canyon renamed):
+- Glass (kind 1): a real unwrap in its own rectangle u 0-0.125, v 0.25-0.375; mask red there; colour layer
+  near black (0-9) with alpha 0 (gtv98 / our packs 50-57: 56,59,59 alpha 0). Builds now put every glass
+  piece flat-projected into a free rectangle (Escarabajo's place when free), mask red, colour layer 1,1,1,0.
+- Files, default only: every part folder has default_0/1/2.0m (headlight / rearlight also a 'base' mesh),
+  textures for frontbumper / headlight / rearbumper / rearlight / skirt (64x64-128x128, dds half size + mips),
+  hood / roof list tex='' (painted like the body), mainspoiler has no default (shop wings only),
+  icons <name>_<part>_default.png (+ headlight_base / rearlight_base).
+  Tail lamp pieces: housing kind 0, brake kind 3 ×2, indicator kind 4 ×2, each on its band of the lamp texture.
+- Builds now: list.xml with only the default, variants (rbrc_001...) dropped (mainspoiler kept), a folder
+  without a default (gtv98's skirt) gets an empty one, default icons for every folder, the rearlight its own
+  texture (dark red housing / red brake / amber indicator bands) when it had none.
+- New-body three colours now use our own mask drawn triangle by triangle (sharp borders on panel edges);
+  'pickup' colours: colour 1 the whole car, colour 3 the hood, colour 2 the tailgate.

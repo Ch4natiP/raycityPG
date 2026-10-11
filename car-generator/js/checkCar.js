@@ -78,9 +78,23 @@ export async function checkCar(files, name, template = null) {
   if (template) {
     const extra = [...files.keys()].filter((r) => /\/[^/]+\.png$/.test(r) && !r.startsWith('icon/')
       && ![...template.files.keys()].some((t) => t.split(template.name).join(name) === r));
-    const partTex = [...files.keys()].filter((r) => /\/[^/]+\.png$/.test(r) && !r.startsWith('icon/') && drawnDir(files, r));
+    const tplSame = (r) => [...template.files.keys()].some((t) => t.split(template.name).join(name) === r);
+    const partTex = [...files.keys()].filter((r) => /\/[^/]+\.png$/.test(r) && !r.startsWith('icon/') && !r.startsWith('rearlight/') && drawnDir(files, r) && !tplSame(r));
     if (partTex.length) warn(`มีรูปของชิ้นส่วน ${partTex.length} ไฟล์ (${partTex.slice(0, 3).join(', ')}) ชิ้นที่มีรูปจะเป็นสีตามรูป ไม่ใช่สีรถ (ทดสอบแล้วในชุด 38/39) · ถ้าอยากให้เปลี่ยนสีได้ทั้งคัน กด 🔧 ซ่อมให้อัตโนมัติ`);
     else if (extra.length === 0) ok('ชิ้นส่วนไม่มีรูปของตัวเอง → รับสีรถจากตัวถังทุกชิ้น');
+  }
+  // Like Escarabajo: every part folder (mainspoiler aside) has its default in 3 LODs, every texture
+  // its list names shipped (or tex=''), and its default icon.
+  {
+    const gaps = [];
+    for (const d of dirs.filter((x) => x !== 'mainspoiler')) {
+      for (let l = 0; l < 3; l++) if (!files.has(`${d}/default_${l}.0m`)) gaps.push(`${d}/default_${l}.0m`);
+      const text = decodeSpec(files.get(`${d}/list.xml`) || new Uint8Array());
+      for (const m of text.matchAll(/tex='([^']+)'/g)) if (!files.has(`${d}/${m[1]}.png`)) gaps.push(`${d}/${m[1]}.png`);
+      if (!files.has(`icon/${name}_${d}_default.png`)) gaps.push(`icon/${name}_${d}_default.png`);
+    }
+    if (gaps.length) warn(`ยังไม่ครบแบบ Escarabajo (default) ${gaps.length} ไฟล์: ${gaps.slice(0, 6).join(', ')}${gaps.length > 6 ? ' …' : ''} · กด ➕ เติมไฟล์ที่ขาด`);
+    else ok('ไฟล์ default ครบทุกชิ้นแบบ Escarabajo (ตัวถัง ชิ้นส่วน ไฟหน้า ไฟท้าย รูป ไอคอน)');
   }
   if (missing.length) bad(`ไฟล์ขาด ${missing.length} ไฟล์: ${missing.slice(0, 8).join(', ')}${missing.length > 8 ? ' …' : ''}`);
   else ok('ไฟล์ครบทุกไฟล์ที่เกมเปิด');
@@ -111,7 +125,19 @@ export async function checkCar(files, name, template = null) {
   const undrawn = ['frontbumper', 'headlight', 'grill', 'skirt'].filter((d) => {
     const b = files.get(`${d}/default_2.0m`) || files.get(`${d}/rbrc_001_2.0m`);
     if (!b) return false;
-    try { return omOf(b).submeshes.some((s) => s.vertexCount > 8); } catch { return false; }
+    // the template's own pieces there (old body mode: gtv98 bent) are drawn like on the template
+    const t = template && template.files.get(`${d}/default_2.0m`);
+    try {
+      if (t && omOf(t).submeshes.map((s) => s.vertexCount).join() === omOf(b).submeshes.map((s) => s.vertexCount).join()) return false;
+      // pieces with all points on one spot (stand-ins) draw nothing
+      const om = omOf(b);
+      return om.submeshes.some((s) => {
+        if (s.vertexCount <= 8) return false;
+        let ext = 0; const P = om.positions; const o = s.vertexStart * 3;
+        for (let i = 3; i < s.vertexCount * 3; i++) ext = Math.max(ext, Math.abs(P[o + i] - P[o + (i % 3)]));
+        return ext > 1e-3;
+      });
+    } catch { return false; }
   });
   if (undrawn.length) warn(`มีชิ้นรถอยู่ในไฟล์ ${undrawn.join(', ')} ที่เกมไม่ทาสี (ชุด 40 ออกมาดำ) สร้างใหม่ด้วยแบบ "ตามรถแม่แบบ" จะย้ายไปไว้ใน hood / roof ให้`);
   if (broken) bad(`ไฟล์ .0m เสีย ${broken} ไฟล์ (อ่านไม่ได้)`);
@@ -144,6 +170,8 @@ export async function checkCar(files, name, template = null) {
           if (hx.length !== hy.length || hx.some((v, i) => v !== hy[i])) diff.push(`${rel}: ส่วนหัวไฟล์`);
           const fl = (o) => o.submeshes.map((m) => m.flags.join(',')).join(' ');
           if (fl(x) !== fl(y)) diff.push(`${rel}: ชนิดชิ้น [${fl(x)}] ต้นแบบ [${fl(y)}]`);
+        } else if (/^[^/]+\/(list\.xml|[^/]+\.(png|dds))$/.test(rel) && !rel.startsWith('icon/') && !rel.startsWith('dooropen/')) {
+          // part folders: list.xml / textures are this car's own (default only, like Escarabajo)
         } else if (rel.endsWith('.xml') && rel !== 'mesh.xml') {
           if (decodeSpec(b) !== decodeSpec(tb).split(template.name).join(name)) diff.push(`${rel}: เนื้อหา`);
         } else if (rel.endsWith('.dds')) {
@@ -192,7 +220,10 @@ export async function checkCar(files, name, template = null) {
         n++;
       }
       const pct = Math.round((red / Math.max(1, n)) * 100);
-      if (flat > tris * 0.3) bad(`UV แบนบนจุดที่มาสก์ไม่ใช่สีแดง: ${Math.round((flat / tris) * 100)}% ของสามเหลี่ยม (ในเกมเป็นสีดำ/เทาโปร่ง เปลี่ยนสีไม่ได้) · กด 🔧 ซ่อม`);
+      // (flat UVs on black are how trim / grilles / the cabin stay black: only a problem when the paint
+      // itself ended up there, i.e. little of the body takes a garage colour)
+      if (flat > tris * 0.3 && pct >= 20) ok(`ตัวถังรับสีได้ ${pct}% · ส่วนตกแต่ง/กระจังหน้า/ภายใน ${Math.round((flat / tris) * 100)}% ของสามเหลี่ยมอยู่บนจุดดำ (ตั้งใจ ไม่รับสี)`);
+      else if (flat > tris * 0.3) bad(`UV แบนบนจุดที่มาสก์ไม่ใช่สีแดง: ${Math.round((flat / tris) * 100)}% ของสามเหลี่ยม (ในเกมเป็นสีดำ/เทาโปร่ง เปลี่ยนสีไม่ได้) · กด 🔧 ซ่อม`);
       else if (strip > n * 0.9) warn('สีรถอ่านจากแถบเล็กบนสุดของมาสก์ (แบบเก่า) · สร้างใหม่ด้วยเว็บเวอร์ชันนี้');
       else if (pct < 20) warn(`ตัวถังเปลี่ยนสีได้แค่ ${pct}% (ส่วนที่เหลือเป็นสีดำตายตัว)`);
       else ok(`ตัวถังส่วนที่เปลี่ยนสีได้ประมาณ ${pct}%`);

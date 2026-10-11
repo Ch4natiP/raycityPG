@@ -52,6 +52,20 @@ console.log(`RayCity-Car-Generator.html: ${(html.length / 1024).toFixed(0)} KB`)
   console.log(`RayCity-UV.html: ${(uhtml.length / 1024).toFixed(0)} KB`);
 }
 
+// RayCity Easy (easy.html): the whole job on one page; the template car and the decoder.
+{
+  const r = await build({ entryPoints: ['js/easy/easy.js'], bundle: true, minify: true, format: 'iife', write: false, legalComments: 'none' });
+  const ejs = r.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
+  const ecss = fs.readFileSync('easy.css', 'utf8');
+  const ehtml = fs.readFileSync('easy.html', 'utf8')
+    .replace(/\s*<script type="importmap">[\s\S]*?<\/script>/, '')
+    .replace('<link rel="stylesheet" href="easy.css">', () => `<style>\n${ecss}</style>`)
+    .replace('<script src="js/embedded-cars.js"></script>', '')
+    .replace('<script type="module" src="js/easy/easy.js"></script>', () => `<script>${embedTemplates()}\n${embedDraco()}</script>\n<script>${ejs}</script>`);
+  fs.writeFileSync('RayCity-Easy.html', ehtml);
+  console.log(`RayCity-Easy.html: ${(ehtml.length / 1024).toFixed(0)} KB`);
+}
+
 // Built cars in ../cars/<name>/ are embedded whole (every file, so the page can open them with one
 // click and download the complete folder), as gzip + base64 of a JSON { path: base64 } map.
 function embedCars() {

@@ -19,16 +19,17 @@
 <body>
   <header id="toolbar">
     <div class="brand">RayCity <b>Studio</b></div>
+    <nav class="workspaces" title="พื้นที่ทำงานแบบ Blender"><a class="on" href="RayCity-Studio.html">Layout / Modeling</a><a href="RayCity-UV.html">UV Editing</a><a href="RayCity-Car-Generator.html">แปลง + ส่งออก</a></nav>
     <div class="group" title="สิ่งที่จะเลือก">
-      <button data-mode="vert" class="on" title="เลือกจุด (1)">• จุด</button>
-      <button data-mode="face" title="เลือกหน้า (2)">▲ หน้า</button>
+      <button data-mode="vert" class="on" title="เลือกจุด (1 · Tab สลับ)">• จุด</button>
+      <button data-mode="face" title="เลือกหน้า (3 · Tab สลับ)">▲ หน้า</button>
     </div>
     <div class="group" title="เครื่องมือ">
-      <button data-tool="select" class="on" title="เลือก (Q)">⬚ เลือก</button>
-      <button data-tool="translate" title="ย้าย (W)">✥ ย้าย</button>
-      <button data-tool="rotate" title="หมุน (E)">⟳ หมุน</button>
-      <button data-tool="scale" title="ย่อ/ขยาย (R)">⤢ ย่อขยาย</button>
-      <button data-tool="draw" title="วาดหน้าใหม่ทับโมเดล (D)">✎ วาดหน้า</button>
+      <button data-tool="select" class="on" title="เลือก (W)">⬚ เลือก</button>
+      <button data-tool="translate" title="ย้าย (G)">✥ ย้าย G</button>
+      <button data-tool="rotate" title="หมุน (R)">⟳ หมุน R</button>
+      <button data-tool="scale" title="ย่อ/ขยาย (S)">⤢ ย่อขยาย S</button>
+      <button data-tool="draw" title="วาดหน้าใหม่ทับโมเดล (Shift+A หรือ D)">✎ วาดหน้า</button>
     </div>
     <div class="group">
       <label class="tog" title="แก้ซีกหนึ่ง อีกซีกตามเอง"><input type="checkbox" id="opt-mirror" checked> ⇋ สมมาตร</label>
@@ -37,17 +38,17 @@
     <div class="group">
       <button id="btn-undo" title="ย้อนกลับ (Ctrl+Z)">↶</button>
       <button id="btn-redo" title="ทำซ้ำ (Ctrl+Y)">↷</button>
-      <button id="btn-delete" title="ลบ (Delete)">🗑 ลบ</button>
-      <button id="btn-weld" title="รวมจุดที่เลือกเป็นจุดเดียว (Ctrl+W)">⊙ รวมจุด</button>
-      <button id="btn-flip" title="กลับด้านหน้า (F)">⇅ กลับด้าน</button>
+      <button id="btn-delete" title="ลบ (X / Delete)">🗑 ลบ X</button>
+      <button id="btn-weld" title="รวมจุดที่เลือกเป็นจุดเดียว (M)">⊙ รวมจุด M</button>
+      <button id="btn-flip" title="กลับด้านหน้า (Alt+N)">⇅ กลับด้าน</button>
       <button id="btn-surface" title="ดึงจุดที่เลือกไปติดผิวโมเดลต้นแบบ">🧲 ติดผิวเลย</button>
     </div>
     <div class="group">
-      <button id="btn-max" title="ขยายจอที่เมาส์อยู่ (Alt+W)">⛶ ขยายจอ</button>
-      <button id="btn-zoom" title="ซูมให้เห็นทั้งหมด (Z)">⌖ ดูทั้งหมด</button>
+      <button id="btn-max" title="สลับจอเดียว / 4 จอ (Ctrl+Alt+Q)">⊞ 4 จอ</button>
+      <button id="btn-zoom" title="ซูมให้เห็นทั้งหมด (Home)">⌖ ดูทั้งหมด</button>
       <button id="btn-oneside" title="วาดผิวด้านเดียวเหมือนในเกม (เห็นหน้ากลับด้าน)">👁 แบบในเกม</button>
     </div>
-    <a class="back" href="RayCity-Car-Generator.html" title="กลับไปหน้าแปลง/เปิดรถ">← หน้าหลัก</a>
+    
   </header>
 
   <aside id="left">
@@ -117,18 +118,19 @@
 
     <section>
       <h2>ปุ่มลัด</h2>
-      <pre class="hint keys">คลิกซ้าย  เลือก / ลากกรอบเลือกหลายอัน
-Shift+คลิก  เพิ่มที่เลือก · Ctrl+คลิก  เอาออก
-ล้อกลาง / คลิกขวาลาก  เลื่อนจอ · ล้อเมาส์  ซูม
-คลิกขวาลาก (จอ 3D)  หมุนมุมมอง
-1 / 2  โหมดจุด / หน้า · Q W E R  เลือก ย้าย หมุน ย่อขยาย
-D  วาดหน้า: คลิก 3–4 จุดบนโมเดล (Enter = จบสามเหลี่ยม, Esc = ยกเลิก)
-Delete ลบ · Ctrl+Z / Ctrl+Y ย้อน / ทำซ้ำ · Ctrl+A เลือกทั้งหมด
-Alt+W ขยายจอ · Z ดูทั้งหมด · F กลับด้านหน้า</pre>
+      <pre class="hint keys">ปุ่มลัดแบบ Blender
+คลิกซ้าย  เลือก / ลากกรอบเลือกหลายอัน · Shift+คลิก เพิ่ม · Ctrl+คลิก เอาออก
+ล้อกลางลาก  หมุนมุมมอง · Shift+ล้อกลางลาก (หรือคลิกขวาลาก) เลื่อนจอ · ล้อเมาส์ ซูม
+Tab  สลับจุด / หน้า · 1 จุด · 3 หน้า
+G ย้าย · R หมุน · S ย่อขยาย · W เลือก
+A เลือกทั้งหมด · Alt+A ไม่เลือก · X ลบ · M รวมจุด · Alt+N กลับด้าน
+Shift+A (หรือ D) วาดหน้า: คลิก 3–4 จุดบนโมเดล (Enter = จบสามเหลี่ยม, Esc = ยกเลิก)
+Numpad 7 บน · 1 หน้า · 3 ข้าง · 5 / 0 3 มิติ · Numpad . / Home ดูทั้งหมด
+Ctrl+Alt+Q สลับจอเดียว / 4 จอ · Ctrl+Z / Ctrl+Y ย้อน / ทำซ้ำ</pre>
     </section>
   </aside>
 
-  <main id="views">
+  <main id="views" class="max">
     <canvas id="gl"></canvas>
     <div class="vp" data-i="0"><span class="label">บน (Top)</span></div>
     <div class="vp" data-i="1"><span class="label">หน้า (Front)</span></div>

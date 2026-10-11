@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RayCity UV</title>
+  <link rel="stylesheet" href="uv.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+        "meshoptimizer": "./node_modules/meshoptimizer/index.module.js",
+        "three-mesh-bvh": "./node_modules/three-mesh-bvh/src/index.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <header id="toolbar">
+    <div class="brand">RayCity <b>Studio</b></div>
+    <nav class="workspaces"><a href="RayCity-Studio.html">Layout / Modeling</a><a class="on" href="RayCity-UV.html">UV Editing</a><a href="RayCity-Car-Generator.html">แปลง + ส่งออก</a></nav>
+    <div class="group">
+      <button id="btn-undo" title="ย้อนกลับ (Ctrl+Z)">↶ ย้อน</button>
+      <button id="btn-redo" title="ทำซ้ำ (Ctrl+Y)">↷</button>
+    </div>
+    <div class="group" title="ทำกับเกาะที่เลือก">
+      <button id="btn-rot" title="หมุน 90° (R)">⟳ หมุน</button>
+      <button id="btn-flipu" title="กลับซ้าย-ขวา">⇋</button>
+      <button id="btn-flipv" title="กลับบน-ล่าง">⇅</button>
+      <button id="btn-bigger" title="ขยาย 10% (+)">＋ ขยาย</button>
+      <button id="btn-smaller" title="ย่อ 10% (−)">－ ย่อ</button>
+      <button id="btn-cut" title="ตัด UV ตามทิศของหน้า (ข้าง / บน / หน้า / หลัง) ในกรอบเดิมของเกาะ: แก้ลายยืด">✂ ตัดตามทิศ</button>
+      <button id="btn-fixall" class="accent" title="ตัดเฉพาะสามเหลี่ยมที่ลายยืดทั้งคัน">🩹 แก้ลายยืดทั้งหมด</button>
+    </div>
+    <div class="group">
+      <label class="tog"><input type="checkbox" id="opt-guide" checked> แผงของ gtv98 (เส้นจาง)</label>
+      <label class="tog"><input type="checkbox" id="opt-all" checked> ทุกไฟล์</label>
+    </div>
+    
+  </header>
+
+  <aside id="left">
+    <section>
+      <h2>1. เปิดรถ</h2>
+      <div class="btns">
+        <button id="btn-open-zip" class="accent">📦 เปิด .zip รถ</button>
+        <button id="btn-open-dir">📂 เปิดโฟลเดอร์รถ</button>
+        <input id="file-zip" type="file" accept=".zip" hidden>
+        <input id="file-dir" type="file" webkitdirectory multiple hidden>
+      </div>
+      <pre id="car-info" class="hint">ใช้ .zip ที่ได้จากปุ่ม ⚡ ในหน้าหลัก หรือโฟลเดอร์รถ RayCity</pre>
+    </section>
+    <section>
+      <h2>ไฟล์</h2>
+      <select id="file-sel"></select>
+      <pre id="stats" class="hint"></pre>
+    </section>
+    <section>
+      <h2>2. วิธีทำ (ง่ายๆ)</h2>
+      <ol class="how">
+        <li><b>ซ้าย</b> = ลาย UV บนรูปมาสก์ · แดง = สี 1 · เขียว = สี 2 · น้ำเงิน = สี 3 · ดำ = ไม่รับสี</li>
+        <li>เส้นจาง = ตำแหน่งแผงของ gtv98 (ลาย/ฟิล์มในร้านวาดมาตามนี้) ให้แผงของเราทับแผงเดียวกัน</li>
+        <li><b>คลิก</b> เกาะในจอซ้าย หรือ <b>คลิกบนรถ</b> ในจอขวา → <b>ลาก</b> ย้าย · Shift+คลิก เลือกเพิ่ม</li>
+        <li>ปุ่มด้านบน: หมุน / กลับด้าน / ขยาย / ย่อ</li>
+        <li>สามเหลี่ยม <b style="color:#ff5a6a">สีแดง</b> = ลายยืดข้ามรูป (ในเกมเป็นดำ) → กด 🩹 แก้ลายยืดทั้งหมด</li>
+        <li>เสร็จแล้วกด ⬇ ดาวน์โหลด</li>
+      </ol>
+    </section>
+    <section>
+      <h2>3. แก้ละเอียดใน Blender (ฟรี)</h2>
+      <div class="btns">
+        <button id="btn-blender-out">⬇ ส่งออกไป Blender (.obj + รูป)</button>
+        <button id="btn-blender-in">⬆ นำกลับจาก Blender (.obj)</button>
+        <input id="file-obj" type="file" accept=".obj" hidden>
+      </div>
+      <ol class="how">
+        <li>Blender: File › Import › Wavefront (.obj) เลือกไฟล์ที่ได้</li>
+        <li>เลือกชิ้น › Tab · เลือกขอบที่จะตัด › คลิกขวา Mark Seam · กด U › Unwrap (หรือ U › Smart UV Project)</li>
+        <li>หน้าต่าง UV Editing: จัดเกาะให้ทับแผงของ gtv98 บนรูปพื้นหลัง</li>
+        <li>File › Export › Wavefront (.obj) ติ๊ก UV Coordinates · <b>ห้ามแก้รูปทรง</b></li>
+        <li>กด ⬆ นำกลับ แล้วดาวน์โหลด</li>
+      </ol>
+    </section>
+    <section>
+      <h2>4. ดาวน์โหลด</h2>
+      <div class="btns"><button id="btn-save" class="accent">⬇ ดาวน์โหลดรถ (.zip)</button></div>
+      <div id="save-log" class="hint"></div>
+    </section>
+  </aside>
+
+  <main id="views">
+    <div id="uv-wrap"><canvas id="uv"></canvas><span class="label">UV (รูป 1024×1024)</span></div>
+    <div id="three-wrap"><canvas id="gl"></canvas><span class="label">รถ 3 มิติ (ลายตาราง = ตำแหน่ง UV)</span></div>
+  </main>
+  <footer id="status">เปิดรถก่อน</footer>
+
+  <script src="js/embedded-cars.js"></script>
+  <script type="module" src="js/uv/uv.js"></script>
+</body>
+</html>

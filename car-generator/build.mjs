@@ -38,6 +38,20 @@ console.log(`RayCity-Car-Generator.html: ${(html.length / 1024).toFixed(0)} KB`)
   console.log(`RayCity-Studio.html: ${(shtml.length / 1024).toFixed(0)} KB`);
 }
 
+// RayCity UV (uv.html): the UV Editing workspace; the template car for gtv98's sheet.
+{
+  const r = await build({ entryPoints: ['js/uv/uv.js'], bundle: true, minify: true, format: 'iife', write: false, legalComments: 'none' });
+  const ujs = r.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
+  const ucss = fs.readFileSync('uv.css', 'utf8');
+  const uhtml = fs.readFileSync('uv.html', 'utf8')
+    .replace(/\s*<script type="importmap">[\s\S]*?<\/script>/, '')
+    .replace('<link rel="stylesheet" href="uv.css">', () => `<style>\n${ucss}</style>`)
+    .replace('<script src="js/embedded-cars.js"></script>', '')
+    .replace('<script type="module" src="js/uv/uv.js"></script>', () => `<script>${embedTemplates()}\n${embedDraco()}</script>\n<script>${ujs}</script>`);
+  fs.writeFileSync('RayCity-UV.html', uhtml);
+  console.log(`RayCity-UV.html: ${(uhtml.length / 1024).toFixed(0)} KB`);
+}
+
 // Built cars in ../cars/<name>/ are embedded whole (every file, so the page can open them with one
 // click and download the complete folder), as gzip + base64 of a JSON { path: base64 } map.
 function embedCars() {
@@ -101,7 +115,10 @@ function embedTests() {
   const dir = path.resolve('../cars/test');
   const packs = [];
   if (fs.existsSync(dir)) {
-    for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.zip')).sort().reverse()) {
+    // The newest packs only (the page grew past 40 MB with all of them); the rest stay in cars/test.
+    const zips = fs.readdirSync(dir).filter((x) => x.endsWith('.zip')).sort().reverse();
+    const keep = [...zips.filter((x) => !/^\d/.test(x)), ...zips.filter((x) => /^\d/.test(x)).slice(0, 8)];
+    for (const f of keep) {
       packs.push({ file: f, data: fs.readFileSync(path.join(dir, f)).toString('base64') });
     }
   }

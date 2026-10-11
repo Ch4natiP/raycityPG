@@ -1,0 +1,507 @@
+// RayCity UV: the "UV Editing" workspace of RayCity Studio (Blender-like). Opens a car folder (or its .zip),
+// shows every game file's UVs on the car's paint mask with gtv98's panels faint behind (the game's shop
+// decals and films are drawn for that sheet), and lets islands be picked (on the sheet or on the car), moved,
+// turned, flipped and scaled. Triangles whose UVs stretch across the texture (black in game) show red and can
+// be cut by face direction. A Blender round trip (.obj out, .obj back, matched by position) does the rest.
+// RayCity space: x left, y back, z up; three.js shows it as (x, z, −y).
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { parseOM, writeOM, omParts } from '../om.js';
+import { makeZip, readZip } from '../zip.js';
+import { decodePNG } from '../convert.js';
+
+const $ = (id) => document.getElementById(id);
+const status = (t) => { $('status').textContent = t; };
+
+// ---------------------------------------------------------------------------------------------
+// Car state: files (rel → bytes), and per game mesh (the _2.0m of the body and every part default) its
+// parsed parts with islands. LOD / variant files that were byte-identical to an edited mesh are written
+// with it.
+
+const car = { name: '', files: new Map(), meshes: [], mask: null, maskImg: null };
+let selected = new Set(); // island keys "mesh|part|island"
+const undo = []; const redo = [];
+
+const isStretched = (p, t) => {
+  const I = p.indices; const U = p.uvs; const P = p.positions;
+  const a = I[t]; const b = I[t + 1]; const c = I[t + 2];
+  const uvl = (x, y) => Math.hypot(U[x * 2] - U[y * 2], U[x * 2 + 1] - U[y * 2 + 1]);
+  const len = (x, y) => Math.hypot(P[x * 3] - P[y * 3], P[x * 3 + 1] - P[y * 3 + 1], P[x * 3 + 2] - P[y * 3 + 2]);
+  const span = Math.max(uvl(a, b), uvl(b, c), uvl(a, c));
+  return span > 0.04 && span > Math.max(len(a, b), len(b, c), len(a, c)) * 0.35;
+};
+
+function islandsOf(p) {
+  const n = p.positions.length / 3;
+  const par = new Int32Array(n).map((_, i) => i);
+  const find = (x) => { while (par[x] !== x) { par[x] = par[par[x]]; x = par[x]; } return x; };
+  for (let t = 0; t < p.indices.length; t += 3) { const a = find(p.indices[t]); par[a] = find(p.indices[t + 1]); par[find(p.indices[t + 2])] = find(p.indices[t + 1]); }
+  const id = new Map(); const vertIsl = new Int32Array(n);
+  for (let i = 0; i < n; i++) { const r = find(i); if (!id.has(r)) id.set(r, id.size); vertIsl[i] = id.get(r); }
+  return { count: id.size, vertIsl };
+}
+
+async function openFiles(entries) {
+  // entries: [{ path, data }]; the car folder is the directory holding body_2.0m
+  const body = entries.find((e) => /(^|\/)body_2\.0m$/i.test(e.path));
+  if (!body) { status('ไม่เจอ body_2.0m ในที่เปิด (ต้องเป็นโฟลเดอร์รถ RayCity)'); return; }
+  const root = body.path.replace(/body_2\.0m$/i, '');
+  car.files = new Map(entries.filter((e) => e.path.startsWith(root)).map((e) => [e.path.slice(root.length), e.data]));
+  car.name = (([...car.files.keys()].find((r) => !r.includes('/') && /_base\.png$/i.test(r)) || 'car_base.png').replace(/_base\.png$/i, ''));
+  car.meshes = [];
+  for (const rel of [...car.files.keys()].filter((r) => r === 'body_2.0m' || /^[^/]+\/default_2\.0m$/.test(r)).sort()) {
+    const b = car.files.get(rel);
+    const om = parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+    const parts = omParts(om);
+    if (!parts.some((q) => q.positions.length / 3 > 8)) continue;
+    car.meshes.push({ rel, om, parts, orig: b, isl: parts.map(islandsOf), dirty: false });
+  }
+  try {
+    const m = await decodePNG(car.files.get(`${car.name}_base.png`));
+    car.mask = m;
+    const c = document.createElement('canvas'); c.width = m.w; c.height = m.h;
+    c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(m.data), m.w, m.h), 0, 0);
+    car.maskImg = c;
+  } catch { car.mask = null; car.maskImg = null; }
+  selected = new Set(); undo.length = 0; redo.length = 0;
+  $('file-sel').innerHTML = `<option value="*">ทุกไฟล์</option>${car.meshes.map((m, i) => `<option value="${i}">${m.rel}</option>`).join('')}`;
+  $('car-info').textContent = `${car.name} · ${car.files.size} ไฟล์ · ${car.meshes.length} ไฟล์ที่มีรูปทรง`;
+  build3D();
+  refresh();
+  status('คลิกเกาะในจอซ้าย หรือคลิกบนรถ แล้วลากย้าย · ปุ่มด้านบน หมุน/กลับ/ย่อขยาย · สีแดง = ลายยืด');
+}
+
+// ---------------------------------------------------------------------------------------------
+// gtv98's sheet, faint behind (from the embedded template)
+
+let guide = null;
+async function loadGuide() {
+  const b64 = (window.RC_TEMPLATES || {}).gtv98;
+  if (!b64) return;
+  const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const json = await new Response(new Blob([bin]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  const files = Object.entries(JSON.parse(json)).map(([p, d]) => [p, Uint8Array.from(atob(d), (c) => c.charCodeAt(0))]);
+  guide = [];
+  for (const [rel, b] of files) {
+    if (!(rel === 'body_2.0m' || /^[^/]+\/default_2\.0m$/.test(rel))) continue;
+    const om = parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+    for (const s of om.submeshes) {
+      if (s.vertexCount <= 8) continue;
+      for (let i = s.indexStart; i < s.indexStart + s.indexCount; i += 3) guide.push([0, 1, 2].map((k) => { const v = om.indices[i + k] + s.vertexStart; return [om.uvs[v * 2], om.uvs[v * 2 + 1]]; }));
+    }
+  }
+  refresh();
+}
+
+// ---------------------------------------------------------------------------------------------
+// 2D sheet
+
+const uvc = $('uv'); const g2 = uvc.getContext('2d');
+let view = { s: 1, x: 0, y: 0 }; // sheet → canvas: px = x + u * S * s
+const sheetSize = () => Math.min(uvc.width, uvc.height) * 0.92;
+const toPx = (u, v) => { const S = sheetSize() * view.s; return [(uvc.width - S) / 2 + view.x + u * S, (uvc.height - S) / 2 + view.y + v * S]; };
+const toUV = (x, y) => { const S = sheetSize() * view.s; return [(x - (uvc.width - S) / 2 - view.x) / S, (y - (uvc.height - S) / 2 - view.y) / S]; };
+const shown = () => { const v = $('file-sel').value; return car.meshes.map((m, i) => i).filter((i) => v === '*' || +v === i); };
+
+function draw2D() {
+  const r = uvc.getBoundingClientRect();
+  if (uvc.width !== Math.round(r.width) || uvc.height !== Math.round(r.height)) { uvc.width = Math.round(r.width); uvc.height = Math.round(r.height); }
+  g2.fillStyle = '#1d1d1d'; g2.fillRect(0, 0, uvc.width, uvc.height);
+  const [x0, y0] = toPx(0, 0); const [x1, y1] = toPx(1, 1);
+  if (car.maskImg) { g2.globalAlpha = 0.55; g2.drawImage(car.maskImg, x0, y0, x1 - x0, y1 - y0); g2.globalAlpha = 1; }
+  g2.strokeStyle = '#777'; g2.strokeRect(x0, y0, x1 - x0, y1 - y0);
+  if (guide && $('opt-guide').checked) {
+    g2.strokeStyle = 'rgba(255,255,255,0.18)'; g2.lineWidth = 1; g2.beginPath();
+    for (const t of guide) { const p = t.map(([u, v]) => toPx(u, v)); g2.moveTo(...p[0]); g2.lineTo(...p[1]); g2.lineTo(...p[2]); g2.closePath(); }
+    g2.stroke();
+  }
+  let stretched = 0;
+  for (const mi of shown()) {
+    const m = car.meshes[mi];
+    m.parts.forEach((p, pi) => {
+      if (p.positions.length / 3 <= 8) return;
+      const isl = m.isl[pi];
+      const norm = new Path2D(); const sel = new Path2D(); const bad = new Path2D();
+      for (let t = 0; t < p.indices.length; t += 3) {
+        const pts = [0, 1, 2].map((k) => toPx(p.uvs[p.indices[t + k] * 2], p.uvs[p.indices[t + k] * 2 + 1]));
+        const key = `${mi}|${pi}|${isl.vertIsl[p.indices[t]]}`;
+        const st = isStretched(p, t); if (st) stretched++;
+        const path = st ? bad : selected.has(key) ? sel : norm;
+        path.moveTo(...pts[0]); path.lineTo(...pts[1]); path.lineTo(...pts[2]); path.closePath();
+      }
+      g2.lineWidth = 1;
+      g2.strokeStyle = 'rgba(230,230,230,0.75)'; g2.stroke(norm);
+      g2.fillStyle = 'rgba(255,159,26,0.35)'; g2.fill(sel); g2.strokeStyle = '#ff9f1a'; g2.stroke(sel);
+      g2.fillStyle = 'rgba(255,60,80,0.5)'; g2.fill(bad); g2.strokeStyle = '#ff3c50'; g2.stroke(bad);
+    });
+  }
+  return stretched;
+}
+
+// Island under a sheet point (topmost: last drawn)
+function pickUV(u, v) {
+  const ids = shown();
+  for (let k = ids.length - 1; k >= 0; k--) {
+    const mi = ids[k]; const m = car.meshes[mi];
+    for (let pi = m.parts.length - 1; pi >= 0; pi--) {
+      const p = m.parts[pi]; if (p.positions.length / 3 <= 8) continue;
+      for (let t = 0; t < p.indices.length; t += 3) {
+        const a = p.indices[t]; const b = p.indices[t + 1]; const c = p.indices[t + 2];
+        const U = p.uvs;
+        const d = (U[b * 2] - U[a * 2]) * (U[c * 2 + 1] - U[a * 2 + 1]) - (U[c * 2] - U[a * 2]) * (U[b * 2 + 1] - U[a * 2 + 1]);
+        if (Math.abs(d) < 1e-12) continue;
+        const l1 = ((U[b * 2] - u) * (U[c * 2 + 1] - v) - (U[c * 2] - u) * (U[b * 2 + 1] - v)) / d;
+        const l2 = ((U[c * 2] - u) * (U[a * 2 + 1] - v) - (U[a * 2] - u) * (U[c * 2 + 1] - v)) / d;
+        if (l1 >= 0 && l2 >= 0 && l1 + l2 <= 1) return `${mi}|${pi}|${m.isl[pi].vertIsl[a]}`;
+      }
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Edits on the selected islands (UVs only; "cut" also splits points)
+
+function snapshot() { return car.meshes.map((m) => m.parts.map((p) => ({ positions: p.positions, normals: p.normals, uvs: p.uvs.slice(), indices: p.indices }))); }
+function pushUndo() { undo.push(snapshot()); if (undo.length > 60) undo.shift(); redo.length = 0; }
+function restore(s) {
+  car.meshes.forEach((m, mi) => { m.parts.forEach((p, pi) => Object.assign(p, s[mi][pi])); m.isl = m.parts.map(islandsOf); m.dirty = true; });
+  refresh(); build3D();
+}
+function forSelectedVerts(fn) {
+  const groups = new Map();
+  for (const key of selected) { const [mi, pi, id] = key.split('|').map(Number); const k = `${mi}|${pi}`; if (!groups.has(k)) groups.set(k, new Set()); groups.get(k).add(id); }
+  for (const [k, ids] of groups) {
+    const [mi, pi] = k.split('|').map(Number); const m = car.meshes[mi]; const p = m.parts[pi]; const isl = m.isl[pi];
+    for (let i = 0; i < p.positions.length / 3; i++) if (ids.has(isl.vertIsl[i])) fn(p, i);
+    m.dirty = true;
+  }
+}
+function selBox() {
+  let a = Infinity; let b = Infinity; let c = -Infinity; let d = -Infinity;
+  forSelectedVerts((p, i) => { a = Math.min(a, p.uvs[i * 2]); b = Math.min(b, p.uvs[i * 2 + 1]); c = Math.max(c, p.uvs[i * 2]); d = Math.max(d, p.uvs[i * 2 + 1]); });
+  return { cu: (a + c) / 2, cv: (b + d) / 2, box: [a, b, c, d] };
+}
+function transformSel(f) {
+  if (!selected.size) { status('เลือกเกาะก่อน (คลิกในจอซ้าย หรือคลิกบนรถ)'); return; }
+  pushUndo();
+  const { cu, cv } = selBox();
+  forSelectedVerts((p, i) => { const [u, v] = f(p.uvs[i * 2] - cu, p.uvs[i * 2 + 1] - cv); p.uvs[i * 2] = cu + u; p.uvs[i * 2 + 1] = cv + v; });
+  refresh(); update3DUVs();
+}
+
+// Cut by face direction inside each triangle's island box (or the whole car's stretched triangles):
+// every triangle projected by its own normal; points split where neighbours project differently.
+function cutParts(filter) {
+  pushUndo();
+  let cut = 0;
+  car.meshes.forEach((m, mi) => {
+    m.parts.forEach((p, pi) => {
+      if (p.positions.length / 3 <= 8) return;
+      const isl = m.isl[pi];
+      // island boxes
+      const box = new Map();
+      for (let i = 0; i < p.positions.length / 3; i++) { const id = isl.vertIsl[i]; const b = box.get(id) || [1, 1, 0, 0]; b[0] = Math.min(b[0], p.uvs[i * 2]); b[1] = Math.min(b[1], p.uvs[i * 2 + 1]); b[2] = Math.max(b[2], p.uvs[i * 2]); b[3] = Math.max(b[3], p.uvs[i * 2 + 1]); box.set(id, b); }
+      const P = p.positions; const I = p.indices;
+      const nP = []; const nN = []; const nUV = []; const nI = []; const keyOf = new Map();
+      // 3D bounds per island for the projection
+      const lo = new Map(); const hi = new Map();
+      for (let i = 0; i < P.length / 3; i++) { const id = isl.vertIsl[i]; const l = lo.get(id) || [Infinity, Infinity, Infinity]; const h = hi.get(id) || [-Infinity, -Infinity, -Infinity]; for (let k = 0; k < 3; k++) { l[k] = Math.min(l[k], P[i * 3 + k]); h[k] = Math.max(h[k], P[i * 3 + k]); } lo.set(id, l); hi.set(id, h); }
+      for (let t = 0; t < I.length; t += 3) {
+        const v = [I[t], I[t + 1], I[t + 2]]; const id = isl.vertIsl[v[0]];
+        const doCut = filter(mi, pi, id, p, t);
+        let region = 'keep';
+        if (doCut) {
+          cut++;
+          const q = v.map((i) => [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]);
+          const e1 = q[1].map((x, j) => x - q[0][j]); const e2 = q[2].map((x, j) => x - q[0][j]);
+          const fn = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+          const ax = Math.abs(fn[0]); const ay = Math.abs(fn[1]); const az = Math.abs(fn[2]);
+          region = az >= ax && az >= ay ? 'z' : ax >= ay ? 'x' : 'y';
+        }
+        for (let j = 0; j < 3; j++) {
+          const key = `${v[j]}|${region}`;
+          let n = keyOf.get(key);
+          if (n === undefined) {
+            n = nP.length / 3; keyOf.set(key, n);
+            nP.push(P[v[j] * 3], P[v[j] * 3 + 1], P[v[j] * 3 + 2]); nN.push(p.normals[v[j] * 3], p.normals[v[j] * 3 + 1], p.normals[v[j] * 3 + 2]);
+            if (region === 'keep') nUV.push(p.uvs[v[j] * 2], p.uvs[v[j] * 2 + 1]);
+            else {
+              const b = box.get(id); const l = lo.get(id); const h = hi.get(id);
+              const f = (k) => (P[v[j] * 3 + k] - l[k]) / ((h[k] - l[k]) || 1);
+              const [a, c2] = region === 'z' ? [f(1), f(0)] : region === 'x' ? [f(1), 1 - f(2)] : [f(0), 1 - f(2)];
+              nUV.push(b[0] + (b[2] - b[0]) * a, b[1] + (b[3] - b[1]) * c2);
+            }
+          }
+          nI.push(n);
+        }
+      }
+      p.positions = new Float32Array(nP); p.normals = new Float32Array(nN); p.uvs = new Float32Array(nUV); p.indices = Uint32Array.from(nI);
+      m.isl[pi] = islandsOf(p); m.dirty = true;
+    });
+  });
+  selected = new Set();
+  refresh(); build3D();
+  status(cut ? `ตัดใหม่ ${cut} สามเหลี่ยม` : 'ไม่มีอะไรต้องตัด');
+}
+
+// ---------------------------------------------------------------------------------------------
+// 3D view: the car with a grid over the mask so the UV layout shows on the body
+
+const gl = $('gl');
+const renderer = new THREE.WebGLRenderer({ canvas: gl, antialias: true });
+const scene = new THREE.Scene(); scene.background = new THREE.Color('#393939');
+scene.add(new THREE.HemisphereLight('#ffffff', '#555555', 2.2));
+const cam = new THREE.PerspectiveCamera(40, 1, 0.02, 100); cam.position.set(4.5, 2.5, 5.5);
+const controls = new OrbitControls(cam, gl);
+controls.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN };
+controls.target.set(0, 0.6, 0);
+const carGroup = new THREE.Group(); carGroup.rotation.x = -Math.PI / 2; scene.add(carGroup);
+let texCanvas = null; let tex = null;
+function makeTexture() {
+  texCanvas = document.createElement('canvas'); texCanvas.width = texCanvas.height = 1024;
+  const g = texCanvas.getContext('2d');
+  if (car.maskImg) g.drawImage(car.maskImg, 0, 0, 1024, 1024); else { g.fillStyle = '#c33'; g.fillRect(0, 0, 1024, 1024); }
+  g.globalAlpha = 0.35; g.fillStyle = '#fff';
+  for (let i = 0; i < 32; i++) for (let j = 0; j < 32; j++) if ((i + j) % 2) g.fillRect(i * 32, j * 32, 32, 32);
+  g.globalAlpha = 1;
+  tex = new THREE.CanvasTexture(texCanvas); tex.flipY = false; tex.colorSpace = THREE.SRGBColorSpace;
+}
+function build3D() {
+  carGroup.clear();
+  if (!car.meshes.length) return;
+  makeTexture();
+  car.meshes.forEach((m, mi) => m.parts.forEach((p, pi) => {
+    if (p.positions.length / 3 <= 8) return;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(p.positions), 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(p.normals), 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(p.uvs), 2));
+    geo.setIndex(new THREE.BufferAttribute(Uint32Array.from(p.indices), 1));
+    const mat = p.flags[0] === 1 ? new THREE.MeshStandardMaterial({ color: '#6fa8dc', transparent: true, opacity: 0.4 }) : new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 });
+    const mesh = new THREE.Mesh(geo, mat); mesh.userData = { mi, pi };
+    carGroup.add(mesh);
+  }));
+}
+function update3DUVs() {
+  for (const mesh of carGroup.children) { const p = car.meshes[mesh.userData.mi].parts[mesh.userData.pi]; mesh.geometry.attributes.uv.array.set(p.uvs); mesh.geometry.attributes.uv.needsUpdate = true; }
+}
+const ray = new THREE.Raycaster(); const mouse = new THREE.Vector2();
+gl.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  const r = gl.getBoundingClientRect();
+  mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(mouse, cam);
+  const hit = ray.intersectObjects(carGroup.children)[0];
+  if (!hit) { if (!e.shiftKey) { selected = new Set(); refresh(); } return; }
+  const { mi, pi } = hit.object.userData; const p = car.meshes[mi].parts[pi];
+  const key = `${mi}|${pi}|${car.meshes[mi].isl[pi].vertIsl[p.indices[hit.faceIndex * 3]]}`;
+  if (!e.shiftKey) selected = new Set();
+  if (selected.has(key) && e.shiftKey) selected.delete(key); else selected.add(key);
+  refresh();
+});
+
+// ---------------------------------------------------------------------------------------------
+// Sheet mouse: click picks, drag moves, wheel zooms, middle / right drag pans
+
+let drag = null;
+uvc.addEventListener('contextmenu', (e) => e.preventDefault());
+uvc.addEventListener('pointerdown', (e) => {
+  uvc.setPointerCapture(e.pointerId);
+  const r = uvc.getBoundingClientRect(); const x = e.clientX - r.left; const y = e.clientY - r.top;
+  if (e.button !== 0) { drag = { pan: true, x, y, vx: view.x, vy: view.y }; return; }
+  const [u, v] = toUV(x, y);
+  const key = pickUV(u, v);
+  if (key) {
+    if (!e.shiftKey && !selected.has(key)) selected = new Set();
+    selected.add(key);
+    pushUndo();
+    drag = { move: true, u, v };
+  } else if (!e.shiftKey) selected = new Set();
+  refresh();
+});
+uvc.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  const r = uvc.getBoundingClientRect(); const x = e.clientX - r.left; const y = e.clientY - r.top;
+  if (drag.pan) { view.x = drag.vx + x - drag.x; view.y = drag.vy + y - drag.y; refresh(); return; }
+  const [u, v] = toUV(x, y); const du = u - drag.u; const dv = v - drag.v; drag.u = u; drag.v = v;
+  forSelectedVerts((p, i) => { p.uvs[i * 2] += du; p.uvs[i * 2 + 1] += dv; });
+  refresh(); update3DUVs();
+});
+uvc.addEventListener('pointerup', () => { drag = null; });
+uvc.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const r = uvc.getBoundingClientRect(); const x = e.clientX - r.left; const y = e.clientY - r.top;
+  const [u, v] = toUV(x, y);
+  view.s = Math.min(20, Math.max(0.3, view.s * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+  const [x2, y2] = toPx(u, v); view.x += x - x2; view.y += y - y2;
+  refresh();
+}, { passive: false });
+
+// ---------------------------------------------------------------------------------------------
+// Blender round trip
+
+function exportOBJ() {
+  const lines = ['# RayCity car for Blender UV editing. Keep the shape; edit the UVs only.', `mtllib ${car.name}.mtl`, `usemtl mask`];
+  let vo = 1;
+  car.meshes.forEach((m) => m.parts.forEach((p, pi) => {
+    if (p.positions.length / 3 <= 8) return;
+    lines.push(`o ${m.rel.replace(/\//g, '__')}#${pi}`);
+    for (let i = 0; i < p.positions.length / 3; i++) lines.push(`v ${p.positions[i * 3].toFixed(6)} ${p.positions[i * 3 + 2].toFixed(6)} ${(-p.positions[i * 3 + 1]).toFixed(6)}`);
+    for (let i = 0; i < p.positions.length / 3; i++) lines.push(`vt ${p.uvs[i * 2].toFixed(6)} ${(1 - p.uvs[i * 2 + 1]).toFixed(6)}`);
+    for (let t = 0; t < p.indices.length; t += 3) { const f = [0, 1, 2].map((k) => p.indices[t + k] + vo); lines.push(`f ${f.map((x) => `${x}/${x}`).join(' ')}`); }
+    vo += p.positions.length / 3;
+  }));
+  return new TextEncoder().encode(lines.join('\n'));
+}
+async function importOBJ(text) {
+  // faces with their corner positions + uvs, by object
+  const V = []; const T = []; const faces = new Map(); let obj = '';
+  for (const line of text.split(/\r?\n/)) {
+    const w = line.trim().split(/\s+/);
+    if (w[0] === 'v') V.push([+w[1], +w[2], +w[3]]);
+    else if (w[0] === 'vt') T.push([+w[1], +w[2]]);
+    else if (w[0] === 'o' || w[0] === 'g') obj = w.slice(1).join(' ').replace(/_[A-Za-z]*\.\d+$|\.\d+$/, '');
+    else if (w[0] === 'f') {
+      const c = w.slice(1).map((s) => { const [a, b] = s.split('/'); const vi = +a < 0 ? V.length + +a : +a - 1; const ti = +b < 0 ? T.length + +b : +b - 1; return { p: V[vi], t: T[ti] || [0, 0] }; });
+      for (let k = 1; k + 1 < c.length; k++) { if (!faces.has(obj)) faces.set(obj, []); faces.get(obj).push([c[0], c[k], c[k + 1]]); }
+    }
+  }
+  pushUndo();
+  // Points matched by position within 2 mm (a grid of 2 mm cells, neighbours searched), so float
+  // rounding through Blender never splits a match.
+  const CELL = 500;
+  const cellKey = (x, y, z) => `${x},${y},${z}`;
+  let matched = 0; let missing = 0;
+  car.meshes.forEach((m) => m.parts.forEach((p, pi) => {
+    if (p.positions.length / 3 <= 8) return;
+    const name = `${m.rel.replace(/\//g, '__')}#${pi}`;
+    const list = faces.get(name) || [...faces.entries()].find(([k]) => k.startsWith(name))?.[1];
+    if (!list) { missing += p.indices.length / 3; return; }
+    const P = p.positions; const I = p.indices;
+    // canonical id per position (points split at UV seams share one), via the grid
+    const grid = new Map(); const canon = new Int32Array(P.length / 3);
+    const near = (q) => {
+      const cx = Math.round(q[0] * CELL); const cy = Math.round(q[1] * CELL); const cz = Math.round(q[2] * CELL);
+      let best = -1; let bd = 4e-6;
+      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let c = -1; c <= 1; c++) for (const i of grid.get(cellKey(cx + a, cy + b, cz + c)) || []) {
+        const d = (P[i * 3] - q[0]) ** 2 + (P[i * 3 + 2] - q[1]) ** 2 + (-P[i * 3 + 1] - q[2]) ** 2;
+        if (d < bd) { bd = d; best = i; }
+      }
+      return best < 0 ? -1 : canon[best];
+    };
+    for (let i = 0; i < P.length / 3; i++) {
+      const q = [P[i * 3], P[i * 3 + 2], -P[i * 3 + 1]];
+      const c0 = near(q);
+      canon[i] = c0 >= 0 ? c0 : i;
+      const k = cellKey(Math.round(q[0] * CELL), Math.round(q[1] * CELL), Math.round(q[2] * CELL));
+      if (!grid.has(k)) grid.set(k, []); grid.get(k).push(i);
+    }
+    const byTri = new Map();
+    for (const f of list) { const ids = f.map((c) => near(c.p)); if (ids.includes(-1)) continue; f.ids = ids; byTri.set([...ids].sort((a, b) => a - b).join('|'), f); }
+    const nP = []; const nN = []; const nUV = []; const nI = []; const keyOf = new Map();
+    for (let t = 0; t < I.length; t += 3) {
+      const v = [I[t], I[t + 1], I[t + 2]];
+      const ids = v.map((i) => canon[i]);
+      const f = byTri.get([...ids].sort((a, b) => a - b).join('|'));
+      if (f) matched++; else missing++;
+      for (let j = 0; j < 3; j++) {
+        let uv = [p.uvs[v[j] * 2], p.uvs[v[j] * 2 + 1]];
+        if (f) { const c = f[f.ids.indexOf(ids[j])]; if (c) uv = [c.t[0], 1 - c.t[1]]; }
+        const kk = `${v[j]}|${uv[0].toFixed(5)},${uv[1].toFixed(5)}`;
+        let n = keyOf.get(kk);
+        if (n === undefined) { n = nP.length / 3; keyOf.set(kk, n); nP.push(P[v[j] * 3], P[v[j] * 3 + 1], P[v[j] * 3 + 2]); nN.push(p.normals[v[j] * 3], p.normals[v[j] * 3 + 1], p.normals[v[j] * 3 + 2]); nUV.push(uv[0], uv[1]); }
+        nI.push(n);
+      }
+    }
+    p.positions = new Float32Array(nP); p.normals = new Float32Array(nN); p.uvs = new Float32Array(nUV); p.indices = Uint32Array.from(nI);
+    m.isl[pi] = islandsOf(p); m.dirty = true;
+  }));
+  selected = new Set(); refresh(); build3D();
+  status(`นำ UV จาก Blender: ตรงกัน ${matched.toLocaleString()} สามเหลี่ยม${missing ? ` · ไม่เจอ ${missing.toLocaleString()} (คง UV เดิม: อย่าแก้รูปทรงใน Blender)` : ''}`);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Save: every edited mesh, and the files that were copies of it (LODs, tuning variants)
+
+async function saveZip() {
+  const out = new Map(car.files);
+  let n = 0;
+  for (const m of car.meshes) {
+    if (!m.dirty) continue;
+    const parts = m.parts.map((p) => ({ ...p, kind: p.flags[0] }));
+    const bytes = writeOM(m.om, parts);
+    for (const [rel, b] of car.files) if (b.length === m.orig.length && b.every((x, i) => x === m.orig[i])) { out.set(rel, bytes); n++; }
+  }
+  const zipFiles = [...out].sort((a, b) => a[0].localeCompare(b[0])).map(([rel, data]) => ({ path: `${car.name}/${rel}`, data }));
+  const blob = await makeZip(zipFiles);
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${car.name}.zip`; a.click();
+  $('save-log').textContent = `ดาวน์โหลด ${car.name}.zip แล้ว · เขียนใหม่ ${n} ไฟล์ .0m`;
+}
+
+// ---------------------------------------------------------------------------------------------
+// UI
+
+function refresh() {
+  const st = draw2D();
+  let isl = 0; for (const m of car.meshes) for (const q of m.isl) isl += q.count;
+  $('stats').textContent = car.meshes.length ? `เกาะ UV ${isl.toLocaleString()} · เลือก ${selected.size}\nสามเหลี่ยมลายยืด (แดง): ${st.toLocaleString()}${st ? ' → กด 🩹' : ' ✅'}` : '';
+}
+function loop() {
+  const r = gl.getBoundingClientRect();
+  if (gl.width !== Math.round(r.width) || gl.height !== Math.round(r.height)) { renderer.setSize(r.width, r.height, false); cam.aspect = r.width / Math.max(1, r.height); cam.updateProjectionMatrix(); }
+  controls.update();
+  for (const mesh of carGroup.children) {
+    const { mi, pi } = mesh.userData;
+    const any = [...selected].some((k) => k.startsWith(`${mi}|${pi}|`));
+    if (mesh.material.emissive) mesh.material.emissive.set(any ? '#3a2400' : '#000000');
+  }
+  renderer.render(scene, cam);
+  requestAnimationFrame(loop);
+}
+new ResizeObserver(refresh).observe(uvc);
+
+const zipIn = $('file-zip'); const dirIn = $('file-dir'); const objIn = $('file-obj');
+$('btn-open-zip').addEventListener('click', () => zipIn.click());
+$('btn-open-dir').addEventListener('click', () => dirIn.click());
+zipIn.addEventListener('change', async (e) => { const f = e.target.files[0]; if (f) await openFiles(await readZip(new Uint8Array(await f.arrayBuffer()))); e.target.value = ''; });
+dirIn.addEventListener('change', async (e) => { const list = []; for (const f of e.target.files) list.push({ path: f.webkitRelativePath || f.name, data: new Uint8Array(await f.arrayBuffer()) }); await openFiles(list); e.target.value = ''; });
+$('file-sel').addEventListener('change', () => { selected = new Set(); refresh(); });
+$('opt-guide').addEventListener('change', refresh);
+$('btn-undo').addEventListener('click', () => { if (undo.length) { redo.push(snapshot()); restore(undo.pop()); } });
+$('btn-redo').addEventListener('click', () => { if (redo.length) { undo.push(snapshot()); restore(redo.pop()); } });
+$('btn-rot').addEventListener('click', () => transformSel((u, v) => [-v, u]));
+$('btn-flipu').addEventListener('click', () => transformSel((u, v) => [-u, v]));
+$('btn-flipv').addEventListener('click', () => transformSel((u, v) => [u, -v]));
+$('btn-bigger').addEventListener('click', () => transformSel((u, v) => [u * 1.1, v * 1.1]));
+$('btn-smaller').addEventListener('click', () => transformSel((u, v) => [u / 1.1, v / 1.1]));
+$('btn-cut').addEventListener('click', () => { if (!selected.size) { status('เลือกเกาะก่อน'); return; } const sel = new Set(selected); cutParts((mi, pi, id) => sel.has(`${mi}|${pi}|${id}`)); });
+$('btn-fixall').addEventListener('click', () => cutParts((mi, pi, id, p, t) => isStretched(p, t)));
+$('btn-save').addEventListener('click', () => { if (car.meshes.length) saveZip(); });
+$('btn-blender-out').addEventListener('click', async () => {
+  if (!car.meshes.length) return;
+  const mtl = new TextEncoder().encode(`newmtl mask\nmap_Kd ${car.name}_base.png\n`);
+  const files = [{ path: `${car.name}.obj`, data: exportOBJ() }, { path: `${car.name}.mtl`, data: mtl }];
+  if (car.files.has(`${car.name}_base.png`)) files.push({ path: `${car.name}_base.png`, data: car.files.get(`${car.name}_base.png`) });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(await makeZip(files)); a.download = `${car.name}_blender.zip`; a.click();
+  status('แตก zip แล้วเปิด .obj ใน Blender (File › Import › Wavefront) · แก้เสร็จ Export เป็น .obj แล้วกด ⬆ นำกลับ');
+});
+$('btn-blender-in').addEventListener('click', () => objIn.click());
+objIn.addEventListener('change', async (e) => { const f = e.target.files[0]; if (f && car.meshes.length) await importOBJ(await f.text()); e.target.value = ''; });
+window.addEventListener('keydown', (e) => {
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+  const k = e.key.toLowerCase();
+  if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); $(e.shiftKey ? 'btn-redo' : 'btn-undo').click(); }
+  else if ((e.ctrlKey || e.metaKey) && k === 'y') { e.preventDefault(); $('btn-redo').click(); }
+  else if (k === 'r') $('btn-rot').click();
+  else if (k === '+' || k === '=') $('btn-bigger').click();
+  else if (k === '-') $('btn-smaller').click();
+  else if (k === 'a' && !e.altKey) { car.meshes.forEach((m, mi) => { if (!shown().includes(mi)) return; m.isl.forEach((q, pi) => { for (let i = 0; i < q.count; i++) selected.add(`${mi}|${pi}|${i}`); }); }); refresh(); }
+  else if (k === 'a' && e.altKey) { e.preventDefault(); selected = new Set(); refresh(); }
+});
+document.addEventListener('click', (e) => { if (e.target.closest('button')) e.target.closest('button').blur(); });
+
+loadGuide();
+refresh();
+loop();
+window.uvApp = { car, openFiles, cutParts, isStretched, refresh, get selected() { return selected; } };

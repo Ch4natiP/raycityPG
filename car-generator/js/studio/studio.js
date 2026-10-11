@@ -1,4 +1,5 @@
-// RayCity Studio: a small 3ds Max–style editor for RayCity cars, in Thai. Four views (top, front,
+// RayCity Studio: a small Blender-style editor for RayCity cars, in Thai (Blender's keys and mouse: G / R /
+// S, A, X, Tab, numpad views, middle-drag orbit, Ctrl+Alt+Q quad view). One big 3D view or four (top, front,
 // side, 3D), points / faces selection, move / rotate / scale gizmo, drawing new faces on a reference
 // model (retopology), symmetry, undo, live vertex counts per game file, and export to a complete car
 // folder (the same template layout the converter writes).
@@ -68,17 +69,18 @@ views.forEach((v, i) => {
   c.target.set(...v.target);
   c.screenSpacePanning = true;
   c.zoomToCursor = true;
+  // Blender's mouse: middle-drag orbits (Shift+middle pans), wheel zooms, left selects.
   if (v.cam.isOrthographicCamera) {
     c.enableRotate = false;
     c.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
   } else {
-    c.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
+    c.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN };
   }
   c.update();
   v.controls = c;
 });
 let active = 3;
-let maximized = false;
+let maximized = true; // one big 3D view like Blender; Ctrl+Alt+Q for the four views
 
 const tc = new TransformControls(views[3].cam, views[3].el);
 tc.setSpace('local');
@@ -986,6 +988,11 @@ $('btn-weld').addEventListener('click', weldSelected);
 $('btn-flip').addEventListener('click', flipSelected);
 $('btn-surface').addEventListener('click', snapSelected);
 $('btn-max').addEventListener('click', () => { maximized = !maximized; $('views').classList.toggle('max', maximized); });
+// Numpad 7 / 1 / 3 / 5 like Blender: top / front / side / 3D, as the big view.
+function showView(i) {
+  const was = active; active = -1; setActive(i); if (active !== i) active = was;
+  maximized = true; $('views').classList.add('max');
+}
 $('btn-zoom').addEventListener('click', zoomAll);
 $('btn-oneside').addEventListener('click', (e) => { oneSided = !oneSided; e.target.classList.toggle('on', oneSided); refresh(); });
 $('btn-assign-slot').addEventListener('click', () => assignSelected('slot', $('cur-slot').value));
@@ -1065,17 +1072,29 @@ window.addEventListener('keydown', (e) => {
     } else if (k === 'w') { e.preventDefault(); weldSelected(); }
     return;
   }
-  if (e.altKey && k === 'w') { e.preventDefault(); $('btn-max').click(); return; }
-  if (k === '1') setMode('vert');
-  else if (k === '2') setMode('face');
-  else if (k === 'q') setTool('select');
-  else if (k === 'w') setTool('translate');
-  else if (k === 'e') setTool('rotate');
-  else if (k === 'r') setTool('scale');
+  // Blender's keys.
+  if (e.ctrlKey && e.altKey && k === 'q') { e.preventDefault(); $('btn-max').click(); return; }
+  if (e.altKey && k === 'a') { e.preventDefault(); selV.clear(); selF.clear(); refresh(); return; }
+  if (e.altKey && k === 'n') { e.preventDefault(); flipSelected(); return; }
+  if (e.shiftKey && k === 'a') { e.preventDefault(); setTool('draw'); return; }
+  if (e.code && e.code.startsWith('Numpad')) {
+    const n = e.code.slice(6);
+    const to = { 7: 0, 1: 1, 3: 2, 5: 3, 0: 3 }[n];
+    if (to !== undefined) { e.preventDefault(); showView(to); return; }
+    if (n === 'Decimal') { e.preventDefault(); zoomAll(); return; }
+  }
+  if (k === 'tab') { e.preventDefault(); setMode(mode === 'vert' ? 'face' : 'vert'); }
+  else if (k === '1') setMode('vert');
+  else if (k === '2' || k === '3') setMode('face');
+  else if (k === 'w') setTool('select');
+  else if (k === 'g') setTool('translate');
+  else if (k === 'r') setTool('rotate');
+  else if (k === 's') setTool('scale');
   else if (k === 'd') setTool('draw');
-  else if (k === 'z') zoomAll();
-  else if (k === 'f') flipSelected();
-  else if (k === 'delete' || k === 'backspace') deleteSelected();
+  else if (k === 'a') { if (mode === 'vert') mesh.verts.forEach((_, i) => selV.add(i)); else mesh.faces.forEach((f, i) => { if (visibleFace(f)) selF.add(i); }); refresh(); }
+  else if (k === 'm') weldSelected();
+  else if (k === 'home') zoomAll();
+  else if (k === 'x' || k === 'delete' || k === 'backspace') deleteSelected();
   else if (k === 'enter' && tool === 'draw') { e.preventDefault(); finishFace(active); }
   else if (k === 'escape') { drawPts = []; updateDrawPreview(); if (tool !== 'draw') { selV.clear(); selF.clear(); refresh(); } }
 });

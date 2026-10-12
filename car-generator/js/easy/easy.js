@@ -15,16 +15,16 @@ const state = { model: null, modelName: '', template: null, out: null, outName: 
 // ---------------------------------------------------------------------------------------------
 // Templates: gtv98 from the page, or any car folder / zip the user gives
 
-async function gtv98() {
-  const b64 = (window.RC_TEMPLATES || {}).gtv98;
+async function embedded(name) {
+  const b64 = (window.RC_TEMPLATES || {})[name];
   const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
   const json = await new Response(new Blob([bin]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
-  return { name: 'gtv98', files: new Map(Object.entries(JSON.parse(json)).map(([p, d]) => [p, Uint8Array.from(atob(d), (c) => c.charCodeAt(0))])) };
+  return { name, files: new Map(Object.entries(JSON.parse(json)).map(([p, d]) => [p, Uint8Array.from(atob(d), (c) => c.charCodeAt(0))])) };
 }
-const templates = { gtv98: null };
+const templates = {};
 async function currentTemplate() {
   const k = $('tpl-sel').value;
-  if (k === 'gtv98') return templates.gtv98 || (templates.gtv98 = await gtv98());
+  if (!templates[k] && (window.RC_TEMPLATES || {})[k]) templates[k] = await embedded(k);
   return templates[k];
 }
 async function addTemplateZip(file) {

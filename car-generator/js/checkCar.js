@@ -67,7 +67,7 @@ export async function checkCar(files, name, template = null) {
       // (Part textures are left out on purpose: without one a part takes the body's paint in game;
       // with one it shows the texture's own colour.)
     }
-    if (!/<part\b/.test(text)) warn(`${d}/list.xml ไม่มีรายการชิ้นส่วน`);
+    if (!/<part\b/.test(text) && d !== 'mainspoiler') warn(`${d}/list.xml ไม่มีรายการชิ้นส่วน`);
     if (/gtv98|escarabajo/.test(text) && name !== 'gtv98') warn(`${d}/list.xml ยังมีชื่อรถเก่าอยู่ข้างใน`);
   }
   if (template) {
@@ -109,7 +109,10 @@ export async function checkCar(files, name, template = null) {
     try { om = omOf(b); } catch { broken++; continue; }
     const nv = om.positions.length / 3;
     if (nv > worst) { worst = nv; worstRel = rel; }
-    for (const s of om.submeshes) if (s.vertexCount < 6) tiny++;
+    // (tiny pieces the template itself has at the same place — Escarabajo's bumpers / roof LOD 0 — are its own)
+    const tplSame = template && template.files.get([...template.files.keys()].find((r) => r.split(template.name).join(name) === rel) || '');
+    let tplSub = null; try { tplSub = tplSame ? omOf(tplSame).submeshes : null; } catch { tplSub = null; }
+    om.submeshes.forEach((s, i) => { if (s.vertexCount < 6 && !(tplSub && tplSub[i] && tplSub[i].vertexCount < 6)) tiny++; });
     if (/_2\.0m$/.test(rel) && (rel.startsWith('body') || /\/default_2\.0m$/.test(rel))) {
       for (let i = 0; i < om.positions.length; i += 3) for (let k = 0; k < 3; k++) { box.min[k] = Math.min(box.min[k], om.positions[i + k]); box.max[k] = Math.max(box.max[k], om.positions[i + k]); }
     }

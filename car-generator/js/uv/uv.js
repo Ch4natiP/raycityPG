@@ -87,7 +87,7 @@ async function openFiles(entries) {
 
 let guide = null;
 async function loadGuide() {
-  const b64 = (window.RC_TEMPLATES || {}).gtv98;
+  const b64 = (window.RC_TEMPLATES || {})[$('guide-sel').value];
   if (!b64) return;
   const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
   const json = await new Response(new Blob([bin]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
@@ -840,6 +840,7 @@ zipIn.addEventListener('change', async (e) => { const f = e.target.files[0]; if 
 dirIn.addEventListener('change', async (e) => { const list = []; for (const f of e.target.files) list.push({ path: f.webkitRelativePath || f.name, data: new Uint8Array(await f.arrayBuffer()) }); await openFiles(list); e.target.value = ''; });
 $('file-sel').addEventListener('change', () => { selected = new Set(); refresh(); });
 $('opt-guide').addEventListener('change', refresh);
+$('guide-sel').addEventListener('change', loadGuide);
 $('btn-undo').addEventListener('click', () => { if (undo.length) { const s = undo.pop(); redo.push(s.mask ? { mask: car.mask.data.slice() } : snapshot()); restore(s); } });
 $('btn-redo').addEventListener('click', () => { if (redo.length) { const s = redo.pop(); undo.push(s.mask ? { mask: car.mask.data.slice() } : snapshot()); restore(s); } });
 $('btn-rot').addEventListener('click', () => transformSel((u, v) => [-v, u]));

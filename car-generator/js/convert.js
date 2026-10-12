@@ -2314,13 +2314,18 @@ export async function defaultPartsLikeEscarabajo(out, name, { log = () => {} } =
       added.push(rel);
     }
     if (!out.has(`${dir}/default_2.0m`)) continue;
-    for (const r of meshes) if (!/\/default_[0-2]\.0m$/.test(r)) out.delete(r);
-    // the default's texture: kept when shipped (named <name>_<dir>_default or <name>_<dir>), variants' dropped
+    // the list's own default / base entries (Escarabajo's lamps have a 'base' mesh shown with the default)
+    const listText = decodeSpec(out.get(`${dir}/list.xml`) || new Uint8Array());
+    const entry = (nm) => { const m = listText.match(new RegExp(`<part\\b[^>]*name='${nm}'[^>]*/>`)); return m ? { tex: (m[0].match(/tex='([^']*)'/) || [])[1] || '' } : null; };
+    const base = out.has(`${dir}/base_2.0m`) ? entry('base') : null;
+    for (const r of meshes) if (!/\/default_[0-2]\.0m$/.test(r) && !(base && /\/base_[0-2]\.0m$/.test(r))) out.delete(r);
+    // the default's texture: kept when shipped (the list's, or named <name>_<dir>_default / <name>_<dir>), variants' dropped
     const pngs = files.filter((r) => r.endsWith('.png'));
-    let tex = [`${name}_${dir}_default`, `${name}_${dir}`].find((t) => out.has(`${dir}/${t}.png`)) || '';
+    let tex = [entry('default')?.tex, `${name}_${dir}_default`, `${name}_${dir}`].find((t) => t && out.has(`${dir}/${t}.png`)) || '';
+    const baseTex = base && out.has(`${dir}/${base.tex}.png`) ? base.tex : '';
     for (const r of pngs) {
       const t = r.slice(dir.length + 1, -4);
-      if (t === tex) continue;
+      if (t === tex || t === baseTex) continue;
       out.delete(r); out.delete(`${dir}/${t}_s.dds`); out.delete(`${dir}/${t}_s.png`);
     }
     for (const r of files.filter((x) => /_s\.dds$/.test(x) && !out.has(x.replace(/_s\.dds$/, '.png')))) out.delete(r);
@@ -2348,12 +2353,13 @@ export async function defaultPartsLikeEscarabajo(out, name, { log = () => {} } =
       out.set(`${dir}/${tex}.png`, await png(px, S, S));
       out.set(`${dir}/${tex}_s.dds`, dds(px, S, S, 'full'));
     }
-    out.set(`${dir}/list.xml`, encodeSpec(`<?xml version='1.0' encoding='UTF-16'?>\r\n<partlist>\r\n\t<part id='0' name='default' mesh='default' tex='${tex}' />\r\n</partlist>\r\n`));
+    const lines = base ? [`<part id='0' name='base' mesh='base' tex='${baseTex}' />`, `<part id='4' name='default' mesh='default' tex='${tex}' />`] : [`<part id='0' name='default' mesh='default' tex='${tex}' />`];
+    out.set(`${dir}/list.xml`, encodeSpec(`<?xml version='1.0' encoding='UTF-16'?>\r\n<partlist>\r\n${lines.map((l) => `\t${l}\r\n`).join('')}</partlist>\r\n`));
   }
   // icons: the default of every folder; variants' icons dropped (mainspoiler's kept)
   for (const r of [...out.keys()].filter((x) => x.startsWith('icon/'))) {
     const key = r.slice(5 + name.length + 1, -4); const dir = key.split('_')[0];
-    if (dirs.includes(dir) && key !== `${dir}_default`) out.delete(r);
+    if (dirs.includes(dir) && key !== `${dir}_default` && key !== `${dir}_base`) out.delete(r);
   }
   for (const dir of dirs) {
     const rel = `icon/${name}_${dir}_default.png`;

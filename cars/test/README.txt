@@ -215,3 +215,11 @@ Escarabajo study (samples/escarabajo.rar, the real car — test3/ was our rc_can
   filled green where no other panel shares the texels. Escarabajo's lower band stays as an option.
 - RayCity UV: 🖌 paint tool (colour 1 / 2 / 3 / black; click a panel, brush, whole piece, whole car), saves the
   mask; RayCity Easy's 🖌 button opens it with the built car.
+
+Video 2026-10-12 (the user's own car, own UV): white body fine; the hood showed a round wheel-like picture and
+the tail lid black-white checkers and colour bars. Every game car's _color.png keeps the same block at its
+bottom-left (u < 0.17, v > 0.66: black / purple squares and a black-white ramp); that car's top view (hood,
+tail lid) sat in the bottom strip, over that block. RayCity UV now shows the colour layer, marks triangles on a
+picture or in the block (purple) and clears the layer except the block; new-body builds clear it too.
+Escarabajo (default parts only) is now an embedded template: the guide in RayCity UV and an old-body choice
+in RayCity Easy (not tested in game yet).

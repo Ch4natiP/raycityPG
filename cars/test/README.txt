@@ -223,3 +223,10 @@ tail lid) sat in the bottom strip, over that block. RayCity UV now shows the col
 picture or in the block (purple) and clears the layer except the block; new-body builds clear it too.
 Escarabajo (default parts only) is now an embedded template: the guide in RayCity UV and an old-body choice
 in RayCity Easy (not tested in game yet).
+- New body UV 'charts' (RayCity Easy default now): Escarabajo's way — every panel its own flat piece, no two
+  pieces share texture (painting one panel never lands on another), placed where Escarabajo has them (one
+  side on top, the other in the lower middle, top view in the middle, front / rear columns, the rest packed in
+  the bottom strip), bottom-left block and Escarabajo's glass rectangle free; mask and _s copy at the template's
+  sizes (Escarabajo 512 / 256 with mips).
+- RayCity UV: frame painting sees only what is in view (depth of the car rendered once) and uses the files'
+  normals; parts with their own texture (tail lamps) are left off the sheet and not painted.

@@ -214,7 +214,7 @@ async function build() {
         out.set(`${name}_base.png`, await png(px, m.w, m.h)); out.set(`${name}_base_s.dds`, dds(px, m.w, m.h, 'full'));
       }
     } else {
-      out = await convert(state.model, { name, template, raw: true, hideInterior: true, maxVerts: +$('poly-sel').value, paintAll: oneColour, slots: !oneColour, colours, layout: 'islands', partTextures: false, log: say });
+      out = await convert(state.model, { name, template, raw: true, hideInterior: true, maxVerts: +$('poly-sel').value, paintAll: oneColour, slots: !oneColour, colours, layout: 'charts', partTextures: false, log: say });
     }
     state.out = out; state.outName = name;
     say(`เสร็จ: ${out.size} ไฟล์`);

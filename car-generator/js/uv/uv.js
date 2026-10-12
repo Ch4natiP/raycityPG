@@ -9,6 +9,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { parseOM, writeOM, omParts } from '../om.js';
 import { makeZip, readZip } from '../zip.js';
 import { decodePNG, png, dds } from '../convert.js';
+import { decodeSpec } from '../carSpec.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (t) => { $('status').textContent = t; };
@@ -58,6 +59,12 @@ async function openFiles(entries) {
     const om = parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
     const parts = omParts(om);
     if (!parts.some((q) => q.positions.length / 3 > 8)) continue;
+    // a part with its own texture (list.xml tex, e.g. the tail lamps' red / amber bands) doesn't use the
+    // body's paint mask: left off the sheet and not painted
+    const dir = rel.includes('/') ? rel.split('/')[0] : '';
+    const listText = dir && car.files.has(`${dir}/list.xml`) ? decodeSpec(car.files.get(`${dir}/list.xml`)) : '';
+    const tex = (listText.match(/name='default'[^>]*tex='([^']*)'/) || [])[1] || '';
+    if (tex && car.files.has(`${dir}/${tex}.png`)) continue;
     car.meshes.push({ rel, om, parts, orig: b, isl: parts.map(islandsOf), dirty: false });
   }
   try {
@@ -553,7 +560,9 @@ function eachTri(fn) {
     for (let t = 0; t < p.indices.length; t += 3) {
       const [a, b, c] = [p.indices[t], p.indices[t + 1], p.indices[t + 2]];
       const e1 = [P[b * 3] - P[a * 3], P[b * 3 + 1] - P[a * 3 + 1], P[b * 3 + 2] - P[a * 3 + 2]]; const e2 = [P[c * 3] - P[a * 3], P[c * 3 + 1] - P[a * 3 + 1], P[c * 3 + 2] - P[a * 3 + 2]];
-      const n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+      // facing: the files' own normals (the winding of game files can run either way)
+      const Nn = p.normals; let n = [Nn[a * 3] + Nn[b * 3] + Nn[c * 3], Nn[a * 3 + 1] + Nn[b * 3 + 1] + Nn[c * 3 + 1], Nn[a * 3 + 2] + Nn[b * 3 + 2] + Nn[c * 3 + 2]];
+      if (!(Math.abs(n[0]) + Math.abs(n[1]) + Math.abs(n[2]) > 1e-9)) n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
       fn(mesh, p, t / 3, [(P[a * 3] + P[b * 3] + P[c * 3]) / 3, (P[a * 3 + 1] + P[b * 3 + 1] + P[c * 3 + 1]) / 3, (P[a * 3 + 2] + P[b * 3 + 2] + P[c * 3 + 2]) / 3], n);
     }
   }
@@ -629,16 +638,45 @@ function paintAt2D(u, v) {
 // Box (frame): triangles whose centre falls inside the dragged frame on screen; only those facing you
 // unless "ด้านหลังด้วย" is on.
 const rectEl = $('rect'); let rect = null;
+// What the camera sees: the car's depth rendered once (glass, selection and guides left out), so a frame
+// paints only surfaces in view, not the cabin or the far side behind them.
+function depthView() {
+  const W = gl.width; const H = gl.height;
+  const rt = new THREE.WebGLRenderTarget(W, H);
+  const hidden = carGroup.children.filter((o) => o.visible && (o.userData.mi === undefined || car.meshes[o.userData.mi].parts[o.userData.pi].flags[0] === 1));
+  hidden.forEach((o) => { o.visible = false; });
+  const grid = scene.children.filter((o) => o !== carGroup && o.visible && !o.isLight); grid.forEach((o) => { o.visible = false; });
+  // view distance (0-100 m) in 24 bits of RGB
+  scene.overrideMaterial = new THREE.ShaderMaterial({
+    side: THREE.DoubleSide,
+    vertexShader: 'varying float vz; void main() { vec4 mv = modelViewMatrix * vec4(position, 1.0); vz = -mv.z; gl_Position = projectionMatrix * mv; }',
+    fragmentShader: 'precision highp float; varying float vz; void main() { float v = floor(clamp(vz / 100.0, 0.0, 1.0) * 16777215.0); float r = floor(v / 65536.0); float g = floor((v - r * 65536.0) / 256.0); float b = v - r * 65536.0 - g * 256.0; gl_FragColor = vec4(r, g, b, 255.0) / 255.0; }',
+  });
+  const bg = scene.background; scene.background = null;
+  renderer.setRenderTarget(rt); renderer.setClearColor(0xffffff, 1); renderer.clear(); renderer.render(scene, cam);
+  const px = new Uint8Array(W * H * 4); renderer.readRenderTargetPixels(rt, 0, 0, W, H, px);
+  renderer.setRenderTarget(null); scene.overrideMaterial = null; scene.background = bg;
+  hidden.forEach((o) => { o.visible = true; }); grid.forEach((o) => { o.visible = true; });
+  rt.dispose();
+  return { W, H, at: (x, y) => { const o = ((H - 1 - y) * W + x) * 4; return ((px[o] * 65536 + px[o + 1] * 256 + px[o + 2]) / 16777215) * 100; } };
+}
 function trisInRect(x0, y0, x1, y1, fn) {
   const r = gl.getBoundingClientRect(); const v = new THREE.Vector3(); const nm = new THREE.Vector3(); const camDir = new THREE.Vector3();
   carGroup.updateMatrixWorld();
   const M = carGroup.matrixWorld; const N3 = new THREE.Matrix3().getNormalMatrix(M);
+  const depth = paint.backfaces ? null : depthView();
   eachTri((mesh, p, t, c, n) => {
-    v.set(c[0], c[1], c[2]).applyMatrix4(M);
+    v.set(c[0], c[1], c[2]).applyMatrix4(M); const vw = v.clone();
     if (!paint.backfaces) { nm.set(n[0], n[1], n[2]).applyMatrix3(N3); camDir.copy(v).sub(cam.position); if (nm.dot(camDir) > 0) return; }
     v.project(cam);
     const sx = (v.x + 1) / 2 * r.width; const sy = (1 - v.y) / 2 * r.height;
-    if (sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1 && v.z < 1) fn(mesh, p, t);
+    if (!(sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1 && v.z < 1)) return;
+    if (depth) {
+      const dx = Math.min(depth.W - 1, Math.max(0, Math.floor((sx / r.width) * depth.W))); const dy = Math.min(depth.H - 1, Math.max(0, Math.floor((sy / r.height) * depth.H)));
+      const seen = depth.at(dx, dy); const mine = -vw.applyMatrix4(cam.matrixWorldInverse).z;
+      if (mine > seen + 0.03 + seen * 0.01) return; // behind what is in view
+    }
+    fn(mesh, p, t);
   });
 }
 function showRect() { if (!rect) { rectEl.hidden = true; return; } const [x0, x1] = [Math.min(rect.x0, rect.x1), Math.max(rect.x0, rect.x1)]; const [y0, y1] = [Math.min(rect.y0, rect.y1), Math.max(rect.y0, rect.y1)]; Object.assign(rectEl.style, { left: `${x0}px`, top: `${y0}px`, width: `${x1 - x0}px`, height: `${y1 - y0}px` }); rectEl.hidden = false; }

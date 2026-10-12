@@ -1126,7 +1126,7 @@ export async function convert(model, { name, template, categories = new Map(), m
   const m = metrics(src.tris, src.wheels);
   let bent = null;
   // Both layouts put every piece into the template's file for that spot (doors in roof like gtv98).
-  if (layout === 'template' || layout === 'zones' || layout === 'atlas' || layout === 'islands') {
+  if (layout === 'template' || layout === 'zones' || layout === 'atlas' || layout === 'islands' || layout === 'charts') {
     // The template bent onto this car first: every triangle goes into the file the template has at that
     // spot (gtv98's doors are in its roof file, not the body) so the UVs copied later come from the
     // same file and never jump across the texture (pack 44 / 45: black doors).
@@ -1144,7 +1144,7 @@ export async function convert(model, { name, template, categories = new Map(), m
     };
     // Three garage colours where the template has them: its mask's colour under the closest point of
     // the bent template (gtv98: green lower band → colour 2, blue hood → colour 3).
-    if (slots && (layout === 'zones' || layout === 'atlas' || layout === 'islands')) {
+    if (slots && (layout === 'zones' || layout === 'atlas' || layout === 'islands' || layout === 'charts')) {
       const slotAt = await templateMaskSlots(bent, template);
       const paint = src.tris.filter((t) => t.mat === 'Body_Color' || t.mat === 'Wing');
       let lab = smoothLabels(paint, paint.map((t) => slotAt(t.c0)));
@@ -1215,6 +1215,167 @@ export async function convert(model, { name, template, categories = new Map(), m
 // black / other pictures (pack 55: hood, roof, rear deck, front and rear; packs 48 / 49: the rear deck).
 // Pack 55's sides in v 0.37-0.73 took the three colours and the shop decals right.
 const ATLAS_FLAT = { 1: [0.05, 0.40], 2: [0.05, 0.45], 3: [0.05, 0.50], glass: [0.05, 0.55], black: [0.05, 0.60] };
+// "Charts" layout, the way Escarabajo's UVs are made: every panel (triangles facing the same way and
+// connected) is its own piece, projected flat from its side, and no two pieces share texture — so a
+// colour painted on one panel never lands on another, and nothing stretches. Pieces sit where
+// Escarabajo has them: one side along the top, the other side in the lower middle, the top view in the
+// middle, front and rear in the side columns; pieces that would cover another one (inner walls, layers)
+// are packed in the free bottom strip. The bottom-left corner (the game's block in the colour layer) and
+// Escarabajo's glass rectangle stay free. Trim / lamps sit on one black spot. Mask: every triangle in its
+// colour slot. Returns { mask (1024² RGBA), colour (cw×ch RGBA, clear), size }.
+const CHART_REGIONS = {
+  left: [0.14, 0.01, 0.98, 0.23], right: [0.14, 0.52, 0.98, 0.73], top: [0.23, 0.255, 0.85, 0.50],
+  front: [0.87, 0.255, 0.98, 0.50], rear: [0.02, 0.385, 0.13, 0.50], bottom: [0.19, 0.76, 0.99, 0.99],
+};
+const CHART_BLACK = [0.07, 0.60];
+function chartsLayout(lod, { slots, cw = 128, ch = 64, size = 1024 }) {
+  const SIZE = size; const G = 512; // occupancy grid
+  const lo = [Infinity, Infinity, Infinity]; const hi = [-Infinity, -Infinity, -Infinity];
+  for (const parts of Object.values(lod)) for (const p of parts) for (let i = 0; i < p.positions.length; i += 3) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p.positions[i + k]); hi[k] = Math.max(hi[k], p.positions[i + k]); }
+  const ext = [hi[0] - lo[0] || 1, hi[1] - lo[1] || 1, hi[2] - lo[2] || 1];
+  // per side: which axes go to u / v (RayCity: x left, y back, z up; v grows downwards on the sheet)
+  const AX = { left: [1, 2, false], right: [1, 2, true], top: [1, 0, false], front: [0, 2, false], rear: [0, 2, true] };
+  const scaleOf = {};
+  for (const [side, [a, b]] of Object.entries(AX)) { const r = CHART_REGIONS[side]; scaleOf[side] = Math.min((r[2] - r[0]) / ext[a], (r[3] - r[1]) / ext[b]); }
+  const projUV = (side, q, sc = scaleOf[side]) => {
+    const [a, b, flip] = AX[side]; const r = CHART_REGIONS[side];
+    const fa = (q[a] - lo[a]) * sc; const fb = (hi[b] - q[b]) * sc; // b: height / width from the top edge
+    return [r[0] + (flip ? (ext[a] * sc - fa) : fa), r[1] + fb];
+  };
+  const slotOfMat = (m) => {
+    if (m === 'Glass_Gray') return 'glass';
+    if (NOT_PAINT.has(m)) return 'black';
+    if (!slots) return 1;
+    if (m === 'Hood_Paint') return 3;
+    if (m === 'Lower_Paint') return 2;
+    if (m === 'Body_Color' || m === 'Wing') return 1;
+    return 'black';
+  };
+  // 1. triangles by side; charts = connected (shared corner positions) triangles of one side and part
+  const tris = []; // { p, t, side, slot }
+  const parts = [];
+  for (const list of Object.values(lod)) for (const p of list) parts.push(p);
+  parts.forEach((p, pi) => {
+    const k = slotOfMat(p.name); const P = p.positions; const I = p.indices;
+    for (let t = 0; t < I.length; t += 3) {
+      const q = [I[t], I[t + 1], I[t + 2]].map((i) => [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]);
+      const fn = cross(sub(q[1], q[0]), sub(q[2], q[0]));
+      const ax = Math.abs(fn[0]); const ay = Math.abs(fn[1]); const az = Math.abs(fn[2]);
+      let side;
+      if (typeof k !== 'number') side = 'flat';
+      else if (az >= ax && az >= ay) side = fn[2] >= 0 ? 'top' : 'bottom';
+      else if (ax >= ay) side = fn[0] >= 0 ? 'left' : 'right';
+      else side = fn[1] < 0 ? 'front' : 'rear';
+      tris.push({ pi, t, side, slot: k, q });
+    }
+  });
+  const key = (v) => `${Math.round(v[0] * 1e4)},${Math.round(v[1] * 1e4)},${Math.round(v[2] * 1e4)}`;
+  const par = new Int32Array(tris.length).map((_, i) => i);
+  const find = (x) => { while (par[x] !== x) { par[x] = par[par[x]]; x = par[x]; } return x; };
+  const byKey = new Map();
+  tris.forEach((tr, i) => { if (tr.side === 'flat') return; for (const v of tr.q) { const k2 = `${tr.pi}|${tr.side}|${key(v)}`; const j = byKey.get(k2); if (j === undefined) byKey.set(k2, i); else par[find(i)] = find(j); } });
+  const charts = new Map();
+  tris.forEach((tr, i) => { if (tr.side === 'flat') return; const r = find(i); if (!charts.has(r)) charts.set(r, { side: tr.side, tris: [] }); charts.get(r).tris.push(i); });
+  // 2. place each chart at its spot; a chart that would cover texels another chart owns moves to the bottom strip
+  const grid = new Int32Array(G * G).fill(-1);
+  const cellsOf = (uvTris) => {
+    const cells = new Set();
+    for (const tq of uvTris) {
+      const xs = tq.map((t) => t[0] * G); const ys = tq.map((t) => t[1] * G);
+      const d = (xs[1] - xs[0]) * (ys[2] - ys[0]) - (xs[2] - xs[0]) * (ys[1] - ys[0]);
+      const x0 = Math.max(0, Math.floor(Math.min(...xs))); const x1 = Math.min(G - 1, Math.floor(Math.max(...xs)));
+      const y0 = Math.max(0, Math.floor(Math.min(...ys))); const y1 = Math.min(G - 1, Math.floor(Math.max(...ys)));
+      if (Math.abs(d) < 1e-9 || (x1 - x0 + 1) * (y1 - y0 + 1) <= 2) { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) cells.add(y * G + x); continue; }
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        const px = x + 0.5; const py = y + 0.5;
+        const a = ((xs[1] - px) * (ys[2] - py) - (xs[2] - px) * (ys[1] - py)) / d;
+        const b = ((xs[2] - px) * (ys[0] - py) - (xs[0] - px) * (ys[2] - py)) / d;
+        if (a > -0.15 && b > -0.15 && 1 - a - b > -0.15) cells.add(y * G + x);
+      }
+    }
+    return cells;
+  };
+  const list = [...charts.entries()].map(([id, c]) => ({ id, ...c }));
+  for (const c of list) {
+    if (c.side === 'bottom') { c.uv = null; continue; }
+    c.uv = c.tris.map((i) => tris[i].q.map((q) => projUV(c.side, q)));
+    let area = 0; for (const tq of c.uv) area += Math.abs((tq[1][0] - tq[0][0]) * (tq[2][1] - tq[0][1]) - (tq[2][0] - tq[0][0]) * (tq[1][1] - tq[0][1])) / 2;
+    c.area = area;
+  }
+  list.sort((a, b) => (b.area || 0) - (a.area || 0));
+  const displaced = [];
+  for (const c of list) {
+    if (!c.uv) { displaced.push(c); continue; }
+    const cells = cellsOf(c.uv); let clash = 0;
+    for (const cell of cells) if (grid[cell] >= 0 && grid[cell] !== c.id) clash++;
+    if (clash > Math.max(1, cells.size * 0.02)) { displaced.push(c); continue; }
+    for (const cell of cells) grid[cell] = c.id;
+  }
+  // 3. displaced charts (and bottom-facing ones) shelf-packed into the bottom strip, each projected from its own side
+  const reg = CHART_REGIONS.bottom; const local = (c, sc) => {
+    const side = c.side === 'bottom' ? 'top' : c.side; const [a, b] = AX[side];
+    const pts = c.tris.map((i) => tris[i].q.map((q) => [q[a] * sc, -q[b] * sc]));
+    let mu = Infinity; let mv = Infinity; let Mu = -Infinity; let Mv = -Infinity;
+    for (const tq of pts) for (const [u, v] of tq) { mu = Math.min(mu, u); mv = Math.min(mv, v); Mu = Math.max(Mu, u); Mv = Math.max(Mv, v); }
+    return { pts, w: Mu - mu, h: Mv - mv, mu, mv };
+  };
+  const base = Math.min(...Object.values(scaleOf));
+  let sc = base;
+  for (let tries = 0; tries < 30 && displaced.length; tries++) {
+    const L = displaced.map((c) => ({ c, ...local(c, sc) })).sort((a, b) => b.h - a.h);
+    const pad = 2 / SIZE; let x = reg[0]; let y = reg[1]; let rowH = 0; let ok = true;
+    for (const e of L) {
+      if (x + e.w > reg[2]) { x = reg[0]; y += rowH + pad; rowH = 0; }
+      if (y + e.h > reg[3] || e.w > reg[2] - reg[0]) { ok = false; break; }
+      e.at = [x - e.mu, y - e.mv]; x += e.w + pad; rowH = Math.max(rowH, e.h);
+    }
+    if (ok) { for (const e of L) e.c.uv = e.pts.map((tq) => tq.map(([u, v]) => [u + e.at[0], v + e.at[1]])); break; }
+    sc *= 0.85;
+  }
+  for (const c of displaced) if (!c.uv) c.uv = c.tris.map(() => [CHART_BLACK, CHART_BLACK, CHART_BLACK]); // nothing fitted (never seen)
+  // 4. new points (split per chart) and the mask, triangle by triangle
+  const uvOf = new Map(); // tri index → [uv, uv, uv]
+  for (const c of list) c.tris.forEach((i, k) => uvOf.set(i, c.uv[k]));
+  const mask = new Uint8ClampedArray(SIZE * SIZE * 4);
+  for (let i = 0; i < mask.length; i += 4) mask.set([255, 0, 0, 255], i);
+  const RGB = { 1: [255, 0, 0], 2: [0, 255, 0], 3: [0, 0, 255] };
+  const fill = (uvs, c) => {
+    const xs = uvs.map((t) => t[0] * SIZE); const ys = uvs.map((t) => t[1] * SIZE);
+    const d = (xs[1] - xs[0]) * (ys[2] - ys[0]) - (xs[2] - xs[0]) * (ys[1] - ys[0]);
+    if (Math.abs(d) < 1e-9) return;
+    const tol = 1.5 / Math.sqrt(Math.abs(d));
+    for (let y = Math.max(0, Math.floor(Math.min(...ys)) - 2); y <= Math.min(SIZE - 1, Math.ceil(Math.max(...ys)) + 2); y++) {
+      for (let x = Math.max(0, Math.floor(Math.min(...xs)) - 2); x <= Math.min(SIZE - 1, Math.ceil(Math.max(...xs)) + 2); x++) {
+        const px = x + 0.5; const py = y + 0.5;
+        const a = ((xs[1] - px) * (ys[2] - py) - (xs[2] - px) * (ys[1] - py)) / d;
+        const b = ((xs[2] - px) * (ys[0] - py) - (xs[0] - px) * (ys[2] - py)) / d;
+        if (a > -tol && b > -tol && 1 - a - b > -tol) mask.set([...c, 255], (y * SIZE + x) * 4);
+      }
+    }
+  };
+  { const cx = Math.round(CHART_BLACK[0] * SIZE); const cy = Math.round(CHART_BLACK[1] * SIZE); for (let y = cy - 8; y <= cy + 8; y++) for (let x = cx - 8; x <= cx + 8; x++) mask.set([0, 0, 0, 255], (y * SIZE + x) * 4); }
+  const per = new Map(); tris.forEach((tr, i) => { if (!per.has(tr.pi)) per.set(tr.pi, []); per.get(tr.pi).push(i); });
+  parts.forEach((p, pi) => {
+    const P = p.positions; const N = p.normals; const I = p.indices;
+    const nP = []; const nN = []; const nUV = []; const nI = []; const keyOf = new Map();
+    for (const i of per.get(pi) || []) {
+      const tr = tris[i]; const uv3 = tr.side === 'flat' ? [CHART_BLACK, CHART_BLACK, CHART_BLACK] : uvOf.get(i);
+      const chartId = tr.side === 'flat' ? -1 : find(i);
+      const v = [I[tr.t], I[tr.t + 1], I[tr.t + 2]];
+      for (let j = 0; j < 3; j++) {
+        const k2 = `${v[j]}|${chartId}`;
+        let id = keyOf.get(k2);
+        if (id === undefined) { id = nP.length / 3; keyOf.set(k2, id); nP.push(P[v[j] * 3], P[v[j] * 3 + 1], P[v[j] * 3 + 2]); nN.push(N[v[j] * 3], N[v[j] * 3 + 1], N[v[j] * 3 + 2]); nUV.push(uv3[j][0], uv3[j][1]); }
+        nI.push(id);
+      }
+      if (typeof tr.slot === 'number' && tr.slot !== 1) fill(uv3, RGB[tr.slot]);
+    }
+    p.kind = KIND_OF[p.name] || 0;
+    p.positions = new Float32Array(nP); p.normals = new Float32Array(nN); p.uvs = new Float32Array(nUV); p.indices = Uint32Array.from(nI);
+  });
+  return { mask, colour: new Uint8ClampedArray(cw * ch * 4), size: SIZE };
+}
+
 function atlasLayout(lod, { slots, paintAll, cw = 128, ch = 64 }) {
   const lo = [Infinity, Infinity, Infinity]; const hi = [-Infinity, -Infinity, -Infinity];
   for (const parts of Object.values(lod)) for (const p of parts) for (let i = 0; i < p.positions.length; i += 3) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p.positions[i + k]); hi[k] = Math.max(hi[k], p.positions[i + k]); }
@@ -1325,7 +1486,7 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, s
   }
   // paintAll: everything but glass / lamps / cabin samples the paint column. In game the colour follows
   // the UV column (a car with the whole mask red still showed its trim black and the hood brown).
-  const atlas = layout === 'atlas' ? atlasLayout(lod, { slots, paintAll, ...(() => { const [cw, ch] = pngSize(tpl.get(`${tplName}_color.png`), [128, 64]); return { cw, ch }; })() }) : null;
+  const atlas = layout === 'charts' ? chartsLayout(lod, { slots, size: pngSize(tpl.get(`${tplName}_base.png`), [1024, 1024])[0], ...(() => { const [cw, ch] = pngSize(tpl.get(`${tplName}_color.png`), [128, 64]); return { cw, ch }; })() }) : layout === 'atlas' ? atlasLayout(lod, { slots, paintAll, ...(() => { const [cw, ch] = pngSize(tpl.get(`${tplName}_color.png`), [128, 64]); return { cw, ch }; })() }) : null;
   for (const [slot, parts] of Object.entries(lod)) {
     for (const p of parts) {
       if (asTemplate || atlas || !ZONES.includes(p.name)) continue;
@@ -1443,7 +1604,10 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, s
     }
   } else if (atlas) {
     out.set(`${name}_base.png`, await png(atlas.mask, atlas.size, atlas.size));
-    out.set(`${name}_base_s.dds`, dds(atlas.mask, atlas.size, atlas.size, 'full'));
+    // the template's _s copy: same size (gtv98) or half with mip levels (Escarabajo)
+    const tdds = tpl.get(`${tplName}_base_s.dds`);
+    const bmode = tdds && tdds.length >= 128 && new DataView(tdds.buffer, tdds.byteOffset, 128).getUint32(16, true) !== atlas.size ? 'half' : 'full';
+    out.set(`${name}_base_s.dds`, dds(atlas.mask, atlas.size, atlas.size, bmode));
     const [cw2, ch2] = pngSize(tpl.get(`${tplName}_color.png`), [128, 64]);
     out.set(`${name}_color.png`, await png(atlas.colour, cw2, ch2));
     out.set(`${name}_color_s.dds`, dds(atlas.colour, cw2, ch2, 'half'));

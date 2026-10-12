@@ -203,7 +203,15 @@ function pickUV(u, v) {
 
 function snapshot() { return car.meshes.map((m) => m.parts.map((p) => ({ positions: p.positions, normals: p.normals, uvs: p.uvs.slice(), indices: p.indices }))); }
 function pushUndo() { undo.push(snapshot()); if (undo.length > 60) undo.shift(); redo.length = 0; }
+function comboSnap() { return { combo: true, uv: snapshot(), mask: car.mask ? car.mask.data.slice() : null, color: car.color ? car.color.data.slice() : null }; }
 function restore(s) {
+  if (s.combo) {
+    restore(s.uv);
+    if (s.mask && car.mask) { car.mask.data.set(s.mask); paint.dirty = true; }
+    if (s.color && car.color) { car.color.data.set(s.color); car.colorDirty = true; car.colorImg.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(car.color.data), car.color.w, car.color.h), 0, 0); }
+    if (car.mask) maskChanged();
+    return;
+  }
   if (s.mask) { car.mask.data.set(s.mask); paint.dirty = true; maskChanged(); return; }
   car.meshes.forEach((m, mi) => { m.parts.forEach((p, pi) => Object.assign(p, s[mi][pi])); m.isl = m.parts.map(islandsOf); m.dirty = true; });
   refresh(); build3D();
@@ -846,6 +854,46 @@ $('btn-clear-color').addEventListener('click', () => {
   status(`ล้างลายในชั้น _color แล้ว (${n.toLocaleString()} จุด) · เหลือแค่บล็อกของเกมมุมล่างซ้าย · แผงที่ยังม่วงอยู่ = อยู่ในโซนเกม ให้ลากย้ายออก`);
 });
 $('opt-color').addEventListener('change', () => { drawTexture(); refresh(); });
+// ⤒ the whole layout (every UV of the body-mask files, the flat colour spots and glass too) moved up — and
+// made smaller only if there is no room — until nothing is left in the game's block; the paint mask and the
+// colour layer move with it, so every panel keeps its colour.
+$('btn-clear-zone').addEventListener('click', () => {
+  if (!car.meshes.length) return;
+  const M = 0.008; // margin
+  let minU = Infinity; let minV = Infinity; let confV = -Infinity;
+  for (const m of car.meshes) for (const p of m.parts) for (let i = 0; i < p.uvs.length; i += 2) {
+    const u = p.uvs[i]; const v = p.uvs[i + 1];
+    minU = Math.min(minU, u); minV = Math.min(minV, v);
+    if (u < RESERVED[2] + M) confV = Math.max(confV, v);
+  }
+  const limit = RESERVED[1] - M;
+  if (confV <= limit) { status('ไม่มีลายเส้นอยู่ในโซนของเกมแล้ว ✅'); return; }
+  let s = 1; let dv = confV - limit; // shift up
+  if (minV - dv < M) { // no room: shrink about the top-left of the layout, then shift
+    s = (limit - M) / (confV - minV); dv = 0;
+  }
+  const tf = (u, v) => (s === 1 ? [u, v - dv] : [minU + (u - minU) * s, M + (v - minV) * s]);
+  const inv = (u, v) => (s === 1 ? [u, v + dv] : [minU + (u - minU) / s, minV + (v - M) / s]);
+  undo.push(comboSnap()); if (undo.length > 60) undo.shift(); redo.length = 0;
+  for (const m of car.meshes) { for (const p of m.parts) for (let i = 0; i < p.uvs.length; i += 2) { const [u, v] = tf(p.uvs[i], p.uvs[i + 1]); p.uvs[i] = u; p.uvs[i + 1] = v; } m.dirty = true; }
+  const moveImg = (img, fill, keepBlock) => {
+    const { w, h, data } = img; const src = data.slice();
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4; const u = (x + 0.5) / w; const v = (y + 0.5) / h;
+      if (keepBlock && u <= RESERVED[2] && v >= RESERVED[1]) continue; // the game's block stays
+      const [su, sv] = inv(u, v);
+      if (su < 0 || su >= 1 || sv < 0 || sv >= 1) { data.set(fill, o); continue; }
+      const sx = Math.floor(su * w); const sy = Math.floor(sv * h); const so = (sy * w + sx) * 4;
+      if (keepBlock && (sx + 0.5) / w <= RESERVED[2] && (sy + 0.5) / h >= RESERVED[1]) { data.set(fill, o); continue; }
+      data.set(src.subarray(so, so + 4), o);
+    }
+  };
+  if (car.mask) { moveImg(car.mask, [255, 0, 0, 255], false); paint.dirty = true; }
+  if (car.color) { moveImg(car.color, [0, 0, 0, 0], true); car.colorDirty = true; car.colorImg.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(car.color.data), car.color.w, car.color.h), 0, 0); }
+  if (car.mask) maskChanged();
+  update3DUVs(); refresh();
+  status(s === 1 ? `ย้ายลายเส้นทั้งหมดขึ้น ${(dv * 100).toFixed(1)}% ของรูป (สีย้ายตามไปด้วย) · ไม่มีอะไรอยู่ในโซนเกมแล้ว · กด ⬇ ดาวน์โหลด` : `ที่ไม่พอ: ย่อทั้งหมดเหลือ ${(s * 100).toFixed(0)}% แล้วย้ายขึ้น (สีย้ายตาม) · กด ⬇ ดาวน์โหลด`);
+});
 
 // ---------------------------------------------------------------------------------------------
 // UI
@@ -879,8 +927,9 @@ dirIn.addEventListener('change', async (e) => { const list = []; for (const f of
 $('file-sel').addEventListener('change', () => { selected = new Set(); refresh(); });
 $('opt-guide').addEventListener('change', refresh);
 $('guide-sel').addEventListener('change', loadGuide);
-$('btn-undo').addEventListener('click', () => { if (undo.length) { const s = undo.pop(); redo.push(s.mask ? { mask: car.mask.data.slice() } : snapshot()); restore(s); } });
-$('btn-redo').addEventListener('click', () => { if (redo.length) { const s = redo.pop(); undo.push(s.mask ? { mask: car.mask.data.slice() } : snapshot()); restore(s); } });
+const nowLike = (s) => (s.combo ? comboSnap() : s.mask ? { mask: car.mask.data.slice() } : snapshot());
+$('btn-undo').addEventListener('click', () => { if (undo.length) { const s = undo.pop(); redo.push(nowLike(s)); restore(s); } });
+$('btn-redo').addEventListener('click', () => { if (redo.length) { const s = redo.pop(); undo.push(nowLike(s)); restore(s); } });
 $('btn-rot').addEventListener('click', () => transformSel((u, v) => [-v, u]));
 $('btn-flipu').addEventListener('click', () => transformSel((u, v) => [-u, v]));
 $('btn-flipv').addEventListener('click', () => transformSel((u, v) => [u, -v]));

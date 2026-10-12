@@ -64,7 +64,15 @@ async function openFiles(entries) {
     const dir = rel.includes('/') ? rel.split('/')[0] : '';
     const listText = dir && car.files.has(`${dir}/list.xml`) ? decodeSpec(car.files.get(`${dir}/list.xml`)) : '';
     const tex = (listText.match(/name='default'[^>]*tex='([^']*)'/) || [])[1] || '';
-    if (tex && car.files.has(`${dir}/${tex}.png`)) continue;
+    if (tex && car.files.has(`${dir}/${tex}.png`)) {
+      // only a texture that covers the part completely (our tail lamps' opaque bands) hides the mask;
+      // game cars' part textures are mostly see-through (the paint shows) and stay on the sheet
+      try {
+        const t = await decodePNG(car.files.get(`${dir}/${tex}.png`)); let solid = 0;
+        for (let i = 3; i < t.data.length; i += 4) if (t.data[i] >= 250) solid++;
+        if (solid > (t.data.length / 4) * 0.9) continue;
+      } catch { /* unreadable: keep it */ }
+    }
     car.meshes.push({ rel, om, parts, orig: b, isl: parts.map(islandsOf), dirty: false });
   }
   try {
@@ -835,10 +843,9 @@ $('btn-paint-all').addEventListener('click', () => {
 setMode('panel');
 
 // Opened from RayCity Easy (🖌 button): the car comes by message
-if (window.opener) {
-  window.addEventListener('message', async (e) => { if (e.data?.type === 'rc-car' && Array.isArray(e.data.files)) { await openFiles(e.data.files); setPaint(true); } });
-  try { window.opener.postMessage({ type: 'rc-uv-ready' }, '*'); } catch { /* opener closed */ }
-}
+// (or from the one-page RayCity, whose tab holds this page)
+window.addEventListener('message', async (e) => { if (e.data?.type === 'rc-car' && Array.isArray(e.data.files)) { await openFiles(e.data.files); setPaint(true); } });
+for (const w of [window.opener, window.parent !== window ? window.parent : null]) if (w) try { w.postMessage({ type: 'rc-uv-ready' }, '*'); } catch { /* gone */ }
 
 // 🧽 the colour layer cleared (alpha 0, so the paint shows) everywhere but the game's block
 $('btn-clear-color').addEventListener('click', () => {

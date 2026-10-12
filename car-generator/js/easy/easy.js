@@ -327,6 +327,9 @@ $('btn-build').addEventListener('click', build);
 $('btn-download').addEventListener('click', downloadZip);
 // 🖌: the car to the RayCity UV page (paint the colours by clicking panels, edit UVs), sent by message
 $('btn-paint').addEventListener('click', () => {
+  const files0 = [...state.out].map(([rel, data]) => ({ path: `${state.outName}/${rel}`, data }));
+  // inside the one-page RayCity: its UV tab takes the car
+  if (window.parent !== window) { window.parent.postMessage({ type: 'rc-open-uv', files: files0 }, '*'); return; }
   const w = window.open('RayCity-UV.html', '_blank');
   if (!w) { $('build-log').textContent = 'เบราว์เซอร์บล็อกหน้าต่างใหม่ · อนุญาต pop-up แล้วกดอีกครั้ง'; return; }
   const files = [...state.out].map(([rel, data]) => ({ path: `${state.outName}/${rel}`, data }));

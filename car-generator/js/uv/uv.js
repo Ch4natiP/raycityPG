@@ -63,10 +63,10 @@ async function openFiles(entries) {
     c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(m.data), m.w, m.h), 0, 0);
     car.maskImg = c;
   } catch { car.mask = null; car.maskImg = null; }
-  selected = new Set(); undo.length = 0; redo.length = 0;
+  selected = new Set(); undo.length = 0; redo.length = 0; paint.sel = new Map(); paint.dirty = false; box0 = null;
   $('file-sel').innerHTML = `<option value="*">ทุกไฟล์</option>${car.meshes.map((m, i) => `<option value="${i}">${m.rel}</option>`).join('')}`;
   $('car-info').textContent = `${car.name} · ${car.files.size} ไฟล์ · ${car.meshes.length} ไฟล์ที่มีรูปทรง`;
-  build3D();
+  build3D(); viewFrom('iso');
   refresh();
   status('คลิกเกาะในจอซ้าย หรือคลิกบนรถ แล้วลากย้าย · ปุ่มด้านบน หมุน/กลับ/ย่อขยาย · สีแดง = ลายยืด');
 }
@@ -271,8 +271,8 @@ function drawTexture() {
   if (!texCanvas) return;
   const g = texCanvas.getContext('2d');
   g.clearRect(0, 0, 1024, 1024);
-  if (car.maskImg) g.drawImage(car.maskImg, 0, 0, 1024, 1024); else { g.fillStyle = '#c33'; g.fillRect(0, 0, 1024, 1024); }
-  if (!paint.on) {
+  if (car.maskImg) g.drawImage(paint.preview && car.mask ? previewCanvas() : car.maskImg, 0, 0, 1024, 1024); else { g.fillStyle = '#c33'; g.fillRect(0, 0, 1024, 1024); }
+  if (!paint.on && !paint.preview) {
     g.globalAlpha = 0.35; g.fillStyle = '#fff';
     for (let i = 0; i < 32; i++) for (let j = 0; j < 32; j++) if ((i + j) % 2) g.fillRect(i * 32, j * 32, 32, 32);
     g.globalAlpha = 1;
@@ -295,17 +295,26 @@ function build3D() {
     carGroup.add(mesh);
   }));
 }
+// camera: the whole car in view, from a side (RayCity: x left, y back, z up; three: x, z, -y)
+function viewFrom(dir) {
+  const b = new THREE.Box3().setFromObject(carGroup); if (b.isEmpty()) return;
+  const c = b.getCenter(new THREE.Vector3()); const r = b.getSize(new THREE.Vector3()).length() * 0.62;
+  const d = { iso: [1, 0.55, 1.15], front: [0, 0.25, 1], back: [0, 0.25, -1], left: [1, 0.15, 0], right: [-1, 0.15, 0], top: [0.001, 1, 0.001] }[dir] || [1, 0.55, 1.15];
+  const v = new THREE.Vector3(...d).normalize().multiplyScalar(r / Math.tan((cam.fov * Math.PI) / 360));
+  controls.target.copy(c); cam.position.copy(c).add(v); cam.near = 0.01; cam.far = 200; cam.updateProjectionMatrix(); controls.update();
+}
+document.querySelectorAll('#views3d button').forEach((b) => b.addEventListener('click', () => viewFrom(b.dataset.v)));
 function update3DUVs() {
-  for (const mesh of carGroup.children) { const p = car.meshes[mesh.userData.mi].parts[mesh.userData.pi]; mesh.geometry.attributes.uv.array.set(p.uvs); mesh.geometry.attributes.uv.needsUpdate = true; }
+  for (const mesh of carGroup.children) { if (mesh.userData.mi === undefined) continue; const p = car.meshes[mesh.userData.mi].parts[mesh.userData.pi]; mesh.geometry.attributes.uv.array.set(p.uvs); mesh.geometry.attributes.uv.needsUpdate = true; }
 }
 const ray = new THREE.Raycaster(); const mouse = new THREE.Vector2();
 gl.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return;
-  if (paint.on) { paintStart(); paintAt3D(e); gl.setPointerCapture(e.pointerId); return; }
+  if (paint.on) { paintDown(e); return; }
   const r = gl.getBoundingClientRect();
   mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
   ray.setFromCamera(mouse, cam);
-  const hit = ray.intersectObjects(carGroup.children)[0];
+  const hit = ray.intersectObjects(carGroup.children.filter((o) => o.userData.mi !== undefined))[0];
   if (!hit) { if (!e.shiftKey) { selected = new Set(); refresh(); } return; }
   const { mi, pi } = hit.object.userData; const p = car.meshes[mi].parts[pi];
   const key = `${mi}|${pi}|${car.meshes[mi].isl[pi].vertIsl[p.indices[hit.faceIndex * 3]]}`;
@@ -463,11 +472,16 @@ async function saveZip() {
 
 // ---------------------------------------------------------------------------------------------
 // Paint: the garage colours on the mask. Colour 1 red (the body), 2 green, 3 blue, black = no colour.
-// On the car: a whole panel (flood over the smooth surface, stops at sharp edges), a brush, or the
-// whole piece; on the sheet: a round brush. Each triangle is filled in the mask under its UVs.
+// Tools on the car: a whole panel (flood over the smooth surface within its UV island), a brush, a whole
+// piece, a box (everything facing you inside a dragged frame), a selection (click / frame triangles,
+// then paint them at once), a dividing line (a plane across the car: one side painted), the eyedropper.
+// Protected colours are never painted over (masking tape). Each triangle is filled in the mask under
+// its UVs; the sheet on the left takes a round brush.
 
-const paint = { on: false, slot: 1, mode: 'panel', size: 0.25, dirty: false, stroke: false };
+const paint = { on: false, slot: 1, mode: 'panel', size: 0.25, dirty: false, stroke: false, protect: new Set(), backfaces: false, sel: new Map(), preview: false };
 const SLOT_RGBA = { 0: [0, 0, 0, 255], 1: [255, 0, 0, 255], 2: [0, 255, 0, 255], 3: [0, 0, 255, 255] };
+const SLOT_NAME = ['ดำ (ไม่รับสี)', 'สี 1', 'สี 2', 'สี 3'];
+const slotAtPx = (d, o) => (d[o] > 128 ? 1 : d[o + 1] > 128 ? 2 : d[o + 2] > 128 ? 3 : 0);
 function paintStart() { if (!car.mask) return; undo.push({ mask: car.mask.data.slice() }); if (undo.length > 60) undo.shift(); redo.length = 0; paint.stroke = true; }
 function paintEnd() { paint.stroke = false; }
 function maskChanged() {
@@ -475,27 +489,38 @@ function maskChanged() {
   car.maskImg.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(data), w, h), 0, 0);
   drawTexture(); refresh();
 }
+function setTexel(o) { const d = car.mask.data; if (paint.protect.size && paint.protect.has(slotAtPx(d, o * 4))) return; d.set(SLOT_RGBA[paint.slot], o * 4); }
 function fillTri(U, a, b, c) {
-  const { w, h, data } = car.mask; const rgba = SLOT_RGBA[paint.slot];
+  const { w, h } = car.mask;
   const q = [a, b, c].map((i) => [U[i * 2] * w, U[i * 2 + 1] * h]);
   const area = (q[1][0] - q[0][0]) * (q[2][1] - q[0][1]) - (q[2][0] - q[0][0]) * (q[1][1] - q[0][1]);
   const x0 = Math.max(0, Math.floor(Math.min(q[0][0], q[1][0], q[2][0])) - 1); const x1 = Math.min(w - 1, Math.ceil(Math.max(q[0][0], q[1][0], q[2][0])) + 1);
   const y0 = Math.max(0, Math.floor(Math.min(q[0][1], q[1][1], q[2][1])) - 1); const y1 = Math.min(h - 1, Math.ceil(Math.max(q[0][1], q[1][1], q[2][1])) + 1);
-  if (Math.abs(area) < 1e-6) { // flat UVs (a whole piece on one texel): that texel and its neighbours
-    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) data.set(rgba, (y * w + x) * 4);
-    return;
-  }
-  // texel centres inside the triangle grown by about one texel (edges and filtering)
-  const grow = 1.2 / Math.sqrt(Math.abs(area));
+  if (Math.abs(area) < 1e-6) { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) setTexel(y * w + x); return; } // flat UVs: that spot
+  const grow = 1.2 / Math.sqrt(Math.abs(area)); // about one texel wider (edges, filtering)
   for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
     const cx = x + 0.5; const cy = y + 0.5;
     const s0 = ((q[1][0] - q[0][0]) * (cy - q[0][1]) - (q[1][1] - q[0][1]) * (cx - q[0][0])) / area;
     const s1 = ((q[2][0] - q[1][0]) * (cy - q[1][1]) - (q[2][1] - q[1][1]) * (cx - q[1][0])) / area;
     const s2 = ((q[0][0] - q[2][0]) * (cy - q[2][1]) - (q[0][1] - q[2][1]) * (cx - q[2][0])) / area;
-    if (s0 >= -grow && s1 >= -grow && s2 >= -grow) data.set(rgba, (y * w + x) * 4);
+    if (s0 >= -grow && s1 >= -grow && s2 >= -grow) setTexel(y * w + x);
   }
 }
-// triangles of a part connected over its smooth surface (shared corner positions, normals within 30°)
+// every paintable triangle: fn(mesh, part, t, centre[3], normal[3]) — glass left out
+function eachTri(fn) {
+  for (const mesh of carGroup.children) {
+    if (!mesh.userData || mesh.userData.mi === undefined) continue;
+    const p = car.meshes[mesh.userData.mi].parts[mesh.userData.pi]; if (p.flags[0] === 1) continue; const P = p.positions;
+    for (let t = 0; t < p.indices.length; t += 3) {
+      const [a, b, c] = [p.indices[t], p.indices[t + 1], p.indices[t + 2]];
+      const e1 = [P[b * 3] - P[a * 3], P[b * 3 + 1] - P[a * 3 + 1], P[b * 3 + 2] - P[a * 3 + 2]]; const e2 = [P[c * 3] - P[a * 3], P[c * 3 + 1] - P[a * 3 + 1], P[c * 3 + 2] - P[a * 3 + 2]];
+      const n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+      fn(mesh, p, t / 3, [(P[a * 3] + P[b * 3] + P[c * 3]) / 3, (P[a * 3 + 1] + P[b * 3 + 1] + P[c * 3 + 1]) / 3, (P[a * 3 + 2] + P[b * 3 + 2] + P[c * 3 + 2]) / 3], n);
+    }
+  }
+}
+const fillT = (p, t) => fillTri(p.uvs, p.indices[t * 3], p.indices[t * 3 + 1], p.indices[t * 3 + 2]);
+// triangles of a part connected over its smooth surface (shared corner positions, normals within 25°)
 function panelOf(p, start, vertIsl = null) {
   const key = (i) => `${Math.round(p.positions[i * 3] * 2000)},${Math.round(p.positions[i * 3 + 1] * 2000)},${Math.round(p.positions[i * 3 + 2] * 2000)}`;
   if (!p._adj) {
@@ -509,7 +534,7 @@ function panelOf(p, start, vertIsl = null) {
     }
     p._adj = { byPos, fn };
   }
-  const { byPos, fn } = p._adj; const cos = Math.cos((25 * Math.PI) / 180);
+  const { byPos, fn } = p._adj; const cos = Math.cos((+$('panel-angle').value * Math.PI) / 180);
   const isl0 = vertIsl ? vertIsl[p.indices[start * 3]] : -1;
   const seen = new Set([start]); const list = [start];
   for (let k = 0; k < list.length; k++) {
@@ -523,62 +548,206 @@ function panelOf(p, start, vertIsl = null) {
   }
   return list;
 }
-function paintAt3D(e) {
-  if (!car.mask) { status('รถคันนี้ไม่มีรูปมาสก์ (_base.png)'); return; }
+function hitAt(e) {
   const r = gl.getBoundingClientRect();
   mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
   ray.setFromCamera(mouse, cam);
-  const hit = ray.intersectObjects(carGroup.children.filter((o) => o.visible))[0];
-  if (!hit) return;
+  // glass is clicked through (the panel behind it is what gets painted)
+  return ray.intersectObjects(carGroup.children.filter((o) => o.visible && o.userData.mi !== undefined && car.meshes[o.userData.mi].parts[o.userData.pi].flags[0] !== 1))[0] || null;
+}
+const said = (n, what = 'ลงสี') => status(`${what} ${SLOT_NAME[paint.slot]} ${n.toLocaleString()} สามเหลี่ยม · Ctrl+Z ย้อน · เสร็จแล้วกด ⬇ ดาวน์โหลด (ข้อ 5)`);
+function paintAt3D(e) {
+  const hit = hitAt(e); if (!hit) return;
   const { mi, pi } = hit.object.userData; const m = car.meshes[mi]; const p = m.parts[pi];
   if (p.flags[0] === 1) { status('กระจก: ไม่ต้องลงสี (กระจกแบบ Escarabajo ตั้งไว้แล้ว)'); return; }
-  let n = 0;
-  if (paint.mode === 'part') { for (let t = 0; t < p.indices.length; t += 3) { fillTri(p.uvs, p.indices[t], p.indices[t + 1], p.indices[t + 2]); n++; } }
-  else if (paint.mode === 'panel') { for (const t of panelOf(p, hit.faceIndex, m.isl[pi].vertIsl)) { fillTri(p.uvs, p.indices[t * 3], p.indices[t * 3 + 1], p.indices[t * 3 + 2]); n++; } }
-  else {
-    const c = carGroup.worldToLocal(hit.point.clone()); const R2 = paint.size * paint.size;
-    for (const mesh of carGroup.children) {
-      const q = car.meshes[mesh.userData.mi].parts[mesh.userData.pi]; if (q.flags[0] === 1) continue; const P = q.positions;
-      for (let t = 0; t < q.indices.length; t += 3) {
-        const [a, b, d] = [q.indices[t], q.indices[t + 1], q.indices[t + 2]];
-        const x = (P[a * 3] + P[b * 3] + P[d * 3]) / 3 - c.x; const y = (P[a * 3 + 1] + P[b * 3 + 1] + P[d * 3 + 1]) / 3 - c.y; const z = (P[a * 3 + 2] + P[b * 3 + 2] + P[d * 3 + 2]) / 3 - c.z;
-        if (x * x + y * y + z * z <= R2) { fillTri(q.uvs, a, b, d); n++; }
-      }
-    }
+  if (paint.mode === 'pick') {
+    const { w, h, data } = car.mask; const x = Math.min(w - 1, Math.max(0, Math.floor(hit.uv.x * w))); const y = Math.min(h - 1, Math.max(0, Math.floor(hit.uv.y * h)));
+    chooseSlot(slotAtPx(data, (y * w + x) * 4)); status(`ดูดสี: ${SLOT_NAME[paint.slot]} · คลิกแผงอื่นเพื่อทาด้วยสีนี้`); setMode('panel'); return;
   }
-  paint.dirty = true; maskChanged();
-  status(`ลงสี ${['ดำ (ไม่รับสี)', 'สี 1', 'สี 2', 'สี 3'][paint.slot]} ${n.toLocaleString()} สามเหลี่ยม · Ctrl+Z ย้อน · เสร็จแล้วกด ⬇ ดาวน์โหลด`);
+  if (paint.mode === 'select') {
+    const add = panelOf(p, hit.faceIndex, m.isl[pi].vertIsl);
+    const k = `${mi}|${pi}`; const set = paint.sel.get(k) || new Set();
+    const removing = e.altKey || e.ctrlKey;
+    for (const t of add) { if (removing) set.delete(t); else set.add(t); }
+    paint.sel.set(k, set); drawSelection(); return;
+  }
+  let n = 0;
+  if (paint.mode === 'part') { for (let t = 0; t < p.indices.length / 3; t++) { fillT(p, t); n++; } }
+  else if (paint.mode === 'panel') { for (const t of panelOf(p, hit.faceIndex, m.isl[pi].vertIsl)) { fillT(p, t); n++; } }
+  else if (paint.mode === 'brush') {
+    const c = carGroup.worldToLocal(hit.point.clone()); const R2 = paint.size * paint.size;
+    eachTri((mesh, q, t, ce) => { const d = (ce[0] - c.x) ** 2 + (ce[1] - c.y) ** 2 + (ce[2] - c.z) ** 2; if (d <= R2) { fillT(q, t); n++; } });
+  }
+  paint.dirty = true; maskChanged(); said(n);
 }
 function paintAt2D(u, v) {
-  const { w, h, data } = car.mask; const rgba = SLOT_RGBA[paint.slot]; const R = Math.max(2, paint.size * 60);
+  const { w, h } = car.mask; const R = Math.max(2, paint.size * 60);
   const cx = u * w; const cy = v * h;
-  for (let y = Math.max(0, Math.floor(cy - R)); y <= Math.min(h - 1, Math.ceil(cy + R)); y++) for (let x = Math.max(0, Math.floor(cx - R)); x <= Math.min(w - 1, Math.ceil(cx + R)); x++) if ((x - cx) ** 2 + (y - cy) ** 2 <= R * R) data.set(rgba, (y * w + x) * 4);
+  for (let y = Math.max(0, Math.floor(cy - R)); y <= Math.min(h - 1, Math.ceil(cy + R)); y++) for (let x = Math.max(0, Math.floor(cx - R)); x <= Math.min(w - 1, Math.ceil(cx + R)); x++) if ((x - cx) ** 2 + (y - cy) ** 2 <= R * R) setTexel(y * w + x);
   paint.dirty = true; maskChanged();
 }
-gl.addEventListener('pointermove', (e) => { if (paint.on && paint.stroke && paint.mode === 'brush' && (e.buttons & 1)) paintAt3D(e); });
-gl.addEventListener('pointerup', () => { if (paint.stroke) paintEnd(); });
+
+// Box (frame): triangles whose centre falls inside the dragged frame on screen; only those facing you
+// unless "ด้านหลังด้วย" is on.
+const rectEl = $('rect'); let rect = null;
+function trisInRect(x0, y0, x1, y1, fn) {
+  const r = gl.getBoundingClientRect(); const v = new THREE.Vector3(); const nm = new THREE.Vector3(); const camDir = new THREE.Vector3();
+  carGroup.updateMatrixWorld();
+  const M = carGroup.matrixWorld; const N3 = new THREE.Matrix3().getNormalMatrix(M);
+  eachTri((mesh, p, t, c, n) => {
+    v.set(c[0], c[1], c[2]).applyMatrix4(M);
+    if (!paint.backfaces) { nm.set(n[0], n[1], n[2]).applyMatrix3(N3); camDir.copy(v).sub(cam.position); if (nm.dot(camDir) > 0) return; }
+    v.project(cam);
+    const sx = (v.x + 1) / 2 * r.width; const sy = (1 - v.y) / 2 * r.height;
+    if (sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1 && v.z < 1) fn(mesh, p, t);
+  });
+}
+function showRect() { if (!rect) { rectEl.hidden = true; return; } const [x0, x1] = [Math.min(rect.x0, rect.x1), Math.max(rect.x0, rect.x1)]; const [y0, y1] = [Math.min(rect.y0, rect.y1), Math.max(rect.y0, rect.y1)]; Object.assign(rectEl.style, { left: `${x0}px`, top: `${y0}px`, width: `${x1 - x0}px`, height: `${y1 - y0}px` }); rectEl.hidden = false; }
+function finishRect(e) {
+  const [x0, x1] = [Math.min(rect.x0, rect.x1), Math.max(rect.x0, rect.x1)]; const [y0, y1] = [Math.min(rect.y0, rect.y1), Math.max(rect.y0, rect.y1)];
+  rect = null; showRect();
+  if (x1 - x0 < 3 && y1 - y0 < 3) return;
+  if (paint.mode === 'select') {
+    const removing = e.altKey || e.ctrlKey;
+    trisInRect(x0, y0, x1, y1, (mesh, p, t) => { const k = `${mesh.userData.mi}|${mesh.userData.pi}`; const set = paint.sel.get(k) || new Set(); if (removing) set.delete(t); else set.add(t); paint.sel.set(k, set); });
+    drawSelection(); return;
+  }
+  paintStart(); let n = 0;
+  trisInRect(x0, y0, x1, y1, (mesh, p, t) => { fillT(p, t); n++; });
+  paintEnd(); paint.dirty = true; maskChanged(); said(n, 'ครอบทาสี');
+}
+
+// Selection: yellow over the chosen triangles; painted at once with the chosen colour
+let selMesh = null;
+function selCount() { let n = 0; for (const s of paint.sel.values()) n += s.size; return n; }
+function drawSelection() {
+  if (selMesh) { carGroup.remove(selMesh); selMesh.geometry.dispose(); selMesh = null; }
+  const pos = [];
+  for (const [k, set] of paint.sel) {
+    const [mi, pi] = k.split('|').map(Number); const p = car.meshes[mi].parts[pi]; const P = p.positions;
+    for (const t of set) for (let j = 0; j < 3; j++) { const v = p.indices[t * 3 + j]; pos.push(P[v * 3], P[v * 3 + 1], P[v * 3 + 2]); }
+  }
+  if (pos.length) {
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    selMesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: '#ffd400', transparent: true, opacity: 0.55, depthTest: true, polygonOffset: true, polygonOffsetFactor: -2, side: THREE.DoubleSide }));
+    selMesh.userData = {}; carGroup.add(selMesh);
+  }
+  $('sel-info').textContent = `เลือกไว้ ${selCount().toLocaleString()} สามเหลี่ยม`;
+}
+$('btn-sel-paint').addEventListener('click', () => {
+  if (!selCount()) { status('ยังไม่ได้เลือก · เลือกวิธีทา "เลือกจุดก่อน" แล้วคลิก / ลากกรอบบนรถ'); return; }
+  paintStart(); let n = 0;
+  for (const [k, set] of paint.sel) { const [mi, pi] = k.split('|').map(Number); const p = car.meshes[mi].parts[pi]; for (const t of set) { fillT(p, t); n++; } }
+  paintEnd(); paint.dirty = true; maskChanged(); said(n, 'ทาที่เลือก');
+});
+$('btn-sel-clear').addEventListener('click', () => { paint.sel = new Map(); drawSelection(); });
+$('btn-sel-grow').addEventListener('click', () => {
+  // grow the selection by one ring of neighbouring triangles (sharing a corner)
+  for (const [k, set] of paint.sel) {
+    const [mi, pi] = k.split('|').map(Number); const p = car.meshes[mi].parts[pi];
+    const vs = new Set(); for (const t of set) for (let j = 0; j < 3; j++) vs.add(p.indices[t * 3 + j]);
+    for (let t = 0; t < p.indices.length / 3; t++) if (!set.has(t) && [0, 1, 2].some((j) => vs.has(p.indices[t * 3 + j]))) set.add(t);
+  }
+  drawSelection();
+});
+
+// Dividing line: a plane across the car (height / length / width at a position); one side painted.
+let planeMesh = null;
+function carBox() {
+  const mn = [Infinity, Infinity, Infinity]; const mx = [-Infinity, -Infinity, -Infinity];
+  eachTri((mesh, p, t, c) => { for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], c[k]); mx[k] = Math.max(mx[k], c[k]); } });
+  return { mn, mx };
+}
+let box0 = null;
+function linePos() { const ax = +$('line-axis').value; const f = +$('line-pos').value / 100; return { ax, at: box0.mn[ax] + (box0.mx[ax] - box0.mn[ax]) * f }; }
+function drawPlane() {
+  if (planeMesh) { carGroup.remove(planeMesh); planeMesh.geometry.dispose(); planeMesh = null; }
+  if (!paint.on || paint.mode !== 'line' || !car.meshes.length) return;
+  box0 = box0 || carBox();
+  const { ax, at } = linePos(); const s = [0, 1, 2].map((k) => (box0.mx[k] - box0.mn[k]) * 1.05 + 0.05); const c = [0, 1, 2].map((k) => (box0.mn[k] + box0.mx[k]) / 2);
+  const size = [...s]; size[ax] = 0.004; c[ax] = at;
+  planeMesh = new THREE.Mesh(new THREE.BoxGeometry(...size), new THREE.MeshBasicMaterial({ color: '#ffd400', transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide }));
+  planeMesh.position.set(...c); planeMesh.userData = {}; carGroup.add(planeMesh);
+  $('line-info').textContent = ['ความสูง', 'ความยาว', 'ความกว้าง'][[2, 1, 0].indexOf(ax)] + ` ${(at - box0.mn[ax]).toFixed(2)} ม. จากขอบ`;
+}
+$('line-axis').addEventListener('change', drawPlane); $('line-pos').addEventListener('input', drawPlane);
+$('btn-line-paint').addEventListener('click', () => {
+  if (!car.meshes.length) return; box0 = box0 || carBox();
+  const { ax, at } = linePos(); const side = $('line-side').value; // 'lo' | 'hi'
+  paintStart(); let n = 0;
+  eachTri((mesh, p, t, c) => { if (side === 'lo' ? c[ax] < at : c[ax] > at) { fillT(p, t); n++; } });
+  paintEnd(); paint.dirty = true; maskChanged(); said(n, 'ทาตามเส้น');
+});
+
+// Replace one colour with another over the whole mask; preview the garage colours
+$('btn-replace').addEventListener('click', () => {
+  if (!car.mask) return; const from = +$('replace-from').value; const d = car.mask.data; paintStart(); let n = 0;
+  for (let o = 0; o < d.length; o += 4) if (slotAtPx(d, o) === from && d[o + 3] > 0) { d.set(SLOT_RGBA[paint.slot], o); n++; }
+  paintEnd(); paint.dirty = true; maskChanged(); status(`แทน ${SLOT_NAME[from]} → ${SLOT_NAME[paint.slot]} (${n.toLocaleString()} จุดบนรูป)`);
+});
+const hex = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+function previewCanvas() {
+  // the mask with slot colours swapped for the chosen garage colours (as the car shows in the garage)
+  const { w, h, data } = car.mask; const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const img = new ImageData(w, h); const col = [[40, 40, 40], hex($('pv-1').value), hex($('pv-2').value), hex($('pv-3').value)];
+  for (let o = 0; o < data.length; o += 4) { const k = slotAtPx(data, o); img.data.set([...col[k], 255], o); }
+  c.getContext('2d').putImageData(img, 0, 0); return c;
+}
+['pv-on', 'pv-1', 'pv-2', 'pv-3'].forEach((id) => $(id).addEventListener('input', () => { paint.preview = $('pv-on').checked; drawTexture(); }));
+
+// Mouse on the car while painting
+gl.addEventListener('pointermove', (e) => {
+  if (!paint.on) return;
+  if (rect) { const r = gl.getBoundingClientRect(); rect.x1 = e.clientX - r.left; rect.y1 = e.clientY - r.top; showRect(); return; }
+  if (paint.stroke && paint.mode === 'brush' && (e.buttons & 1)) paintAt3D(e);
+});
+gl.addEventListener('pointerup', (e) => { if (rect) finishRect(e); if (paint.stroke) paintEnd(); });
+function paintDown(e) {
+  if (!car.mask) { status('รถคันนี้ไม่มีรูปมาสก์ (_base.png)'); return; }
+  gl.setPointerCapture(e.pointerId);
+  const r = gl.getBoundingClientRect();
+  if (paint.mode === 'box' || (paint.mode === 'select' && e.shiftKey)) { rect = { x0: e.clientX - r.left, y0: e.clientY - r.top, x1: e.clientX - r.left, y1: e.clientY - r.top }; showRect(); return; }
+  if (paint.mode === 'line') { status('เส้นแบ่งสี: เลื่อนแถบตำแหน่ง แล้วกด "ทาฝั่งนี้"'); return; }
+  if (paint.mode !== 'select' && paint.mode !== 'pick') paintStart();
+  paintAt3D(e);
+}
+
+// UI
+function chooseSlot(k) { paint.slot = k; document.querySelectorAll('#paint-slots button').forEach((x) => x.classList.toggle('on', +x.dataset.slot === k)); }
+const MODE_HELP = {
+  panel: 'คลิกบนรถ = ทาทั้งแผง (ปรับ "ความคมขอบแผง" ถ้าทาเกิน/ขาด)',
+  brush: 'คลิกค้างแล้วลากบนรถ = แปรง (ปรับขนาดแปรง)',
+  part: 'คลิกบนรถ = ทาทั้งชิ้น (ทั้งไฟล์ชิ้นนั้น)',
+  box: 'ลากกรอบบนรถ = ครอบทาสีทุกอย่างในกรอบที่หันมาหาเรา',
+  select: 'คลิก = เพิ่มแผงที่เลือก · Shift+ลาก = เลือกด้วยกรอบ · Ctrl/Alt+คลิก = เอาออก · แล้วกด "ทาที่เลือก"',
+  line: 'เลือกแนวเส้น + เลื่อนตำแหน่ง (เส้นเหลืองบนรถ) แล้วกด "ทาฝั่งนี้"',
+  pick: 'คลิกบนรถ = ดูดสีที่จุดนั้นมาใช้',
+};
+function setMode(m) {
+  paint.mode = m; $('paint-mode').value = m;
+  for (const id of ['brush', 'select', 'line', 'box', 'panel']) $(`opt-${id}`).hidden = !(m === id || (id === 'box' && m === 'select'));
+  $('mode-help').textContent = MODE_HELP[m];
+  drawPlane();
+}
 function setPaint(on) {
   paint.on = on;
   $('btn-paint').classList.toggle('accent', on);
   $('btn-paint').textContent = on ? '🖌 กำลังลงสี (กดอีกครั้งเพื่อเลิก)' : '🖌 เริ่มลงสี';
-  drawTexture();
-  status(on ? 'คลิกบนรถทางขวา = ทาทั้งแผง · ลากเมาส์ขวา = หมุนดู · ล้อเมาส์ = ซูม' : 'เลิกลงสี');
+  drawTexture(); drawPlane();
+  status(on ? `${MODE_HELP[paint.mode]} · ลากเมาส์ขวา = หมุนดู · ล้อเมาส์ = ซูม` : 'เลิกลงสี');
 }
 $('btn-paint').addEventListener('click', () => { if (!car.meshes.length) { status('เปิดรถก่อน'); return; } setPaint(!paint.on); });
-document.querySelectorAll('#paint-slots button').forEach((b) => b.addEventListener('click', () => {
-  paint.slot = +b.dataset.slot;
-  document.querySelectorAll('#paint-slots button').forEach((x) => x.classList.toggle('on', x === b));
-  if (!paint.on && car.meshes.length) setPaint(true);
-}));
-$('paint-mode').addEventListener('change', (e) => { paint.mode = e.target.value; $('paint-size-row').hidden = paint.mode !== 'brush'; });
+document.querySelectorAll('#paint-slots button').forEach((b) => b.addEventListener('click', () => { chooseSlot(+b.dataset.slot); if (!paint.on && car.meshes.length) setPaint(true); }));
+$('paint-mode').addEventListener('change', (e) => { setMode(e.target.value); if (!paint.on && car.meshes.length) setPaint(true); });
 $('paint-size').addEventListener('input', (e) => { paint.size = +e.target.value; });
+$('opt-back').addEventListener('change', (e) => { paint.backfaces = e.target.checked; });
+document.querySelectorAll('#protect input').forEach((c) => c.addEventListener('change', () => { paint.protect = new Set([...document.querySelectorAll('#protect input:checked')].map((x) => +x.value)); }));
 $('btn-paint-all').addEventListener('click', () => {
   if (!car.mask) return;
-  paintStart();
-  for (const mesh of carGroup.children) { const q = car.meshes[mesh.userData.mi].parts[mesh.userData.pi]; if (q.flags[0] === 1) continue; for (let t = 0; t < q.indices.length; t += 3) fillTri(q.uvs, q.indices[t], q.indices[t + 1], q.indices[t + 2]); }
-  paintEnd(); paint.dirty = true; maskChanged();
-  status(`ทาทั้งคันเป็น ${['ดำ', 'สี 1', 'สี 2', 'สี 3'][paint.slot]} แล้ว · ต่อไปคลิกแผงที่อยากให้เป็นสีอื่น`);
+  paintStart(); let n = 0; eachTri((mesh, p, t) => { fillT(p, t); n++; });
+  paintEnd(); paint.dirty = true; maskChanged(); said(n, 'ทาทั้งคัน');
 });
+setMode('panel');
 
 // Opened from RayCity Easy (🖌 button): the car comes by message
 if (window.opener) {
@@ -642,6 +811,8 @@ window.addEventListener('keydown', (e) => {
   else if ((e.ctrlKey || e.metaKey) && k === 'y') { e.preventDefault(); $('btn-redo').click(); }
   else if (k === 'b') $('btn-paint').click();
   else if (paint.on && ['1', '2', '3', '0'].includes(k)) document.querySelector(`#paint-slots button[data-slot="${k}"]`).click();
+  else if (paint.on && k === 'i') setMode('pick');
+  else if (paint.on && k === 'enter' && paint.mode === 'select') $('btn-sel-paint').click();
   else if (k === 'r') $('btn-rot').click();
   else if (k === '+' || k === '=') $('btn-bigger').click();
   else if (k === '-') $('btn-smaller').click();

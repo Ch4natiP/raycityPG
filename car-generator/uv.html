@@ -60,19 +60,53 @@
       <h2>2. 🖌 ลงสี (สีในโรงรถ)</h2>
       <div class="btns"><button id="btn-paint">🖌 เริ่มลงสี</button></div>
       <div id="paint-slots" class="slots">
-        <button data-slot="1" class="on"><i style="background:#f00"></i>สี 1 ตัวรถ</button>
-        <button data-slot="2"><i style="background:#0f0"></i>สี 2</button>
-        <button data-slot="3"><i style="background:#00f"></i>สี 3</button>
-        <button data-slot="0"><i style="background:#000"></i>ดำ ไม่รับสี</button>
+        <button data-slot="1" class="on"><i style="background:#f00"></i>สี 1 ตัวรถ <kbd>1</kbd></button>
+        <button data-slot="2"><i style="background:#0f0"></i>สี 2 <kbd>2</kbd></button>
+        <button data-slot="3"><i style="background:#00f"></i>สี 3 <kbd>3</kbd></button>
+        <button data-slot="0"><i style="background:#000"></i>ดำ ไม่รับสี <kbd>0</kbd></button>
       </div>
-      <div class="row"><span>วิธีทา</span><select id="paint-mode"><option value="panel">ทั้งแผง (คลิกเดียว)</option><option value="brush">แปรง (คลิกค้างแล้วลาก)</option><option value="part">ทั้งชิ้น</option></select></div>
-      <div class="row" id="paint-size-row" hidden><span>ขนาดแปรง</span><input id="paint-size" type="range" min="0.05" max="0.8" step="0.05" value="0.25"></div>
-      <div class="btns"><button id="btn-paint-all">ทาทั้งคันด้วยสีที่เลือก</button></div>
+      <div class="row"><span>เครื่องมือ</span><select id="paint-mode">
+        <option value="panel">🧩 ทั้งแผง (คลิกเดียว)</option>
+        <option value="box">⬚ ครอบทาสี (ลากกรอบ)</option>
+        <option value="select">☑ เลือกจุดก่อน แล้วค่อยทา</option>
+        <option value="line">📏 เส้นแบ่งสี</option>
+        <option value="brush">🖌 แปรง (ลาก)</option>
+        <option value="part">🚗 ทั้งชิ้น</option>
+        <option value="pick">💧 ดูดสี (I)</option>
+      </select></div>
+      <p id="mode-help" class="hint"></p>
+      <div id="opt-panel"><div class="row"><span>ความคมขอบแผง</span><input id="panel-angle" type="range" min="5" max="60" step="1" value="25" title="น้อย = หยุดที่ขอบเล็กๆ (แผงเล็ก) · มาก = ลามข้ามโค้ง (แผงใหญ่)"></div></div>
+      <div id="opt-brush" hidden><div class="row"><span>ขนาดแปรง</span><input id="paint-size" type="range" min="0.05" max="0.8" step="0.05" value="0.25"></div></div>
+      <div id="opt-box" hidden><label class="tog"><input type="checkbox" id="opt-back"> ทาด้านที่มองไม่เห็นในกรอบด้วย</label></div>
+      <div id="opt-select" hidden>
+        <div class="btns"><button id="btn-sel-paint" class="accent">✔ ทาที่เลือก (Enter)</button><button id="btn-sel-grow">＋ ขยายรอบ</button><button id="btn-sel-clear">✖ ล้าง</button></div>
+        <p id="sel-info" class="hint">เลือกไว้ 0 สามเหลี่ยม</p>
+      </div>
+      <div id="opt-line" hidden>
+        <div class="row"><span>แนวเส้น</span><select id="line-axis"><option value="2">แนวนอน (ตามความสูง)</option><option value="1">ตัดขวาง (หน้า-หลัง)</option><option value="0">แบ่งซ้าย-ขวา</option></select></div>
+        <div class="row"><span>ตำแหน่ง</span><input id="line-pos" type="range" min="0" max="100" step="0.5" value="30"></div>
+        <div class="row"><span>ทาฝั่ง</span><select id="line-side"><option value="lo">ล่าง / หน้า / ขวา ของเส้น</option><option value="hi">บน / หลัง / ซ้าย ของเส้น</option></select></div>
+        <p id="line-info" class="hint"></p>
+        <div class="btns"><button id="btn-line-paint" class="accent">✔ ทาฝั่งนี้</button></div>
+      </div>
+      <details open><summary>กันสีทับ (เทปกาว)</summary>
+        <div id="protect" class="protect">
+          <label><input type="checkbox" value="0"> ดำ</label><label><input type="checkbox" value="1"> สี 1</label><label><input type="checkbox" value="2"> สี 2</label><label><input type="checkbox" value="3"> สี 3</label>
+        </div>
+        <p class="hint">สีที่ติ๊กไว้จะไม่ถูกทาทับ เช่น ติ๊ก "ดำ" แล้วครอบทาทั้งคัน กระจัง/ยางยังดำอยู่</p>
+      </details>
+      <details><summary>ทั้งคัน / แทนสี</summary>
+        <div class="btns"><button id="btn-paint-all">ทาทั้งคันด้วยสีที่เลือก</button></div>
+        <div class="row"><span>แทนสี</span><select id="replace-from"><option value="2">สี 2</option><option value="3">สี 3</option><option value="1">สี 1</option><option value="0">ดำ</option></select><button id="btn-replace">→ สีที่เลือก</button></div>
+      </details>
+      <details><summary>ดูตัวอย่างสีในโรงรถ</summary>
+        <label class="tog"><input type="checkbox" id="pv-on"> แสดงแบบสีจริง</label>
+        <div class="row"><span>สี 1</span><input id="pv-1" type="color" value="#f2f2f2"><span>สี 2</span><input id="pv-2" type="color" value="#222222"><span>สี 3</span><input id="pv-3" type="color" value="#c81e1e"></div>
+      </details>
       <ol class="how">
-        <li>เลือกสี แล้ว<b>คลิกบนรถ</b>ทางขวา (ทาทั้งแผง) · ลากเมาส์<b>ขวา</b>หมุนดู · ล้อเมาส์ซูม</li>
-        <li>ตัวอย่างกระบะ: กด "ทาทั้งคัน" ด้วยสี 1 → เลือกสี 3 คลิกฝากระโปรง → เลือกสี 2 คลิกฝาท้าย</li>
-        <li>กระจัง / ยาง / ของตกแต่ง → เลือก ดำ แล้วคลิก</li>
-        <li>ผิด กด Ctrl+Z · เสร็จกด ⬇ ดาวน์โหลดรถ (ข้อ 5)</li>
+        <li>รถเก๋ง/กระบะ: ⬚ ครอบทาทั้งคันด้วยสี 1 (ติ๊กกัน "ดำ") → 🧩 สี 3 คลิกฝากระโปรง → สี 2 คลิกฝาท้าย</li>
+        <li>แถบล่างแบบ Escarabajo: 📏 เส้นแนวนอน ~30% ทาฝั่งล่างด้วยสี 2 (ติ๊กกัน ดำ + สี 3)</li>
+        <li>ลากเมาส์ขวา = หมุนดู · ล้อเมาส์ = ซูม · ผิดกด Ctrl+Z</li>
       </ol>
     </section>
     <section>
@@ -110,7 +144,7 @@
 
   <main id="views">
     <div id="uv-wrap"><canvas id="uv"></canvas><span class="label">UV (รูป 1024×1024)</span></div>
-    <div id="three-wrap"><canvas id="gl"></canvas><span class="label">รถ 3 มิติ (ลายตาราง = ตำแหน่ง UV)</span></div>
+    <div id="three-wrap"><canvas id="gl"></canvas><div id="rect" hidden></div><div id="views3d"><button data-v="iso">มุมเฉียง</button><button data-v="front">หน้า</button><button data-v="back">หลัง</button><button data-v="left">ซ้าย</button><button data-v="right">ขวา</button><button data-v="top">บน</button></div><span class="label">รถ 3 มิติ (ลายตาราง = ตำแหน่ง UV)</span></div>
   </main>
   <footer id="status">เปิดรถก่อน</footer>
 

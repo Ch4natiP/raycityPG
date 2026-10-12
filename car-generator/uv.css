@@ -34,3 +34,11 @@ select { background: var(--panel-2); color: var(--text); border: 1px solid var(-
 .slots button.on { outline: 2px solid #ff9f1a; }
 section.paint .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0; font-size: 12px; }
 [hidden] { display: none !important; }
+#rect { position: absolute; border: 1.5px dashed #ffd400; background: rgba(255,212,0,0.12); pointer-events: none; }
+.protect { display: flex; gap: 10px; flex-wrap: wrap; margin: 6px 0; font-size: 12px; }
+section.paint details { margin: 6px 0; }
+section.paint details summary { cursor: pointer; font-size: 12px; color: #c9cede; }
+.slots kbd { margin-left: auto; font-size: 10px; opacity: 0.6; }
+section.paint input[type=color] { width: 34px; height: 22px; padding: 0; border: 1px solid #555; background: none; }
+#views3d { position: absolute; right: 8px; top: 6px; display: flex; gap: 4px; z-index: 2; }
+#views3d button { padding: 2px 8px; font-size: 12px; }

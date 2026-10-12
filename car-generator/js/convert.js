@@ -1461,6 +1461,7 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, s
     out.set(`${name}_color.png`, await png(clear, cw2, ch2));
     out.set(`${name}_color_s.dds`, dds(clear, cw2, ch2, 'half'));
   }
+  if (asTemplate && layout !== 'template') await clearColourArt(out, name);
   await glassLikeEscarabajo(out, name);
   // dooropen as the template; mesh.xml stretched to this car.
   for (const [rel, b] of tpl) if (rel.startsWith('dooropen/')) out.set(rel, b);
@@ -2176,6 +2177,22 @@ export function unfitWheels(model) {
 // piece is projected flat (along its main direction) into that rectangle, so no glass triangle reaches
 // another region. The rectangle is Escarabajo's when nothing else uses it, else the closest free one.
 // Changes the .0m files and both textures (and their _s copies) in place.
+// The colour layer (<name>_color.png) is drawn over the car where its alpha is up. A new car's UVs don't
+// match the template's pictures there (gtv98: lamp art in the middle → patches on our panels), so it is
+// cleared except the block every game car keeps at its bottom-left (u < 0.17, v > 0.66) for the game.
+export async function clearColourArt(out, name) {
+  const b = out.get(`${name}_color.png`); if (!b) return 0;
+  const img = await decodePNG(b); const { w, h } = img; const px = new Uint8ClampedArray(img.data); let n = 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if ((x + 0.5) / w <= 0.17 && (y + 0.5) / h >= 0.66) continue;
+    const o = (y * w + x) * 4; if (px[o + 3]) n++; px.set([0, 0, 0, 0], o);
+  }
+  out.set(`${name}_color.png`, await png(px, w, h));
+  const old = out.get(`${name}_color_s.dds`);
+  const mode = old && old.length >= 128 && new DataView(old.buffer, old.byteOffset, 128).getUint32(16, true) === w ? 'full' : 'half';
+  out.set(`${name}_color_s.dds`, dds(px, w, h, mode));
+  return n;
+}
 export const ESCARABAJO_GLASS = { rect: [0, 0.25, 0.125, 0.125], colour: [1, 1, 1, 0], mask: [255, 0, 0, 255] };
 export async function glassLikeEscarabajo(out, name) {
   const maskPng = out.get(`${name}_base.png`); const colPng = out.get(`${name}_color.png`);

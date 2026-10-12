@@ -18,7 +18,11 @@ const status = (t) => { $('status').textContent = t; };
 // parsed parts with islands. LOD / variant files that were byte-identical to an edited mesh are written
 // with it.
 
-const car = { name: '', files: new Map(), meshes: [], mask: null, maskImg: null };
+const car = { name: '', files: new Map(), meshes: [], mask: null, maskImg: null, color: null, colorImg: null, colorDirty: false };
+// The colour layer (<name>_color.png, 128×64) is drawn over the car where its alpha is up: every game car
+// keeps the same block at its bottom-left (black / purple squares, a black-white ramp) for the game's own
+// use, so paint UVs must stay out of it (a car whose tail lid sat there showed checkers and stripes).
+const RESERVED = [0, 0.66, 0.17, 1]; // u0, v0, u1, v1
 let selected = new Set(); // island keys "mesh|part|island"
 const undo = []; const redo = [];
 
@@ -63,6 +67,13 @@ async function openFiles(entries) {
     c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(m.data), m.w, m.h), 0, 0);
     car.maskImg = c;
   } catch { car.mask = null; car.maskImg = null; }
+  try {
+    const c0 = await decodePNG(car.files.get(`${car.name}_color.png`));
+    car.color = c0; car.colorDirty = false;
+    const c = document.createElement('canvas'); c.width = c0.w; c.height = c0.h;
+    c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(c0.data), c0.w, c0.h), 0, 0);
+    car.colorImg = c;
+  } catch { car.color = null; car.colorImg = null; }
   selected = new Set(); undo.length = 0; redo.length = 0; paint.sel = new Map(); paint.dirty = false; box0 = null;
   $('file-sel').innerHTML = `<option value="*">ทุกไฟล์</option>${car.meshes.map((m, i) => `<option value="${i}">${m.rel}</option>`).join('')}`;
   $('car-info').textContent = `${car.name} · ${car.files.size} ไฟล์ · ${car.meshes.length} ไฟล์ที่มีรูปทรง`;
@@ -109,14 +120,28 @@ function draw2D() {
   g2.fillStyle = '#1d1d1d'; g2.fillRect(0, 0, uvc.width, uvc.height);
   const [x0, y0] = toPx(0, 0); const [x1, y1] = toPx(1, 1);
   if (car.maskImg) { g2.globalAlpha = 0.55; g2.drawImage(car.maskImg, x0, y0, x1 - x0, y1 - y0); g2.globalAlpha = 1; }
+  if (car.colorImg && $('opt-color').checked) { g2.imageSmoothingEnabled = false; g2.drawImage(car.colorImg, x0, y0, x1 - x0, y1 - y0); g2.imageSmoothingEnabled = true; }
   g2.strokeStyle = '#777'; g2.strokeRect(x0, y0, x1 - x0, y1 - y0);
+  if (car.meshes.length) {
+    const [rx0, ry0] = toPx(RESERVED[0], RESERVED[1]); const [rx1, ry1] = toPx(RESERVED[2], RESERVED[3]);
+    g2.save(); g2.strokeStyle = '#d070ff'; g2.setLineDash([6, 4]); g2.lineWidth = 2; g2.strokeRect(rx0, ry0, rx1 - rx0, ry1 - ry0); g2.restore();
+    g2.fillStyle = '#e0a0ff'; g2.font = '11px system-ui, sans-serif'; g2.fillText('โซนของเกม ห้ามวางแผงรถ', rx0 + 3, ry0 - 4);
+  }
   if (!car.meshes.length) { g2.fillStyle = '#bbb'; g2.font = '16px system-ui, sans-serif'; g2.fillText('กด 📦 เปิด .zip รถ ทางซ้ายก่อน (zip ที่ดาวน์โหลดจาก RayCity Easy)', x0 + 20, y0 + 40); g2.fillText('หรือในหน้า RayCity Easy กดปุ่ม 🖌 ลงสี / แก้ UV ต่อ', x0 + 20, y0 + 66); }
   if (guide && $('opt-guide').checked) {
     g2.strokeStyle = 'rgba(255,255,255,0.18)'; g2.lineWidth = 1; g2.beginPath();
     for (const t of guide) { const p = t.map(([u, v]) => toPx(u, v)); g2.moveTo(...p[0]); g2.lineTo(...p[1]); g2.lineTo(...p[2]); g2.closePath(); }
     g2.stroke();
   }
-  let stretched = 0;
+  let stretched = 0; let onArt = 0;
+  // triangles whose middle sits on the game's block or on a visible picture of the colour layer
+  const artAt = (u, v) => {
+    if (u >= RESERVED[0] && u <= RESERVED[2] && v >= RESERVED[1] && v <= RESERVED[3]) return true;
+    if (!car.color) return false;
+    const x = Math.min(car.color.w - 1, Math.max(0, Math.floor(u * car.color.w))); const y = Math.min(car.color.h - 1, Math.max(0, Math.floor(v * car.color.h)));
+    return car.color.data[(y * car.color.w + x) * 4 + 3] > 40;
+  };
+  const art = new Path2D();
   for (const mi of shown()) {
     const m = car.meshes[mi];
     m.parts.forEach((p, pi) => {
@@ -127,6 +152,10 @@ function draw2D() {
         const pts = [0, 1, 2].map((k) => toPx(p.uvs[p.indices[t + k] * 2], p.uvs[p.indices[t + k] * 2 + 1]));
         const key = `${mi}|${pi}|${isl.vertIsl[p.indices[t]]}`;
         const st = isStretched(p, t); if (st) stretched++;
+        if (p.flags[0] !== 1) {
+          const cu = (p.uvs[p.indices[t] * 2] + p.uvs[p.indices[t + 1] * 2] + p.uvs[p.indices[t + 2] * 2]) / 3; const cv = (p.uvs[p.indices[t] * 2 + 1] + p.uvs[p.indices[t + 1] * 2 + 1] + p.uvs[p.indices[t + 2] * 2 + 1]) / 3;
+          if (artAt(cu, cv)) { onArt++; art.moveTo(...pts[0]); art.lineTo(...pts[1]); art.lineTo(...pts[2]); art.closePath(); }
+        }
         const path = st ? bad : selected.has(key) ? sel : norm;
         path.moveTo(...pts[0]); path.lineTo(...pts[1]); path.lineTo(...pts[2]); path.closePath();
       }
@@ -136,6 +165,8 @@ function draw2D() {
       g2.fillStyle = 'rgba(255,60,80,0.5)'; g2.fill(bad); g2.strokeStyle = '#ff3c50'; g2.stroke(bad);
     });
   }
+  g2.fillStyle = 'rgba(200,90,255,0.55)'; g2.fill(art);
+  draw2D.onArt = onArt;
   return stretched;
 }
 
@@ -272,6 +303,7 @@ function drawTexture() {
   const g = texCanvas.getContext('2d');
   g.clearRect(0, 0, 1024, 1024);
   if (car.maskImg) g.drawImage(paint.preview && car.mask ? previewCanvas() : car.maskImg, 0, 0, 1024, 1024); else { g.fillStyle = '#c33'; g.fillRect(0, 0, 1024, 1024); }
+  if (car.colorImg && $('opt-color') && $('opt-color').checked) { g.imageSmoothingEnabled = false; g.drawImage(car.colorImg, 0, 0, 1024, 1024); g.imageSmoothingEnabled = true; }
   if (!paint.on && !paint.preview) {
     g.globalAlpha = 0.35; g.fillStyle = '#fff';
     for (let i = 0; i < 32; i++) for (let j = 0; j < 32; j++) if ((i + j) % 2) g.fillRect(i * 32, j * 32, 32, 32);
@@ -464,10 +496,17 @@ async function saveZip() {
     const mode = old && old.length >= 128 && new DataView(old.buffer, old.byteOffset, 128).getUint32(16, true) !== w ? 'half' : 'full';
     out.set(`${car.name}_base_s.dds`, dds(px, w, h, mode));
   }
+  if (car.colorDirty && car.color) {
+    const { w, h, data } = car.color; const px = new Uint8ClampedArray(data);
+    out.set(`${car.name}_color.png`, await png(px, w, h));
+    const old = car.files.get(`${car.name}_color_s.dds`);
+    const mode = old && old.length >= 128 && new DataView(old.buffer, old.byteOffset, 128).getUint32(16, true) === w ? 'full' : 'half';
+    out.set(`${car.name}_color_s.dds`, dds(px, w, h, mode));
+  }
   const zipFiles = [...out].sort((a, b) => a[0].localeCompare(b[0])).map(([rel, data]) => ({ path: `${car.name}/${rel}`, data }));
   const blob = await makeZip(zipFiles);
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${car.name}.zip`; a.click();
-  $('save-log').textContent = `ดาวน์โหลด ${car.name}.zip แล้ว · เขียนใหม่ ${n} ไฟล์ .0m${paint.dirty ? ' · รูปสี (_base.png + _s.dds) ใหม่' : ''}`;
+  $('save-log').textContent = `ดาวน์โหลด ${car.name}.zip แล้ว · เขียนใหม่ ${n} ไฟล์ .0m${paint.dirty ? ' · รูปสี (_base.png + _s.dds) ใหม่' : ''}${car.colorDirty ? ' · ชั้นลาย _color ใหม่' : ''}`;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -755,13 +794,30 @@ if (window.opener) {
   try { window.opener.postMessage({ type: 'rc-uv-ready' }, '*'); } catch { /* opener closed */ }
 }
 
+// 🧽 the colour layer cleared (alpha 0, so the paint shows) everywhere but the game's block
+$('btn-clear-color').addEventListener('click', () => {
+  if (!car.color) { status('รถคันนี้ไม่มี _color.png'); return; }
+  const { w, h, data } = car.color; let n = 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const u = (x + 0.5) / w; const v = (y + 0.5) / h;
+    if (u <= RESERVED[2] && v >= RESERVED[1]) continue;
+    const o = (y * w + x) * 4; if (data[o + 3]) n++; data.set([0, 0, 0, 0], o);
+  }
+  car.colorImg.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(data), w, h), 0, 0);
+  car.colorDirty = true; drawTexture(); refresh();
+  status(`ล้างลายในชั้น _color แล้ว (${n.toLocaleString()} จุด) · เหลือแค่บล็อกของเกมมุมล่างซ้าย · แผงที่ยังม่วงอยู่ = อยู่ในโซนเกม ให้ลากย้ายออก`);
+});
+$('opt-color').addEventListener('change', () => { drawTexture(); refresh(); });
+
 // ---------------------------------------------------------------------------------------------
 // UI
 
 function refresh() {
   const st = draw2D();
   let isl = 0; for (const m of car.meshes) for (const q of m.isl) isl += q.count;
-  $('stats').textContent = car.meshes.length ? `เกาะ UV ${isl.toLocaleString()} · เลือก ${selected.size}\nสามเหลี่ยมลายยืด (แดง): ${st.toLocaleString()}${st ? ' → กด 🩹' : ' ✅'}` : '';
+  const art = draw2D.onArt || 0;
+  $('stats').textContent = car.meshes.length ? `เกาะ UV ${isl.toLocaleString()} · เลือก ${selected.size}\nสามเหลี่ยมลายยืด (แดง): ${st.toLocaleString()}${st ? ' → กด 🩹' : ' ✅'}\nสามเหลี่ยมทับลาย/โซนเกม (ม่วง): ${art.toLocaleString()}${art ? ' → กด 🧽 หรือย้ายเกาะออก' : ' ✅'}` : '';
+  if ($('art-info')) $('art-info').textContent = car.meshes.length ? (art ? `⚠ มี ${art.toLocaleString()} สามเหลี่ยมที่จะมีรูปแปลกติดในเกม (สีม่วงในจอซ้าย)` : '✅ ไม่มีแผงไหนทับลาย') : '';
 }
 function loop() {
   const r = gl.getBoundingClientRect();

@@ -67,10 +67,10 @@ details summary { cursor: pointer; color: var(--muted); margin-top: 8px; }
 
     <section class="step" id="s2">
       <h2><i>2</i> เลือกตัวถัง</h2>
+      <div class="row"><span>รถต้นแบบ (ตัวถัง + UV)</span><select id="tpl-sel"><option value="escarabajo">Escarabajo (UV ต้นแบบที่ดีที่สุด · แนะนำ)</option><option value="gtv98">gtv98 (ทดสอบในเกมแล้ว)</option></select></div>
       <label class="choice"><input type="radio" name="body" value="old" checked>
         <span><b>ใช้ตัวถังที่มีอยู่</b> (แนะนำ · ชัวร์สุด)<br><small>เอาตัวถังรถที่เข้าเกมได้แล้ว ดัดให้เป็นทรงโมเดล · ไฟล์ ลาย ฟิล์ม 3 สี เหมือนรถต้นแบบทุกอย่าง · รายละเอียดน้อยกว่า</small></span></label>
       <div class="sub" id="old-opts">
-        <div class="row"><span>รถต้นแบบ (ตัวถัง + UV)</span><select id="tpl-sel"><option value="escarabajo">Escarabajo (UV ต้นแบบที่ดีที่สุด · แนะนำ)</option><option value="gtv98">gtv98 (ทดสอบในเกมแล้ว)</option></select></div>
         <div class="row"><button id="btn-tpl">📂 ใช้โฟลเดอร์/zip รถคันอื่นเป็นต้นแบบ</button><input id="file-tpl" type="file" accept=".zip" hidden></div>
       </div>
       <label class="choice"><input type="radio" name="body" value="new">

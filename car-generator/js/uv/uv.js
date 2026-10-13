@@ -20,6 +20,7 @@ const status = (t) => { $('status').textContent = t; };
 // with it.
 
 const car = { name: '', files: new Map(), meshes: [], mask: null, maskImg: null, color: null, colorImg: null, colorDirty: false };
+let decalImg = null; // a shop decal / film picture opened to line the UVs up with
 // The colour layer (<name>_color.png, 128×64) is drawn over the car where its alpha is up: every game car
 // keeps the same block at its bottom-left (black / purple squares, a black-white ramp) for the game's own
 // use, so paint UVs must stay out of it (a car whose tail lid sat there showed checkers and stripes).
@@ -135,6 +136,7 @@ function draw2D() {
   g2.fillStyle = '#1d1d1d'; g2.fillRect(0, 0, uvc.width, uvc.height);
   const [x0, y0] = toPx(0, 0); const [x1, y1] = toPx(1, 1);
   if (car.maskImg) { g2.globalAlpha = 0.55; g2.drawImage(car.maskImg, x0, y0, x1 - x0, y1 - y0); g2.globalAlpha = 1; }
+  if (decalImg && $('decal-on').checked) { g2.globalAlpha = +$('decal-alpha').value; g2.drawImage(decalImg, x0, y0, x1 - x0, y1 - y0); g2.globalAlpha = 1; }
   if (car.colorImg && $('opt-color').checked) { g2.imageSmoothingEnabled = false; g2.drawImage(car.colorImg, x0, y0, x1 - x0, y1 - y0); g2.imageSmoothingEnabled = true; }
   g2.strokeStyle = '#777'; g2.strokeRect(x0, y0, x1 - x0, y1 - y0);
   if (car.meshes.length) {
@@ -349,6 +351,7 @@ function drawTexture() {
   g.clearRect(0, 0, 1024, 1024);
   if (car.maskImg) g.drawImage(paint.preview && car.mask ? previewCanvas() : car.maskImg, 0, 0, 1024, 1024); else { g.fillStyle = '#c33'; g.fillRect(0, 0, 1024, 1024); }
   if (car.colorImg && $('opt-color') && $('opt-color').checked) { g.imageSmoothingEnabled = false; g.drawImage(car.colorImg, 0, 0, 1024, 1024); g.imageSmoothingEnabled = true; }
+  if (decalImg && $('decal-on') && $('decal-on').checked) g.drawImage(decalImg, 0, 0, 1024, 1024);
   if (!paint.on && !paint.preview) {
     g.globalAlpha = 0.35; g.fillStyle = '#fff';
     for (let i = 0; i < 32; i++) for (let j = 0; j < 32; j++) if ((i + j) % 2) g.fillRect(i * 32, j * 32, 32, 32);
@@ -886,6 +889,44 @@ $('btn-clear-color').addEventListener('click', () => {
   status(`ล้างลายในชั้น _color แล้ว (${n.toLocaleString()} จุด) · เหลือแค่บล็อกของเกมมุมล่างซ้าย · แผงที่ยังม่วงอยู่ = อยู่ในโซนเกม ให้ลากย้ายออก`);
 });
 $('opt-color').addEventListener('change', () => { drawTexture(); refresh(); });
+// 🖼 A shop decal / film picture (png, jpg or the game's .dds) shown over the sheet and on the car, so the
+// panels can be moved where the picture expects them.
+function ddsToCanvas(b) {
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  const h = dv.getUint32(12, true); const w = dv.getUint32(16, true); const four = String.fromCharCode(b[84], b[85], b[86], b[87]);
+  const out = new Uint8ClampedArray(w * h * 4); const bw = Math.ceil(w / 4); const bh = Math.ceil(h / 4);
+  const bs = four === 'DXT1' ? 8 : 16; let o = 128;
+  const c565 = (c) => [((c >> 11) & 31) * 255 / 31, ((c >> 5) & 63) * 255 / 63, (c & 31) * 255 / 31];
+  if (!['DXT1', 'DXT3', 'DXT5'].includes(four)) throw new Error(`ไม่รองรับ ${four}`);
+  for (let by = 0; by < bh; by++) for (let bx = 0; bx < bw; bx++, o += bs) {
+    const co = o + bs - 8; const c0 = dv.getUint16(co, true); const c1 = dv.getUint16(co + 2, true); const idx = dv.getUint32(co + 4, true);
+    const a = c565(c0); const c = c565(c1);
+    const cols = c0 > c1 || four !== 'DXT1' ? [a, c, a.map((x, i) => (2 * x + c[i]) / 3), a.map((x, i) => (x + 2 * c[i]) / 3)] : [a, c, a.map((x, i) => (x + c[i]) / 2), [0, 0, 0]];
+    let al = null;
+    if (four === 'DXT5') { const a0 = b[o]; const a1 = b[o + 1]; const tab = [a0, a1]; for (let k = 2; k < 8; k++) tab.push(a0 > a1 ? ((8 - k) * a0 + (k - 1) * a1) / 7 : k < 6 ? ((6 - k) * a0 + (k - 1) * a1) / 5 : k === 6 ? 0 : 255); let bits = 0n; for (let k = 0; k < 6; k++) bits |= BigInt(b[o + 2 + k]) << BigInt(8 * k); al = []; for (let k = 0; k < 16; k++) al.push(tab[Number((bits >> BigInt(3 * k)) & 7n)]); }
+    for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) {
+      const px = bx * 4 + x; const py = by * 4 + y; if (px >= w || py >= h) continue;
+      const k = y * 4 + x; const col = cols[(idx >> (2 * k)) & 3];
+      let alpha = 255;
+      if (four === 'DXT3') alpha = ((b[o + (k >> 1)] >> (4 * (k & 1))) & 15) * 17;
+      else if (four === 'DXT5') alpha = al[k];
+      else if (c0 <= c1 && ((idx >> (2 * k)) & 3) === 3) alpha = 0;
+      out.set([col[0], col[1], col[2], alpha], (py * w + px) * 4);
+    }
+  }
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h; cv.getContext('2d').putImageData(new ImageData(out, w, h), 0, 0); return cv;
+}
+$('btn-decal').addEventListener('click', () => $('file-decal').click());
+$('file-decal').addEventListener('change', async (e) => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  try {
+    if (/\.dds$/i.test(f.name)) decalImg = ddsToCanvas(new Uint8Array(await f.arrayBuffer()));
+    else { const bm = await createImageBitmap(f); const cv = document.createElement('canvas'); cv.width = bm.width; cv.height = bm.height; cv.getContext('2d').drawImage(bm, 0, 0); decalImg = cv; }
+    $('decal-on').checked = true; drawTexture(); refresh();
+    status(`เปิดรูปลาย ${f.name} (${decalImg.width}×${decalImg.height}) · ทับบนรูปซ้ายและบนรถ · ลากเกาะให้แผงตรงกับลาย`);
+  } catch (err) { status(`เปิดรูปลายไม่ได้: ${err.message}`); }
+});
+['decal-on', 'decal-alpha'].forEach((id) => $(id).addEventListener('input', () => { drawTexture(); refresh(); }));
 // Which way the car faces on the sheet: game cars have the front towards the right (u falls as y, the
 // length towards the back, grows: Escarabajo / gtv98 u ≈ −0.18·y). A sheet the other way round gets the
 // shop decals back to front. Slope of u over y on the side panels; > 0 = facing left.

@@ -110,6 +110,12 @@
       </ol>
     </section>
     <section class="paint">
+      <h2>🖼 เทียบลาย / ฟิล์มในร้าน</h2>
+      <div class="btns"><button id="btn-decal">🖼 เปิดรูปลาย (.dds .png .jpg)</button><input id="file-decal" type="file" accept=".dds,.png,.jpg,.jpeg,.webp" hidden></div>
+      <div class="row"><label class="tog"><input type="checkbox" id="decal-on"> แสดงลาย</label><span>ความเข้ม</span><input id="decal-alpha" type="range" min="0.1" max="1" step="0.05" value="0.6"></div>
+      <p class="hint">เอารูปลาย/ฟิล์มจากไฟล์เกมมาเปิด จะเห็นลายทับบนรูปซ้ายและบนรถ · ลากเกาะ UV ให้แผงตรงกับลาย (หน้ารถต้องหันขวา)</p>
+    </section>
+    <section class="paint">
       <h2>🪟 กระจก</h2>
       <div class="row"><span>แบบ</span><select id="glass-look"><option value="paint">แบบ Escarabajo</option><option value="mine">แบบรถขาวทั้งคันที่ทำเอง (canyon)</option></select></div>
       <div class="btns"><button id="btn-glass" class="accent">🪟 ตั้งกระจก</button></div>

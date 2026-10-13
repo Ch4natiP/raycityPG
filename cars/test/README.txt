@@ -239,3 +239,11 @@ came out in the body colour (the mask is red under the glass UVs, so the glass t
                          glass setting (clear / clearer / paint colour); builds now default to the clear one.
 The owner: the glass colour is to be Escarabajo's → builds back to Escarabajo's values (mask red, colour layer
 1,1,1 alpha 0); RayCity UV's 🪟 setting lists "แบบ Escarabajo" first (58's clear look kept as an experiment).
+
+Video 2026-10-13 15:54 (the owner's canyon): colours and glass good ("สวยมาก"); a shop decal lands wrong.
+Game cars draw the sides with the front of the car to the right (Escarabajo / gtv98 sides: u ≈ −0.18·y + 0.55);
+the owner's canyon has u = +0.21·y (front to the left), so decals come out back to front.
+59_your_canyon_front_right.zip  the owner's canyon with the whole layout mirrored left-right inside its own box
+                         (mask and colour layer mirrored with it, glass untouched): front to the right.
+RayCity UV: shows which way the car faces and a ⇋ button; the glass setting has only Escarabajo's and the
+owner's (mask red, colour 0,0,0,0); new-body charts now put the front to the right too.

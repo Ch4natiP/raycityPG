@@ -886,11 +886,56 @@ $('btn-clear-color').addEventListener('click', () => {
   status(`ล้างลายในชั้น _color แล้ว (${n.toLocaleString()} จุด) · เหลือแค่บล็อกของเกมมุมล่างซ้าย · แผงที่ยังม่วงอยู่ = อยู่ในโซนเกม ให้ลากย้ายออก`);
 });
 $('opt-color').addEventListener('change', () => { drawTexture(); refresh(); });
+// Which way the car faces on the sheet: game cars have the front towards the right (u falls as y, the
+// length towards the back, grows: Escarabajo / gtv98 u ≈ −0.18·y). A sheet the other way round gets the
+// shop decals back to front. Slope of u over y on the side panels; > 0 = facing left.
+function facing() {
+  let n = 0; let sy = 0; let su = 0; let syy = 0; let syu = 0;
+  for (const m of car.meshes) for (const p of m.parts) {
+    if (p.flags[0] !== 0 || p.positions.length / 3 <= 8) continue;
+    const P = p.positions; const U = p.uvs; const I = p.indices;
+    for (let t = 0; t < I.length; t += 3) {
+      const [a, b, c] = [I[t], I[t + 1], I[t + 2]];
+      const e1 = [P[b * 3] - P[a * 3], P[b * 3 + 1] - P[a * 3 + 1], P[b * 3 + 2] - P[a * 3 + 2]]; const e2 = [P[c * 3] - P[a * 3], P[c * 3 + 1] - P[a * 3 + 1], P[c * 3 + 2] - P[a * 3 + 2]];
+      const nx = e1[1] * e2[2] - e1[2] * e2[1]; const ny = e1[2] * e2[0] - e1[0] * e2[2]; const nz = e1[0] * e2[1] - e1[1] * e2[0];
+      const L = Math.hypot(nx, ny, nz); if (L < 1e-12 || Math.abs(nx) / L < 0.85) continue;
+      if (Math.abs((U[b * 2] - U[a * 2]) * (U[c * 2 + 1] - U[a * 2 + 1]) - (U[c * 2] - U[a * 2]) * (U[b * 2 + 1] - U[a * 2 + 1])) < 1e-9) continue;
+      for (const i of [a, b, c]) { const y = P[i * 3 + 1]; const u = U[i * 2]; n++; sy += y; su += u; syy += y * y; syu += y * u; }
+    }
+  }
+  if (n < 30) return 0;
+  return (syu - (sy * su) / n) / Math.max(1e-9, syy - (sy * sy) / n);
+}
+// ⇋ the whole layout mirrored left-right inside its own box (front to the right); mask and colour layer with it
+$('btn-flip-layout').addEventListener('click', () => {
+  if (!car.meshes.length) return;
+  let u0 = Infinity; let u1 = -Infinity;
+  for (const m of car.meshes) for (const p of m.parts) for (let i = 0; i < p.uvs.length; i += 2) { u0 = Math.min(u0, p.uvs[i]); u1 = Math.max(u1, p.uvs[i]); }
+  undo.push(comboSnap()); if (undo.length > 60) undo.shift(); redo.length = 0;
+  for (const m of car.meshes) { for (const p of m.parts) for (let i = 0; i < p.uvs.length; i += 2) p.uvs[i] = u0 + u1 - p.uvs[i]; m.dirty = true; }
+  const mirror = (img, keepBlock) => {
+    const { w, h, data } = img; const src = data.slice();
+    const x0 = Math.max(0, Math.floor(u0 * w)); const x1 = Math.min(w - 1, Math.ceil(u1 * w) - 1);
+    for (let y = 0; y < h; y++) for (let x = x0; x <= x1; x++) {
+      const v = (y + 0.5) / h; const sx = x0 + x1 - x;
+      const inBlock = (xx) => keepBlock && (xx + 0.5) / w <= RESERVED[2] && v >= RESERVED[1];
+      if (inBlock(x)) continue;
+      const o = (y * w + x) * 4;
+      if (inBlock(sx)) { data.set([0, 0, 0, 0], o); continue; }
+      data.set(src.subarray((y * w + sx) * 4, (y * w + sx) * 4 + 4), o);
+    }
+  };
+  if (car.mask) { mirror(car.mask, false); paint.dirty = true; }
+  if (car.color) { mirror(car.color, true); car.colorDirty = true; car.colorImg.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(car.color.data), car.color.w, car.color.h), 0, 0); }
+  if (car.mask) maskChanged();
+  update3DUVs(); refresh();
+  status(`กลับลายเส้นซ้าย-ขวาแล้ว (สีกลับตาม) · ${facing() < 0 ? 'หน้ารถหันขวาแบบรถในเกม ✅' : 'หน้ารถยังหันซ้าย'} · กด ⬇ ดาวน์โหลด`);
+});
 // 🪟 Glass look: what the paint mask and the colour layer hold under the glass pieces (kind 1).
 //   clear: mask black (no garage colour) + colour layer dark with some alpha (tinted, see-through)
 //   clearer: mask black + colour layer alpha 0 (pack 48: fully clear)
 //   paint: mask red + colour layer near black alpha 0 (Escarabajo's values: the glass takes colour 1)
-const GLASS_LOOK = { clear: [[0, 0, 0, 255], [16, 20, 24, 96]], clearer: [[0, 0, 0, 255], [0, 0, 0, 0]], paint: [[255, 0, 0, 255], [1, 1, 1, 0]] }; // paint = Escarabajo's values
+const GLASS_LOOK = { paint: [[255, 0, 0, 255], [1, 1, 1, 0]], mine: [[255, 0, 0, 255], [0, 0, 0, 0]] }; // paint = Escarabajo's values; mine = the owner's white car
 $('btn-glass').addEventListener('click', () => {
   if (!car.mask) return;
   const [mrgba, crgba] = GLASS_LOOK[$('glass-look').value];
@@ -989,6 +1034,7 @@ function refresh() {
     const any = cnt.R + cnt.G + cnt.B + cnt.K;
     $('spot-info').textContent = !car.meshes.length ? '' : any ? `ชิ้นที่ทั้งชิ้นใช้จุดสีเดียว: แดง ${cnt.R.toLocaleString()} · เขียว ${cnt.G.toLocaleString()} · น้ำเงิน ${cnt.B.toLocaleString()} · ดำ ${cnt.K.toLocaleString()} สามเหลี่ยม — คลิกที่จุดในจอซ้าย = ไฮไลต์ชิ้นนั้นบนรถ (สีส้ม)` : 'ไม่มีชิ้นไหนใช้จุดสี (จุดที่เห็นบนรูปไม่มีชิ้นไหนใช้ ลบได้)';
   }
+  if ($('face-info')) { const f = car.meshes.length ? facing() : 0; $('face-info').textContent = !car.meshes.length ? '' : f > 0 ? '⚠ หน้ารถบนรูปหันซ้าย (รถในเกมหันขวา) → ลายในร้านจะกลับหน้า-หลัง · กด ⇋' : f < 0 ? '✅ หน้ารถบนรูปหันขวาแบบรถในเกม' : ''; }
   if ($('art-info')) $('art-info').textContent = car.meshes.length ? (art ? `⚠ มี ${art.toLocaleString()} สามเหลี่ยมที่จะมีรูปแปลกติดในเกม (สีม่วงในจอซ้าย)` : '✅ ไม่มีแผงไหนทับลาย') : '';
 }
 function loop() {

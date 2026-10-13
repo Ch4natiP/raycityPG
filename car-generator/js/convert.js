@@ -1234,7 +1234,9 @@ function chartsLayout(lod, { slots, cw = 128, ch = 64, size = 1024 }) {
   for (const parts of Object.values(lod)) for (const p of parts) for (let i = 0; i < p.positions.length; i += 3) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p.positions[i + k]); hi[k] = Math.max(hi[k], p.positions[i + k]); }
   const ext = [hi[0] - lo[0] || 1, hi[1] - lo[1] || 1, hi[2] - lo[2] || 1];
   // per side: which axes go to u / v (RayCity: x left, y back, z up; v grows downwards on the sheet)
-  const AX = { left: [1, 2, false], right: [1, 2, true], top: [1, 0, false], front: [0, 2, false], rear: [0, 2, true] };
+  // the front of the car towards +u (right), like every game car's sheet (Escarabajo / gtv98: u ≈ −0.18·y), so
+  // shop decals land the right way round
+  const AX = { left: [1, 2, true], right: [1, 2, true], top: [1, 0, true], front: [0, 2, false], rear: [0, 2, true] };
   const scaleOf = {};
   for (const [side, [a, b]] of Object.entries(AX)) { const r = CHART_REGIONS[side]; scaleOf[side] = Math.min((r[2] - r[0]) / ext[a], (r[3] - r[1]) / ext[b]); }
   const projUV = (side, q, sc = scaleOf[side]) => {

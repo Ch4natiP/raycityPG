@@ -80,6 +80,7 @@ async function openFiles(entries) {
     car.meshes.push({ rel, om, parts, orig: b, isl: parts.map(islandsOf), dirty: false });
   }
   await loadLampPics();
+  if (!escPic) { try { const tpl = await escarabajoTemplate(); const b = tpl && tpl.get('rearlight/escarabajo_rearlight_base.png'); if (b) escPic = flipRows(await decodePNG(b)); } catch { /* no template */ } }
   try {
     const m = await decodePNG(car.files.get(`${car.name}_base.png`));
     car.mask = m;
@@ -691,15 +692,22 @@ const LAMP_RGB = { 2: [255, 250, 235, 255], 3: [210, 18, 18, 255], 4: [255, 150,
 // The folder picture (128×128 like Escarabajo's) holds one cell per colour; ↩ puts a panel back into the
 // bumper's paint (car colours).
 const lamp = { mode: null, pics: new Map(), tex: new Map() };
+let escPic = null; // Escarabajo's rearlight picture, UV order
 const LAMP_PAINT = { head: [238, 238, 228, 255], tail: [205, 12, 12, 255], turn: [255, 140, 0, 255], trim: [14, 14, 14, 255] };
 // one 16 × 16 px cell per colour in the folder picture's top row (u k/8 … (k+1)/8, v 0 … 1/8): a lamp panel's
 // triangles point at the middle of their colour's cell, so every triangle is fully that colour at any size
 const LAMP_CELL = { head: 0, tail: 1, turn: 2, trim: 3 };
-const cellUV = (k) => [(LAMP_CELL[k] + 0.5) / 8, 0.5 / 8];
+// Part pictures are read upside down by the game (row = (1 − v) · height): Escarabajo's / gtv98's lamps and
+// panels point at v 0.75-1, their art sits in the top rows. The page keeps pictures in UV order (row = v) and
+// flips them when reading and writing the files.
+const flipRows = (q) => { const { w, h, data } = q; const o = new Uint8ClampedArray(data.length); for (let y = 0; y < h; y++) o.set(data.subarray(y * w * 4, (y + 1) * w * 4), (h - 1 - y) * w * 4); return { ...q, data: o }; };
+// Escarabajo's rearlight picture (escarabajo_rearlight_base): solid red lamp and black housing texels (UV order)
+const ESC_CELL = { head: [0.191, 0.465], tail: [0.191, 0.465], turn: [0.191, 0.465], trim: [0.113, 0.609] };
+const cellUV = (k, dir) => (dir && lamp.pics.get(dir) && lamp.pics.get(dir).esc ? ESC_CELL[k] : [(LAMP_CELL[k] + 0.5) / 8, 0.5 / 8]);
 function paintCells(q) { for (const [k, i] of Object.entries(LAMP_CELL)) for (let y = 0; y < Math.ceil(q.h / 8); y++) for (let x = Math.floor((i * q.w) / 8); x < Math.ceil(((i + 1) * q.w) / 8); x++) q.data.set(LAMP_PAINT[k], (y * q.w + x) * 4); }
 // triangles tris of p get colour k: own points (so neighbours of another colour keep theirs) on the cell
-function colourTris(p, tris, k) {
-  const [cu, cv] = cellUV(k); const n0 = p.positions.length / 3;
+function colourTris(p, tris, k, dir) {
+  const [cu, cv] = cellUV(k, dir); const n0 = p.positions.length / 3;
   const P = new Float32Array((n0 + tris.length * 3) * 3); P.set(p.positions); const N = new Float32Array(P.length); N.set(p.normals); const U = new Float32Array((n0 + tris.length * 3) * 2); U.set(p.uvs);
   const I = Uint32Array.from(p.indices); let n = n0;
   for (const t of tris) for (let j = 0; j < 3; j++) { const i = I[t * 3 + j]; P.set(p.positions.subarray(i * 3, i * 3 + 3), n * 3); N.set(p.normals.subarray(i * 3, i * 3 + 3), n * 3); U[n * 2] = cu; U[n * 2 + 1] = cv; I[t * 3 + j] = n; n++; }
@@ -712,7 +720,7 @@ function colourTris(p, tris, k) {
 const lampFolder = (rel) => { const d = rel.includes('/') ? rel.split('/')[0] : ''; return d === 'headlight' || d === 'rearlight' ? d : null; };
 function lampPic(dir) {
   if (!lamp.pics.has(dir)) lamp.pics.set(dir, { w: 128, h: 128, data: new Uint8ClampedArray(128 * 128 * 4) });
-  const q = lamp.pics.get(dir); paintCells(q);
+  const q = lamp.pics.get(dir); if (!q.esc) paintCells(q);
   if (!lamp.tex.has(dir)) { const cv = document.createElement('canvas'); cv.width = q.w; cv.height = q.h; const t = new THREE.CanvasTexture(cv); t.flipY = false; t.colorSpace = THREE.SRGBColorSpace; lamp.tex.set(dir, t); }
   return q;
 }
@@ -724,7 +732,12 @@ async function loadLampPics() {
     const list = car.files.has(`${dir}/list.xml`) ? decodeSpec(car.files.get(`${dir}/list.xml`)) : '';
     const tex = (list.match(/mesh='default'[^>]*tex='([^']*)'/) || [])[1];
     const b = tex && car.files.get(`${dir}/${tex}.png`); if (!b) continue;
-    try { const q = await decodePNG(b); lamp.pics.set(dir, { w: q.w, h: q.h, data: new Uint8ClampedArray(q.data) }); lampPic(dir); lampPicShow(dir); } catch { /* unreadable */ }
+    try {
+      const q = flipRows(await decodePNG(b)); const at = (u, v) => q.data.subarray((Math.floor(v * q.h) * q.w + Math.floor(u * q.w)) * 4, (Math.floor(v * q.h) * q.w + Math.floor(u * q.w)) * 4 + 4);
+      const cell = at(...[(LAMP_CELL.tail + 0.5) / 8, 0.5 / 8]); const ours = cell[0] === LAMP_PAINT.tail[0] && cell[1] === LAMP_PAINT.tail[1] && cell[3] === 255;
+      const r = at(...ESC_CELL.tail); const esc = !ours && r[0] > 180 && r[1] < 80 && r[3] > 200;
+      lamp.pics.set(dir, { w: q.w, h: q.h, data: new Uint8ClampedArray(q.data), esc }); lampPic(dir); lampPicShow(dir);
+    } catch { /* unreadable */ }
   }
 }
 function rasterUV(q, U, a, b, c, col) {
@@ -784,7 +797,7 @@ function lampClick(e) {
       if (!to) { status(`ไม่มีไฟล์ ${dir}/default_2.0m ในรถคันนี้`); return; }
       tt = moveTris(p, tris, to.p); tp = to.p; m.dirty = true; to.m.dirty = true;
     }
-    lampPic(dir); colourTris(tp, tt, lamp.mode); lampPicShow(dir);
+    lampPic(dir); colourTris(tp, tt, lamp.mode, dir); lampPicShow(dir);
     status(`${{ head: 'ไฟหน้า', tail: 'ไฟท้าย', turn: 'ไฟเลี้ยว', trim: 'กรอบไฟ' }[lamp.mode]}: ${tris.length} สามเหลี่ยม → ${dir} (รูปของโฟลเดอร์) · คลิกแผงต่อได้`);
   }
   for (const x of car.meshes) x.isl = x.parts.map(islandsOf);
@@ -818,13 +831,15 @@ $('btn-tail-auto').addEventListener('click', () => {
     for (let t = 0; t < I.length / 3; t++) { const c = [0, 1, 2].map((k) => (P[I[t * 3] * 3 + k] + P[I[t * 3 + 1] * 3 + k] + P[I[t * 3 + 2] * 3 + k]) / 3); const ny = N[I[t * 3] * 3 + 1] * outwardSign(p); if (ny > 0.3 && near(c)) take.push(t); }
     if (take.length) { moveTris(p, take, dst.p); m.dirty = true; dst.m.dirty = true; }
   } }
+  // the picture: Escarabajo's own rearlight picture (its lamps light up in the game), from the built-in template
+  if (!(lamp.pics.get('rearlight') || {}).esc && escPic) lamp.pics.set('rearlight', { ...escPic, data: new Uint8ClampedArray(escPic.data), esc: true });
   const q = lampPic('rearlight'); const p = dst.p; const P = p.positions; const I = p.indices; const by = { tail: [], turn: [], trim: [] };
   for (let t = 0; t < I.length / 3; t++) {
     const c = [0, 1, 2].map((k) => (P[I[t * 3] * 3 + k] + P[I[t * 3 + 1] * 3 + k] + P[I[t * 3 + 2] * 3 + k]) / 3); const e = near(c);
     by[e ? (e.k === 4 ? 'turn' : 'tail') : 'trim'].push(t);
   }
   red = by.tail.length + by.turn.length; const nTris = I.length / 3;
-  for (const k of ['tail', 'turn', 'trim']) if (by[k].length) colourTris(p, by[k], k);
+  for (const k of ['tail', 'turn', 'trim']) if (by[k].length) colourTris(p, by[k], k, 'rearlight');
   // the lamps themselves like Escarabajo's: spread (seen from behind) over a clear patch of the picture
   // (brake u 0.272-0.373, v 0.846-0.896; indicator 0.386-0.422, 0.858-0.894) — clear when off, the game
   // lights them; a lamp on one opaque spot does not light up
@@ -835,7 +850,7 @@ $('btn-tail-auto').addEventListener('click', () => {
     const U = new Float32Array(l.uvs.length);
     for (let i = 0; i < L.length / 3; i++) { U[i * 2] = R[0] + (R[2] - R[0]) * ((x1 - L[i * 3]) / ((x1 - x0) || 1)); U[i * 2 + 1] = R[1] + (R[3] - R[1]) * ((z1 - L[i * 3 + 2]) / ((z1 - z0) || 1)); }
     l.uvs = U; rl.dirty = true;
-    for (let y = Math.floor(R[1] * q.h); y < Math.ceil(R[3] * q.h); y++) for (let x = Math.floor(R[0] * q.w); x < Math.ceil(R[2] * q.w); x++) q.data.set([0, 0, 0, 0], (y * q.w + x) * 4);
+    if (!q.esc) for (let y = Math.floor(R[1] * q.h); y < Math.ceil(R[3] * q.h); y++) for (let x = Math.floor(R[0] * q.w); x < Math.ceil(R[2] * q.w); x++) q.data.set([0, 0, 0, 0], (y * q.w + x) * 4); // (Escarabajo's picture keeps its lamp glow there)
   }
   lampPicShow('rearlight');
   for (const x of car.meshes) x.isl = x.parts.map(islandsOf);
@@ -862,14 +877,15 @@ async function lampPictures(out) {
       let pic = { w: 128, h: 128, data: new Uint8ClampedArray(128 * 128 * 4) };
       const had = out.get(`${dir}/${tex}.png`);
       if (lamp.pics.has(dir)) { const q = lamp.pics.get(dir); pic = { w: q.w, h: q.h, data: new Uint8ClampedArray(q.data) }; } // the page's (painted) picture
-      else if (had) { try { pic = await decodePNG(had); } catch { /* unreadable: a new one */ } }
+      else if (had) { try { pic = flipRows(await decodePNG(had)); } catch { /* unreadable: a new one */ } }
       const { w, h, data } = pic;
       for (const [u, v, c] of spots.values()) {
         const bx = Math.floor(Math.min(w - 1, u * w) / 4) * 4; const by = Math.floor(Math.min(h - 1, v * h) / 4) * 4;
         for (let y = by; y < by + 4 && y < h; y++) for (let x = bx; x < bx + 4 && x < w; x++) data.set(c, (y * w + x) * 4);
       }
-      out.set(`${dir}/${tex}.png`, await png(data, w, h));
-      out.set(`${dir}/${tex}_s.dds`, dds(data, w, h, 'full')); // (as gtv98's, which canyon's folders come from: full size, no mipmaps)
+      const fl = flipRows({ w, h, data }).data; // (upside down in the file, as the game reads it)
+      out.set(`${dir}/${tex}.png`, await png(fl, w, h));
+      out.set(`${dir}/${tex}_s.dds`, dds(fl, w, h, 'full')); // (as gtv98's, which canyon's folders come from: full size, no mipmaps)
       n++;
     }
   }

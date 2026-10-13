@@ -352,3 +352,13 @@ Lamps: Escarabajo's default car uses rearlight/base with escarabajo_rearlight_ba
 v 0.846-0.896; indicator 0.386-0.422, 0.858-0.894), not one opaque spot. 🔴 now does the same.
 71_your_canyon_no_decal_on_bumpers_lamps_like_escarabajo.zip  pack 70 + 🎯 (156 front / rear pieces moved,
 93 %) + 🔴 (lamps over Escarabajo's patches, kept clear).
+Video 2026-10-13 18:39 (pack 71): lamps still never light; an earlier pack showed white in the lamp frames on
+reverse. Found: part pictures are read upside down — row = (1 − v) · height. Escarabajo's and gtv98's panels
+and lamps all point at v 0.75-1 and their art (dark housing band, dim lamp glows) sits in the top rows; with
+v read straight they would point at empty picture. Our colour cells (top rows, v < 0.125) were read from the
+bottom rows (empty), and the lamps from rows that were clear. RayCity UV now flips lamp pictures when reading
+and writing, and 🔴 uses Escarabajo's own rearlight picture (escarabajo_rearlight_base, from the built-in
+template): panel near the lamps → its solid red lamp texel (0.191, 0.465), the rest → its black housing
+(0.113, 0.609), lamps over its brake / indicator glow patches.
+72_your_canyon_escarabajo_tail_lamp_picture.zip  pack 71 with rearlight's picture = Escarabajo's
+escarabajo_rearlight_base .png / _s.dds byte for byte, panel UVs on its red / black.

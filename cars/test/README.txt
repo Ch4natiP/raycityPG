@@ -282,3 +282,6 @@ Video 2026-10-13 16:59 (pack 63): decals right, but the glass red — 59's glass
 (0.81,0.05 / 0.76,0.05 / 0.60,0.61) now lie under the decal sheet, so the film painted them.
 64_your_canyon_63_glass_fixed.zip: those spots moved into Escarabajo's glass corner (u < 0.125, v 0.25-0.375,
 mask red, nothing else there): glass 0.06,0.31, brake 0.06,0.35, indicator 0.09,0.35. Everything else = 63.
+Video 2026-10-13 17:06 (pack 64 in game): glass clear, decals straight, white car clean. The owner: pack 64 is
+the main one from now on; pack 59 is kept for now. RayCity UV's 🎯 button (move the car's own islands onto the
+decal sheet) does what made pack 64 from pack 59, for any car: run on 59 it gives the same sheet, colours and glass.

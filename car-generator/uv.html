@@ -137,8 +137,12 @@
       <h2>🚗 ตัวรถ · ไฟ</h2>
       <div class="btns"><button id="btn-lamp-panel" class="accent">🧩 แผงไฟท้าย/ไฟหน้า รับสีรถ (ไม่ดำ)</button></div>
       <p class="hint">ชิ้นสีในโฟลเดอร์ rearlight / headlight เกมวาดด้วยรูปของโฟลเดอร์ (ไม่รับสีรถ ไม่มีรูป = ดำ) · ปุ่มนี้ย้ายแผงไปรวมกับกันชนหลัง/หน้า ให้รับสี 3 สีเหมือนตัวรถ · ดวงไฟ (ไฟเบรก ไฟเลี้ยว) อยู่ที่เดิม</p>
+      <div class="btns" id="lamp-modes"><button data-lamp="head">💡 ไฟหน้า</button><button data-lamp="tail">🔴 ไฟท้าย</button><button data-lamp="turn">🟠 ไฟเลี้ยว</button><button data-lamp="trim">⬛ กรอบไฟ</button><button data-lamp="paint">↩ คืนเป็นสีรถ</button></div>
+      <div class="btns"><button id="btn-tail-auto" class="accent">🔴 ไฟท้ายอัตโนมัติ (แดงรอบดวงไฟ · แผงท้ายดำ)</button></div>
+      <p class="hint">💡 ทำไฟแบบ Escarabajo: กดปุ่มสีไฟ แล้วคลิกแผงบนรถ (ทั้งแผง ตาม "ความคมขอบแผง" ในส่วนลงสี) · แผงนั้นย้ายไปโฟลเดอร์ไฟ (headlight / rearlight) แล้วเกมวาดด้วยรูปของโฟลเดอร์ (ไม่รับสีรถ) · กดปุ่มเดิมอีกครั้งเพื่อเลิก</p>
       <div class="row"><span>ลดความสูงรถ</span><input id="ride-drop" type="range" min="-0.05" max="0.12" step="0.005" value="0"><b id="ride-drop-v">0 ซม.</b></div>
-      <p class="hint">ตัวถังทั้งคัน (ทุกไฟล์ .0m) เลื่อนลง ล้ออยู่ที่เดิม ซุ้มล้อเลยชิดล้อขึ้น · มีผลตอนกด ⬇ ดาวน์โหลด</p>
+      <div class="row"><span>เลื่อนตัวรถ หน้า/หลัง</span><input id="ride-shift" type="range" min="-0.15" max="0.15" step="0.005" value="0"><b id="ride-shift-v">0 ซม.</b></div>
+      <p class="hint">ตัวถังทั้งคัน (ทุกไฟล์ .0m) เลื่อนลง/เลื่อนไปหน้า-หลัง ล้ออยู่ที่เดิม: ลดลง = ซุ้มล้อชิดล้อ · ล้อหน้าติดขอบหน้าซุ้ม = เลื่อนไปหน้า · มีผลตอนกด ⬇ ดาวน์โหลด</p>
       <p id="body-info" class="hint"></p>
     </section>
     <section class="paint">

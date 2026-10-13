@@ -62,7 +62,7 @@ async function openFiles(entries) {
     const b = car.files.get(rel);
     const om = parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
     const parts = omParts(om);
-    if (!parts.some((q) => q.positions.length / 3 > 8) && !/^(front|rear)bumper\//.test(rel)) continue; // (a bumper of only a plate holder stays: the plate goes there)
+    if (!parts.some((q) => q.positions.length / 3 > 8) && !/^(front|rear)bumper\/|^(head|rear)light\//.test(rel)) continue; // (bumpers / lamps of only a holder stay: plates and lamps go there)
     // a part with its own texture (list.xml tex, e.g. the tail lamps' red / amber bands) doesn't use the
     // body's paint mask: left off the sheet and not painted
     const dir = rel.includes('/') ? rel.split('/')[0] : '';
@@ -79,6 +79,7 @@ async function openFiles(entries) {
     }
     car.meshes.push({ rel, om, parts, orig: b, isl: parts.map(islandsOf), dirty: false });
   }
+  await loadLampPics();
   try {
     const m = await decodePNG(car.files.get(`${car.name}_base.png`));
     car.mask = m;
@@ -433,7 +434,8 @@ function build3D() {
     geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(p.uvs), 2));
     geo.setIndex(new THREE.BufferAttribute(Uint32Array.from(p.indices), 1));
     const mat = p.flags[0] === 1 ? (filmImg ? new THREE.MeshStandardMaterial({ map: tex, transparent: true, opacity: 0.8, side: THREE.DoubleSide }) : new THREE.MeshStandardMaterial({ color: '#6fa8dc', transparent: true, opacity: 0.4, side: THREE.DoubleSide })) : new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6, side: THREE.DoubleSide });
-    const mesh = new THREE.Mesh(geo, mat); mesh.userData = { mi, pi };
+    const lf = lampFolder(m.rel); const lp = lf && lamp.tex.get(lf);
+    const mesh = new THREE.Mesh(geo, lp && p.flags[0] === 0 ? new THREE.MeshStandardMaterial({ map: lp, roughness: 0.4, side: THREE.DoubleSide }) : mat); mesh.userData = { mi, pi };
     carGroup.add(mesh);
   }));
 }
@@ -452,6 +454,7 @@ function update3DUVs() {
 const ray = new THREE.Raycaster(); const mouse = new THREE.Vector2();
 gl.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return;
+  if (lamp.mode) { lampClick(e); return; }
   if (paint.on) { paintDown(e); return; }
   const r = gl.getBoundingClientRect();
   mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
@@ -683,19 +686,172 @@ async function importOBJ(text) {
 // picture is missing shows its lamps black: the picture is made (clear, the lamp colour in its spot's 4×4
 // block), or the colour put into the one there.
 const LAMP_RGB = { 2: [255, 250, 235, 255], 3: [210, 18, 18, 255], 4: [255, 150, 0, 255] };
+// 💡 Lamps like Escarabajo's: a clicked panel goes into the lamp folder's paint (headlight at the front,
+// rearlight at the back) and is coloured in that folder's picture (white / red / amber / black housing).
+// The folder picture (128×128 like Escarabajo's) holds one cell per colour; ↩ puts a panel back into the
+// bumper's paint (car colours).
+const lamp = { mode: null, pics: new Map(), tex: new Map() };
+const LAMP_PAINT = { head: [238, 238, 228, 255], tail: [205, 12, 12, 255], turn: [255, 140, 0, 255], trim: [14, 14, 14, 255] };
+// one 16 × 16 px cell per colour in the folder picture's top row (u k/8 … (k+1)/8, v 0 … 1/8): a lamp panel's
+// triangles point at the middle of their colour's cell, so every triangle is fully that colour at any size
+const LAMP_CELL = { head: 0, tail: 1, turn: 2, trim: 3 };
+const cellUV = (k) => [(LAMP_CELL[k] + 0.5) / 8, 0.5 / 8];
+function paintCells(q) { for (const [k, i] of Object.entries(LAMP_CELL)) for (let y = 0; y < Math.ceil(q.h / 8); y++) for (let x = Math.floor((i * q.w) / 8); x < Math.ceil(((i + 1) * q.w) / 8); x++) q.data.set(LAMP_PAINT[k], (y * q.w + x) * 4); }
+// triangles tris of p get colour k: own points (so neighbours of another colour keep theirs) on the cell
+function colourTris(p, tris, k) {
+  const [cu, cv] = cellUV(k); const n0 = p.positions.length / 3;
+  const P = new Float32Array((n0 + tris.length * 3) * 3); P.set(p.positions); const N = new Float32Array(P.length); N.set(p.normals); const U = new Float32Array((n0 + tris.length * 3) * 2); U.set(p.uvs);
+  const I = Uint32Array.from(p.indices); let n = n0;
+  for (const t of tris) for (let j = 0; j < 3; j++) { const i = I[t * 3 + j]; P.set(p.positions.subarray(i * 3, i * 3 + 3), n * 3); N.set(p.normals.subarray(i * 3, i * 3 + 3), n * 3); U[n * 2] = cu; U[n * 2 + 1] = cv; I[t * 3 + j] = n; n++; }
+  // points nobody uses any more dropped
+  const used = new Int32Array(n).fill(-1); let m = 0; for (const i of I) if (used[i] < 0) used[i] = m++;
+  const P2 = new Float32Array(m * 3); const N2 = new Float32Array(m * 3); const U2 = new Float32Array(m * 2);
+  for (let i = 0; i < n; i++) if (used[i] >= 0) { P2.set(P.subarray(i * 3, i * 3 + 3), used[i] * 3); N2.set(N.subarray(i * 3, i * 3 + 3), used[i] * 3); U2.set(U.subarray(i * 2, i * 2 + 2), used[i] * 2); }
+  Object.assign(p, { positions: P2, normals: N2, uvs: U2, indices: Uint32Array.from(I, (i) => used[i]) }); p._adj = null; p._sg = 0;
+}
+const lampFolder = (rel) => { const d = rel.includes('/') ? rel.split('/')[0] : ''; return d === 'headlight' || d === 'rearlight' ? d : null; };
+function lampPic(dir) {
+  if (!lamp.pics.has(dir)) lamp.pics.set(dir, { w: 128, h: 128, data: new Uint8ClampedArray(128 * 128 * 4) });
+  const q = lamp.pics.get(dir); paintCells(q);
+  if (!lamp.tex.has(dir)) { const cv = document.createElement('canvas'); cv.width = q.w; cv.height = q.h; const t = new THREE.CanvasTexture(cv); t.flipY = false; t.colorSpace = THREE.SRGBColorSpace; lamp.tex.set(dir, t); }
+  return q;
+}
+function lampPicShow(dir) { const q = lamp.pics.get(dir); const t = lamp.tex.get(dir); if (!q || !t) return; const g = t.image.getContext('2d'); const img = new ImageData(new Uint8ClampedArray(q.data), q.w, q.h); for (let i = 3; i < img.data.length; i += 4) if (!img.data[i]) { img.data[i - 3] = 140; img.data[i - 2] = 140; img.data[i - 1] = 140; img.data[i] = 255; } g.putImageData(img, 0, 0); t.needsUpdate = true; }
+async function loadLampPics() {
+  lamp.pics = new Map(); lamp.tex = new Map(); lamp.mode = null;
+  document.querySelectorAll('#lamp-modes button').forEach((b) => b.classList.remove('accent'));
+  for (const dir of ['headlight', 'rearlight']) {
+    const list = car.files.has(`${dir}/list.xml`) ? decodeSpec(car.files.get(`${dir}/list.xml`)) : '';
+    const tex = (list.match(/mesh='default'[^>]*tex='([^']*)'/) || [])[1];
+    const b = tex && car.files.get(`${dir}/${tex}.png`); if (!b) continue;
+    try { const q = await decodePNG(b); lamp.pics.set(dir, { w: q.w, h: q.h, data: new Uint8ClampedArray(q.data) }); lampPic(dir); lampPicShow(dir); } catch { /* unreadable */ }
+  }
+}
+function rasterUV(q, U, a, b, c, col) {
+  const { w, h, data } = q; const P = [a, b, c].map((i) => [U[i * 2] * w, U[i * 2 + 1] * h]);
+  const area = (P[1][0] - P[0][0]) * (P[2][1] - P[0][1]) - (P[2][0] - P[0][0]) * (P[1][1] - P[0][1]);
+  const x0 = Math.max(0, Math.floor(Math.min(P[0][0], P[1][0], P[2][0])) - 1); const x1 = Math.min(w - 1, Math.ceil(Math.max(P[0][0], P[1][0], P[2][0])) + 1);
+  const y0 = Math.max(0, Math.floor(Math.min(P[0][1], P[1][1], P[2][1])) - 1); const y1 = Math.min(h - 1, Math.ceil(Math.max(P[0][1], P[1][1], P[2][1])) + 1);
+  if (Math.abs(area) < 1e-9) { data.set(col, (Math.min(h - 1, Math.max(0, Math.floor(P[0][1]))) * w + Math.min(w - 1, Math.max(0, Math.floor(P[0][0])))) * 4); return; }
+  const grow = 1 / Math.sqrt(Math.abs(area));
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+    const cx = x + 0.5; const cy = y + 0.5;
+    const b0 = ((P[1][0] - cx) * (P[2][1] - cy) - (P[2][0] - cx) * (P[1][1] - cy)) / area; const b1 = ((P[2][0] - cx) * (P[0][1] - cy) - (P[0][0] - cx) * (P[2][1] - cy)) / area;
+    if (b0 >= -grow && b1 >= -grow && 1 - b0 - b1 >= -grow) data.set(col, (y * w + x) * 4);
+  }
+}
+// move triangles tris (indices of p's triangles) into part dst; returns their new triangle numbers in dst
+function moveTris(p, tris, dst) {
+  const set = new Set(tris); const I = p.indices; const keep = []; const take = [];
+  for (let t = 0; t < I.length / 3; t++) (set.has(t) ? take : keep).push(t);
+  const base = dst.positions.length / 3; const map = new Map(); const P = [...dst.positions]; const N = [...dst.normals]; const U = [...dst.uvs]; const ni = [...dst.indices];
+  const out = [];
+  for (const t of take) { out.push(ni.length / 3); for (let k = 0; k < 3; k++) { const i = I[t * 3 + k]; if (!map.has(i)) { map.set(i, base + map.size); P.push(...p.positions.subarray(i * 3, i * 3 + 3)); N.push(...p.normals.subarray(i * 3, i * 3 + 3)); U.push(...p.uvs.subarray(i * 2, i * 2 + 2)); } ni.push(map.get(i)); } }
+  Object.assign(dst, { positions: Float32Array.from(P), normals: Float32Array.from(N), uvs: Float32Array.from(U), indices: Uint32Array.from(ni) }); dst._adj = null; dst._sg = 0;
+  // what stays in p (a squashed triangle if nothing)
+  if (!keep.length) { const a = I[0]; const one = (A, n) => Float32Array.from([...A.subarray(a * n, a * n + n), ...A.subarray(a * n, a * n + n), ...A.subarray(a * n, a * n + n)]); Object.assign(p, { positions: one(p.positions, 3), normals: one(p.normals, 3), uvs: one(p.uvs, 2), indices: Uint32Array.from([0, 1, 2]) }); }
+  else { const rm = new Int32Array(p.positions.length / 3).fill(-1); let n = 0; const kI = []; for (const t of keep) for (let k = 0; k < 3; k++) { const i = I[t * 3 + k]; if (rm[i] < 0) rm[i] = n++; kI.push(rm[i]); }
+    const P2 = new Float32Array(n * 3); const N2 = new Float32Array(n * 3); const U2 = new Float32Array(n * 2);
+    for (let i = 0; i < rm.length; i++) if (rm[i] >= 0) { P2.set(p.positions.subarray(i * 3, i * 3 + 3), rm[i] * 3); N2.set(p.normals.subarray(i * 3, i * 3 + 3), rm[i] * 3); U2.set(p.uvs.subarray(i * 2, i * 2 + 2), rm[i] * 2); }
+    Object.assign(p, { positions: P2, normals: N2, uvs: U2, indices: Uint32Array.from(kI) }); }
+  p._adj = null; p._sg = 0;
+  return out;
+}
+const paintPartOf = (rel, holderOk) => { const m = car.meshes.find((x) => x.rel === rel); const p = m && m.parts.filter((q) => q.flags[0] === 0 && (holderOk || q.positions.length / 3 > 8)).sort((a, b) => b.positions.length - a.positions.length)[0]; return p ? { m, p } : null; };
+function lampClick(e) {
+  const hit = hitAt(e); if (!hit) return;
+  const { mi, pi } = hit.object.userData; const m = car.meshes[mi]; const p = m.parts[pi];
+  if (LAMP_RGB[p.flags[0]] && LAMP_PAINT[lamp.mode] && lampFolder(m.rel)) { // a lamp itself: its colour spot in the folder picture
+    const q = lampPic(lampFolder(m.rel)); const U = p.uvs; for (let t = 0; t < p.indices.length; t += 3) rasterUV(q, U, p.indices[t], p.indices[t + 1], p.indices[t + 2], LAMP_PAINT[lamp.mode]);
+    lampPicShow(lampFolder(m.rel)); build3D(); status('ใส่สีให้ดวงไฟแล้ว (จุดสีของดวงไฟในรูปของโฟลเดอร์)'); return;
+  }
+  if (p.flags[0] !== 0) { status('คลิกโดนกระจก: คลิกแผงสีแทน'); return; }
+  const tris = panelOf(p, hit.faceIndex, m.isl[pi].vertIsl);
+  const P = p.positions; const I = p.indices; const t0 = hit.faceIndex;
+  const front = (P[I[t0 * 3] * 3 + 1] + P[I[t0 * 3 + 1] * 3 + 1] + P[I[t0 * 3 + 2] * 3 + 1]) / 3 < 0; // y < 0: front half
+  undo.push(comboSnap()); if (undo.length > 60) undo.shift(); redo.length = 0;
+  const from = lampFolder(m.rel);
+  if (lamp.mode === 'paint') {
+    if (!from) { status('แผงนี้เป็นสีรถอยู่แล้ว'); return; }
+    const to = paintPartOf(front ? 'frontbumper/default_2.0m' : 'rearbumper/default_2.0m') || paintPartOf('body_2.0m');
+    moveTris(p, tris, to.p); m.dirty = true; to.m.dirty = true;
+    status(`คืน ${tris.length} สามเหลี่ยม เป็นสีรถ (${to.m.rel.split('/')[0]})`);
+  } else {
+    const dir = lamp.mode === 'head' ? 'headlight' : lamp.mode === 'tail' ? 'rearlight' : front ? 'headlight' : 'rearlight';
+    let tp = p; let tt = tris;
+    if (from !== dir) {
+      const to = paintPartOf(`${dir}/default_2.0m`, true);
+      if (!to) { status(`ไม่มีไฟล์ ${dir}/default_2.0m ในรถคันนี้`); return; }
+      tt = moveTris(p, tris, to.p); tp = to.p; m.dirty = true; to.m.dirty = true;
+    }
+    lampPic(dir); colourTris(tp, tt, lamp.mode); lampPicShow(dir);
+    status(`${{ head: 'ไฟหน้า', tail: 'ไฟท้าย', turn: 'ไฟเลี้ยว', trim: 'กรอบไฟ' }[lamp.mode]}: ${tris.length} สามเหลี่ยม → ${dir} (รูปของโฟลเดอร์) · คลิกแผงต่อได้`);
+  }
+  for (const x of car.meshes) x.isl = x.parts.map(islandsOf);
+  build3D(); refresh();
+}
+// 🔴 Tail lamps by themselves: every paint triangle facing back within 1.5 cm (across) / 6 cm (deep) of a
+// brake / indicator lamp facing back goes into rearlight's paint, red / amber in its picture; the rest of rearlight's paint
+// (the tail panel) black like a housing.
+$('btn-tail-auto').addEventListener('click', () => {
+  const rl = car.meshes.find((m) => m.rel === 'rearlight/default_2.0m'); if (!rl) { status('ไม่มี rearlight/default_2.0m'); return; }
+  const lenses = [];
+  for (const p of rl.parts) { const k = p.flags[0]; if (k !== 3 && k !== 4) continue; const P = p.positions; const I = p.indices;
+    // each lamp piece in its connected bits (by position)
+    const key = (i) => `${Math.round(P[i * 3] * 1000)},${Math.round(P[i * 3 + 1] * 1000)},${Math.round(P[i * 3 + 2] * 1000)}`;
+    const par = new Map(); const find = (a) => { while (par.get(a) !== a) { par.set(a, par.get(par.get(a))); a = par.get(a); } return a; };
+    for (let i = 0; i < P.length / 3; i++) if (!par.has(key(i))) par.set(key(i), key(i));
+    for (let t = 0; t < I.length; t += 3) { const a = find(key(I[t])); par.set(a, find(key(I[t + 1]))); par.set(find(key(I[t + 2])), find(key(I[t + 1]))); }
+    const box = new Map();
+    const sg = outwardSign(p);
+    for (let i = 0; i < P.length / 3; i++) { const r = find(key(i)); if (!box.has(r)) box.set(r, { mn: [9, 9, 9], mx: [-9, -9, -9], k, ny: 0, n: 0 }); const e = box.get(r); for (let c = 0; c < 3; c++) { e.mn[c] = Math.min(e.mn[c], P[i * 3 + c]); e.mx[c] = Math.max(e.mx[c], P[i * 3 + c]); } e.ny += sg * p.normals[i * 3 + 1]; e.n++; }
+    // lamps facing back only (side markers keep their own colour spot)
+    for (const e of box.values()) if (e.mx[0] - e.mn[0] + e.mx[2] - e.mn[2] > 0.02 && e.ny / e.n > 0.5) lenses.push(e);
+  }
+  if (!lenses.length) { status('rearlight ไม่มีดวงไฟ (ไฟเบรก/ไฟเลี้ยว) ให้ยึดตำแหน่ง'); return; }
+  undo.push(comboSnap()); if (undo.length > 60) undo.shift(); redo.length = 0;
+  const near = (c) => lenses.find((e) => c[0] > e.mn[0] - 0.015 && c[0] < e.mx[0] + 0.015 && c[2] > e.mn[2] - 0.015 && c[2] < e.mx[2] + 0.015 && c[1] > e.mn[1] - 0.06 && c[1] < e.mx[1] + 0.06);
+  const dst = paintPartOf('rearlight/default_2.0m', true); let red = 0;
+  // bumper / body paint near the lamps joins rearlight
+  for (const m of car.meshes) { if (lampFolder(m.rel)) continue; for (const p of m.parts) {
+    if (p.flags[0] !== 0 || p.positions.length / 3 <= 8) continue; const P = p.positions; const I = p.indices; const N = p.normals; const take = [];
+    for (let t = 0; t < I.length / 3; t++) { const c = [0, 1, 2].map((k) => (P[I[t * 3] * 3 + k] + P[I[t * 3 + 1] * 3 + k] + P[I[t * 3 + 2] * 3 + k]) / 3); const ny = N[I[t * 3] * 3 + 1] * outwardSign(p); if (ny > 0.3 && near(c)) take.push(t); }
+    if (take.length) { moveTris(p, take, dst.p); m.dirty = true; dst.m.dirty = true; }
+  } }
+  const q = lampPic('rearlight'); const p = dst.p; const P = p.positions; const I = p.indices; const by = { tail: [], turn: [], trim: [] };
+  for (let t = 0; t < I.length / 3; t++) {
+    const c = [0, 1, 2].map((k) => (P[I[t * 3] * 3 + k] + P[I[t * 3 + 1] * 3 + k] + P[I[t * 3 + 2] * 3 + k]) / 3); const e = near(c);
+    by[e ? (e.k === 4 ? 'turn' : 'tail') : 'trim'].push(t);
+  }
+  red = by.tail.length + by.turn.length; const nTris = I.length / 3;
+  for (const k of ['tail', 'turn', 'trim']) if (by[k].length) colourTris(p, by[k], k);
+  for (const l of rl.parts) if (l.flags[0] === 3 || l.flags[0] === 4) for (let t = 0; t < l.indices.length; t += 3) rasterUV(q, l.uvs, l.indices[t], l.indices[t + 1], l.indices[t + 2], l.flags[0] === 4 ? LAMP_PAINT.turn : LAMP_PAINT.tail);
+  lampPicShow('rearlight');
+  for (const x of car.meshes) x.isl = x.parts.map(islandsOf);
+  build3D(); refresh();
+  status(`ไฟท้ายอัตโนมัติ: ดวงไฟ ${lenses.length} ดวง · แดง/ส้ม ${red} สามเหลี่ยม · แผงท้ายที่เหลือดำ (${nTris - red}) · ปรับต่อได้ด้วยปุ่มสีไฟ`);
+});
+document.querySelectorAll('#lamp-modes button').forEach((b) => b.addEventListener('click', () => {
+  lamp.mode = lamp.mode === b.dataset.lamp ? null : b.dataset.lamp;
+  document.querySelectorAll('#lamp-modes button').forEach((x) => x.classList.toggle('accent', x.dataset.lamp === lamp.mode));
+  if (lamp.mode && paint.on) setPaint(false);
+  status(lamp.mode ? 'คลิกแผงบนรถเพื่อทำเป็นไฟ (กดปุ่มเดิมอีกครั้งเพื่อเลิก)' : 'เลิกทำไฟ');
+}));
 async function lampPictures(out) {
   let n = 0;
-  for (const m of car.meshes) {
-    const dir = m.rel.includes('/') ? m.rel.split('/')[0] : ''; if (!dir) continue;
+  const dirs = new Set([...lamp.pics.keys()]);
+  for (const m of car.meshes) { const dir = m.rel.includes('/') ? m.rel.split('/')[0] : ''; if (dir && m.parts.some((p) => LAMP_RGB[p.flags[0]])) dirs.add(dir); }
+  for (const dir of dirs) {
     const spots = new Map();
-    for (const p of m.parts) { const c = LAMP_RGB[p.flags[0]]; const U = p.uvs; if (c && U.length && U.every((x, i) => x === U[i & 1])) spots.set(`${U[0]},${U[1]}`, [U[0], U[1], c]); }
-    if (!spots.size) continue;
+    for (const m of car.meshes) if (m.rel.startsWith(`${dir}/`)) for (const p of m.parts) { const c = LAMP_RGB[p.flags[0]]; const U = p.uvs; if (c && U.length && U.every((x, i) => x === U[i & 1])) spots.set(`${U[0]},${U[1]}`, [U[0], U[1], c]); }
+    if (!spots.size && !lamp.pics.has(dir)) continue;
     const list = car.files.has(`${dir}/list.xml`) ? decodeSpec(car.files.get(`${dir}/list.xml`)) : '';
     const names = [...list.matchAll(/mesh='default'[^>]*tex='([^']*)'/g)].map((x) => x[1]);
     for (const tex of new Set(names)) {
       let pic = { w: 128, h: 128, data: new Uint8ClampedArray(128 * 128 * 4) };
       const had = out.get(`${dir}/${tex}.png`);
-      if (had) { try { pic = await decodePNG(had); } catch { /* unreadable: a new one */ } }
+      if (lamp.pics.has(dir)) { const q = lamp.pics.get(dir); pic = { w: q.w, h: q.h, data: new Uint8ClampedArray(q.data) }; } // the page's (painted) picture
+      else if (had) { try { pic = await decodePNG(had); } catch { /* unreadable: a new one */ } }
       const { w, h, data } = pic;
       for (const [u, v, c] of spots.values()) {
         const bx = Math.floor(Math.min(w - 1, u * w) / 4) * 4; const by = Math.floor(Math.min(h - 1, v * h) / 4) * 4;
@@ -736,6 +892,7 @@ $('btn-lamp-panel').addEventListener('click', () => {
   $('body-info').textContent = moved ? `ย้ายแผง ${moved.toLocaleString()} สามเหลี่ยม (${[...new Set(where)].join(', ')}) · รับสีรถแล้ว` : 'ไม่มีแผงสีในโฟลเดอร์ไฟให้ย้าย';
   status($('body-info').textContent);
 });
+$('ride-shift').addEventListener('input', () => { const v = +$('ride-shift').value; $('ride-shift-v').textContent = v ? `${v < 0 ? 'ไปหน้า' : 'ไปหลัง'} ${Math.abs(v * 100).toFixed(1)} ซม.` : '0 ซม.'; });
 $('ride-drop').addEventListener('input', () => { const v = +$('ride-drop').value; $('ride-drop-v').textContent = `${v >= 0 ? 'ลง' : 'ขึ้น'} ${Math.abs(v * 100).toFixed(1)} ซม.`; });
 async function saveZip() {
   const out = new Map(car.files);
@@ -748,13 +905,13 @@ async function saveZip() {
     for (const [rel, b] of car.files) if (dir(rel) === dir(m.rel) && b.length === m.orig.length && b.every((x, i) => x === m.orig[i])) { out.set(rel, bytes); n++; }
   }
   const lampN = await lampPictures(out);
-  // ride height: every mesh file moved down (the wheels stay where the game puts them)
-  const drop = +$('ride-drop').value; let lowered = 0;
-  if (drop) for (const [rel, b] of out) {
+  // ride height / wheel arches: every mesh file moved down and along (the wheels stay where the game puts them)
+  const drop = +$('ride-drop').value; const shift = +$('ride-shift').value; let lowered = 0;
+  if (drop || shift) for (const [rel, b] of out) {
     if (!/\.0m$/i.test(rel)) continue;
     try {
       const om = parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)); const parts = omParts(om);
-      for (const q of parts) { const P = Float32Array.from(q.positions); for (let i = 2; i < P.length; i += 3) P[i] -= drop; q.positions = P; }
+      for (const q of parts) { const P = Float32Array.from(q.positions); for (let i = 0; i < P.length; i += 3) { P[i + 1] += shift; P[i + 2] -= drop; } q.positions = P; } // (y < 0 is the front: forward = minus)
       out.set(rel, writeOM(om, parts.map((q) => ({ ...q, kind: q.flags[0] })))); lowered++;
     } catch { /* not a mesh */ }
   }
@@ -775,7 +932,7 @@ async function saveZip() {
   const zipFiles = [...out].sort((a, b) => a[0].localeCompare(b[0])).map(([rel, data]) => ({ path: `${car.name}/${rel}`, data }));
   const blob = await makeZip(zipFiles);
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${car.name}.zip`; a.click();
-  $('save-log').textContent = `ดาวน์โหลด ${car.name}.zip แล้ว · เขียนใหม่ ${n} ไฟล์ .0m${paint.dirty ? ' · รูปสี (_base.png + _s.dds) ใหม่' : ''}${car.colorDirty ? ' · ชั้นลาย _color ใหม่' : ''}${lampN ? ` · รูปสีไฟ ${lampN} รูป` : ''}${lowered ? ` · ตัวรถลดลง ${(drop * 100).toFixed(1)} ซม. (${lowered} ไฟล์)` : ''}`;
+  $('save-log').textContent = `ดาวน์โหลด ${car.name}.zip แล้ว · เขียนใหม่ ${n} ไฟล์ .0m${paint.dirty ? ' · รูปสี (_base.png + _s.dds) ใหม่' : ''}${car.colorDirty ? ' · ชั้นลาย _color ใหม่' : ''}${lampN ? ` · รูปสีไฟ ${lampN} รูป` : ''}${lowered ? ` · ตัวรถ${drop ? ` ลง ${(drop * 100).toFixed(1)} ซม.` : ''}${shift ? ` ${shift < 0 ? 'ไปหน้า' : 'ไปหลัง'} ${Math.abs(shift * 100).toFixed(1)} ซม.` : ''} (${lowered} ไฟล์)` : ''}`;
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -315,3 +315,15 @@ leaving one squashed triangle, so it takes the 3 colours; the "ลดควา�
 saving (wheels stay; mesh.xml untouched).
 67_your_canyon_tail_panel_painted_lower_4cm.zip  pack 66 + 🧩 (323 triangles rearlight → rearbumper) + body 4 cm
 lower (51 mesh files). With the rbrc_001 rear bumper the panel is not there (that file left as it was).
+Video 2026-10-13 17:57 (pack 67 in the garage): fine overall; tail lamps / headlights missing, the tail panel
+in the car colour. Then: the front wheel touches its arch a little (wheels to sit in the middle), and could
+gtv98's interior come over.
+Escarabajo's lamps you see are its lamp folder's paint drawn with the folder picture (red lamps, black
+housings); the brake / indicator pieces only light up. RayCity UV 💡: lamp colours (white / red / amber /
+black housing / back to car colour) by clicking panels; 🔴 by itself: paint facing back within 1.5 cm (6 cm
+deep) of a brake lamp facing back → red, the rest of rearlight's paint → black. A lamp panel's triangles point
+at the middle of a 16 × 16 px colour cell in the folder picture (top row: white, red, amber, black), so each
+is one full colour at any size. Fore / aft slider next to the ride height one (wheel arches measured at
+y −1.22 / 1.14; in the video the front tyre sits forward in its arch).
+68_your_canyon_tail_lamps_red_lower_forward.zip  pack 66 (tail panel in rearlight) + 🔴 (339 triangles red,
+88 black) + body 4 cm lower and 3 cm forward.

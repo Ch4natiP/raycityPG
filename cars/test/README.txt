@@ -247,3 +247,12 @@ the owner's canyon has u = +0.21·y (front to the left), so decals come out back
                          (mask and colour layer mirrored with it, glass untouched): front to the right.
 RayCity UV: shows which way the car faces and a ⇋ button; the glass setting has only Escarabajo's and the
 owner's (mask red, colour 0,0,0,0); new-body charts now put the front to the right too.
+
+Escarabajo's decal picture (the owner, 2026-10-13): the car unfolded on one sheet — top band (v 0-0.22) one side
+upside down, middle band (0.23-0.52) the top view (hood with the big emblem at the right), lower band
+(0.52-0.80) the other side upright; front of the car to the right everywhere, the numbers near the front doors.
+chartsLayout (new body) and RayCity UV's 📐 button lay a car out on exactly that sheet (regions filled along
+both axes), panels never sharing texture; faces looking down (floor, wheel-arch liners) go to a black spot.
+The 3D views were mirrored (Escarabajo's decal text read backwards): fixed (x mirrored, double-sided).
+60_your_canyon_decal_sheet.zip  the owner's canyon laid out on the decal sheet with RayCity UV (colours moved
+                         with it), floor + wheel-arch liners black, glass untouched (mask red, colour 0,0,0,0).

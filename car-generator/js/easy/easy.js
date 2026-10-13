@@ -50,8 +50,9 @@ const sun = new THREE.DirectionalLight('#ffffff', 1.2); sun.position.set(4, 8, 5
 scene.add(new THREE.GridHelper(12, 24, '#555', '#3d3d3d'));
 const cam = new THREE.PerspectiveCamera(38, 1, 0.02, 100); cam.position.set(5, 2.6, 6);
 const controls = new OrbitControls(cam, gl); controls.target.set(0, 0.6, 0);
-const modelGroup = new THREE.Group(); modelGroup.rotation.x = -Math.PI / 2; scene.add(modelGroup);
-const carGroup = new THREE.Group(); carGroup.rotation.x = -Math.PI / 2; scene.add(carGroup);
+const modelGroup = new THREE.Group(); modelGroup.rotation.x = -Math.PI / 2; modelGroup.scale.x = -1; scene.add(modelGroup);
+// mirrored in x so the car reads as in game (Escarabajo's decal text read backwards without it)
+const carGroup = new THREE.Group(); carGroup.rotation.x = -Math.PI / 2; carGroup.scale.x = -1; scene.add(carGroup);
 let tab = 'model';
 
 function showModel() {
@@ -94,7 +95,7 @@ async function showCar() {
       g.setAttribute('normal', new THREE.BufferAttribute(p.normals, 3));
       g.setAttribute('uv', new THREE.BufferAttribute(p.uvs, 2));
       g.setIndex(new THREE.BufferAttribute(Uint32Array.from(p.indices), 1));
-      const mat = p.flags[0] === 1 ? new THREE.MeshStandardMaterial({ color: '#7fb0e0', transparent: true, opacity: 0.35 }) : new THREE.MeshStandardMaterial({ map: tex, color: tex ? '#ffffff' : '#cccccc', roughness: 0.5 });
+      const mat = p.flags[0] === 1 ? new THREE.MeshStandardMaterial({ color: '#7fb0e0', transparent: true, opacity: 0.35, side: THREE.DoubleSide }) : new THREE.MeshStandardMaterial({ map: tex, color: tex ? '#ffffff' : '#cccccc', roughness: 0.5, side: THREE.DoubleSide });
       carGroup.add(new THREE.Mesh(g, mat));
     });
   }

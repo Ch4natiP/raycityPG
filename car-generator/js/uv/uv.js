@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { parseOM, writeOM, omParts } from '../om.js';
 import { makeZip, readZip } from '../zip.js';
-import { decodePNG, png, dds } from '../convert.js';
+import { decodePNG, png, dds, chartsLayout } from '../convert.js';
 import { decodeSpec } from '../carSpec.js';
 
 const $ = (id) => document.getElementById(id);
@@ -336,7 +336,8 @@ const cam = new THREE.PerspectiveCamera(40, 1, 0.02, 100); cam.position.set(4.5,
 const controls = new OrbitControls(cam, gl);
 controls.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
 controls.target.set(0, 0.6, 0);
-const carGroup = new THREE.Group(); carGroup.rotation.x = -Math.PI / 2; scene.add(carGroup);
+// mirrored in x so the car reads as in game (Escarabajo's decal text read backwards without it)
+const carGroup = new THREE.Group(); carGroup.rotation.x = -Math.PI / 2; carGroup.scale.x = -1; scene.add(carGroup);
 let texCanvas = null; let tex = null;
 function makeTexture() {
   texCanvas = document.createElement('canvas'); texCanvas.width = texCanvas.height = 1024;
@@ -370,7 +371,7 @@ function build3D() {
     geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(p.normals), 3));
     geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(p.uvs), 2));
     geo.setIndex(new THREE.BufferAttribute(Uint32Array.from(p.indices), 1));
-    const mat = p.flags[0] === 1 ? new THREE.MeshStandardMaterial({ color: '#6fa8dc', transparent: true, opacity: 0.4 }) : new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 });
+    const mat = p.flags[0] === 1 ? new THREE.MeshStandardMaterial({ color: '#6fa8dc', transparent: true, opacity: 0.4, side: THREE.DoubleSide }) : new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6, side: THREE.DoubleSide });
     const mesh = new THREE.Mesh(geo, mat); mesh.userData = { mi, pi };
     carGroup.add(mesh);
   }));
@@ -863,6 +864,14 @@ $('paint-mode').addEventListener('change', (e) => { setMode(e.target.value); if 
 $('paint-size').addEventListener('input', (e) => { paint.size = +e.target.value; });
 $('opt-back').addEventListener('change', (e) => { paint.backfaces = e.target.checked; });
 document.querySelectorAll('#protect input').forEach((c) => c.addEventListener('change', () => { paint.protect = new Set([...document.querySelectorAll('#protect input:checked')].map((x) => +x.value)); }));
+// ⬛ the floor and the wheel-arch liners (every face looking down, by the files' normals) black
+$('btn-floor-black').addEventListener('click', () => {
+  if (!car.mask) return;
+  const keep = paint.slot; paint.slot = 0; paintStart(); let n = 0;
+  eachTri((mesh, p, t, c, nrm) => { const l = Math.hypot(nrm[0], nrm[1], nrm[2]) || 1; if (nrm[2] / l < -0.35) { fillT(p, t); n++; } });
+  paintEnd(); paint.slot = keep; paint.dirty = true; maskChanged();
+  status(`พื้นรถ + ใต้ซุ้มล้อ เป็นดำแล้ว (${n.toLocaleString()} สามเหลี่ยม) · Ctrl+Z ย้อน`);
+});
 $('btn-paint-all').addEventListener('click', () => {
   if (!car.mask) return;
   paintStart(); let n = 0; eachTri((mesh, p, t) => { fillT(p, t); n++; });
@@ -889,6 +898,107 @@ $('btn-clear-color').addEventListener('click', () => {
   status(`ล้างลายในชั้น _color แล้ว (${n.toLocaleString()} จุด) · เหลือแค่บล็อกของเกมมุมล่างซ้าย · แผงที่ยังม่วงอยู่ = อยู่ในโซนเกม ให้ลากย้ายออก`);
 });
 $('opt-color').addEventListener('change', () => { drawTexture(); refresh(); });
+// 📐 The car's UVs laid out on the shop decals' sheet (Escarabajo's decal): the car unfolded — left side on
+// top upside down, top view in the middle, right side below, front to the right — every panel its own
+// piece, none sharing texture (chartsLayout, the same as new-body builds).
+// Pieces on one colour spot (trim, lamps), black pieces and glass keep their spots. The mask is redrawn
+// from each triangle's old colour, so every panel keeps its colour; the colour layer keeps only the game's block.
+async function escarabajoTemplate() {
+  const b64 = (window.RC_TEMPLATES || {}).escarabajo; if (!b64) return null;
+  const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const json = await new Response(new Blob([bin]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  return new Map(Object.entries(JSON.parse(json)).map(([k, d]) => [k, Uint8Array.from(atob(d), (c) => c.charCodeAt(0))]));
+}
+$('btn-like-esc').addEventListener('click', async () => {
+  if (!car.meshes.length || !car.mask) return;
+  const tpl = new Map();
+  status('กำลังจัด UV ตามแบบ Escarabajo…'); await new Promise((r) => setTimeout(r, 30));
+  const { w, h, data } = car.mask; const old = data.slice();
+  const slotAt = (u, v) => { const x = Math.min(w - 1, Math.max(0, Math.floor(u * w))); const y = Math.min(h - 1, Math.max(0, Math.floor(v * h))); const o = (y * w + x) * 4; return old[o] > 128 ? 1 : old[o + 1] > 128 ? 2 : old[o + 2] > 128 ? 3 : 0; };
+  // boxes of this car and of Escarabajo
+  const box = (list) => { const mn = [Infinity, Infinity, Infinity]; const mx = [-Infinity, -Infinity, -Infinity]; for (const P of list) for (let i = 0; i < P.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], P[i + k]); mx[k] = Math.max(mx[k], P[i + k]); } return { mn, mx }; };
+  const mine = box(car.meshes.flatMap((m) => m.parts.filter((p) => p.positions.length / 3 > 8).map((p) => p.positions)));
+  const bent = new Map(); const escPos = [];
+  for (const [rel, b] of tpl) {
+    if (!(rel === 'body_2.0m' || /^[^/]+\/default_2\.0m$/.test(rel))) continue;
+    const om = parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)); const parts = omParts(om);
+    bent.set(rel, { om, parts }); parts.forEach((p) => { if (p.positions.length / 3 > 8) escPos.push(p.positions); });
+  }
+  const esc = box(escPos);
+  for (const { parts } of bent.values()) for (const p of parts) for (let i = 0; i < p.positions.length; i += 3) for (let k = 0; k < 3; k++) p.positions[i + k] = mine.mn[k] + ((p.positions[i + k] - esc.mn[k]) / ((esc.mx[k] - esc.mn[k]) || 1)) * (mine.mx[k] - mine.mn[k]);
+  undo.push(comboSnap()); if (undo.length > 60) undo.shift(); redo.length = 0;
+  const lod = {}; const jobs = [];
+  for (const m of car.meshes) {
+    const slot = m.rel === 'body_2.0m' ? 'body' : m.rel.split('/')[0];
+    m.parts.forEach((p, pi) => {
+      if (p.flags[0] !== 0 || p.positions.length / 3 <= 8) return;
+      const I = p.indices; const U = p.uvs; const move = []; const keep = []; const slots = [];
+      for (let t = 0; t < I.length; t += 3) {
+        const [a, b, c] = [I[t], I[t + 1], I[t + 2]];
+        const flat = Math.abs((U[b * 2] - U[a * 2]) * (U[c * 2 + 1] - U[a * 2 + 1]) - (U[c * 2] - U[a * 2]) * (U[b * 2 + 1] - U[a * 2 + 1])) < 1e-9;
+        const sl = slotAt((U[a * 2] + U[b * 2] + U[c * 2]) / 3, (U[a * 2 + 1] + U[b * 2 + 1] + U[c * 2 + 1]) / 3);
+        if (flat || sl === 0) keep.push(a, b, c); else { move.push(a, b, c); slots.push(sl); }
+      }
+      if (!move.length) return;
+      const proxy = { name: 'Body_Color', positions: p.positions, normals: p.normals, uvs: p.uvs, indices: Uint32Array.from(move) };
+      (lod[slot] = lod[slot] || []).push(proxy);
+      jobs.push({ m, pi, p, proxy, keep, slots });
+    });
+  }
+  chartsLayout(lod, { slots: false, size: w });
+  // new mask: red, each moved triangle in its old colour (majority per texel), kept spots re-stamped
+  const votes = new Uint16Array(w * h * 4);
+  for (const j of jobs) {
+    const U = j.proxy.uvs; const I = j.proxy.indices;
+    for (let t = 0, k = 0; t < I.length; t += 3, k++) {
+      const q = [I[t], I[t + 1], I[t + 2]].map((i) => [U[i * 2] * w, U[i * 2 + 1] * h]);
+      const area = (q[1][0] - q[0][0]) * (q[2][1] - q[0][1]) - (q[2][0] - q[0][0]) * (q[1][1] - q[0][1]); if (Math.abs(area) < 1e-6) continue;
+      const x0 = Math.max(0, Math.floor(Math.min(q[0][0], q[1][0], q[2][0])) - 1); const x1 = Math.min(w - 1, Math.ceil(Math.max(q[0][0], q[1][0], q[2][0])) + 1);
+      const y0 = Math.max(0, Math.floor(Math.min(q[0][1], q[1][1], q[2][1])) - 1); const y1 = Math.min(h - 1, Math.ceil(Math.max(q[0][1], q[1][1], q[2][1])) + 1);
+      const grow = 1.2 / Math.sqrt(Math.abs(area));
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        const cx = x + 0.5; const cy = y + 0.5;
+        const s0 = ((q[1][0] - q[0][0]) * (cy - q[0][1]) - (q[1][1] - q[0][1]) * (cx - q[0][0])) / area;
+        const s1 = ((q[2][0] - q[1][0]) * (cy - q[1][1]) - (q[2][1] - q[1][1]) * (cx - q[1][0])) / area;
+        const s2 = ((q[0][0] - q[2][0]) * (cy - q[2][1]) - (q[0][1] - q[2][1]) * (cx - q[2][0])) / area;
+        if (s0 >= -grow && s1 >= -grow && s2 >= -grow) { const o = (y * w + x) * 4 + j.slots[k]; if (votes[o] < 65535) votes[o]++; }
+      }
+    }
+  }
+  const RGB = [null, [255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]];
+  for (let i = 0; i < w * h; i++) { let best = 1; let bv = 0; for (let k = 1; k <= 3; k++) if (votes[i * 4 + k] > bv) { bv = votes[i * 4 + k]; best = k; } data.set(RGB[best], i * 4); }
+  // the black spot the floor / wheel-arch liners went to (chartsLayout puts faces looking down there)
+  { const cx = Math.round(0.07 * w); const cy = Math.round(0.60 * h); const r = Math.max(4, Math.round(w / 64)); for (let y = cy - r; y <= cy + r; y++) for (let x = cx - r; x <= cx + r; x++) data.set([0, 0, 0, 255], (y * w + x) * 4); }
+  // merge: moved triangles (new points) + kept ones (old points); spots of kept pieces keep their old colour
+  for (const j of jobs) {
+    const p = j.p; const pr = j.proxy; const nOld = p.positions.length / 3;
+    const P = new Float32Array(p.positions.length + pr.positions.length); P.set(p.positions); P.set(pr.positions, p.positions.length);
+    const N = new Float32Array(p.normals.length + pr.normals.length); N.set(p.normals); N.set(pr.normals, p.normals.length);
+    const UV = new Float32Array(p.uvs.length + pr.uvs.length); UV.set(p.uvs); UV.set(pr.uvs, p.uvs.length);
+    const idx = [...j.keep, ...[...pr.indices].map((i) => i + nOld)];
+    j.m.parts[j.pi] = { ...p, positions: P, normals: N, uvs: UV, indices: Uint32Array.from(idx) };
+  }
+  for (const m of car.meshes) {
+    for (const p of m.parts) {
+      if (p.positions.length / 3 <= 8) continue; const U = p.uvs; const I = p.indices;
+      for (let t = 0; t < I.length; t += 3) {
+        const [a, b, c] = [I[t], I[t + 1], I[t + 2]];
+        if (Math.abs((U[b * 2] - U[a * 2]) * (U[c * 2 + 1] - U[a * 2 + 1]) - (U[c * 2] - U[a * 2]) * (U[b * 2 + 1] - U[a * 2 + 1])) >= 1e-9 && p.flags[0] === 0 && slotAt((U[a * 2] + U[b * 2] + U[c * 2]) / 3, (U[a * 2 + 1] + U[b * 2 + 1] + U[c * 2 + 1]) / 3) !== 0) continue;
+        // kept (flat spot, black panel or glass): its old texels back
+        for (const i of [a, b, c]) { const x = Math.min(w - 1, Math.max(0, Math.floor(U[i * 2] * w))); const y = Math.min(h - 1, Math.max(0, Math.floor(U[i * 2 + 1] * h))); for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = Math.min(w - 1, Math.max(0, x + dx)); const yy = Math.min(h - 1, Math.max(0, y + dy)); const o = (yy * w + xx) * 4; data.set(old.subarray(o, o + 4), o); } }
+      }
+    }
+    m.isl = m.parts.map(islandsOf); m.dirty = true;
+  }
+  if (car.color) {
+    const cd = car.color.data;
+    for (let y = 0; y < car.color.h; y++) for (let x = 0; x < car.color.w; x++) { if ((x + 0.5) / car.color.w <= RESERVED[2] && (y + 0.5) / car.color.h >= RESERVED[1]) continue; const o = (y * car.color.w + x) * 4; if (cd[o + 3]) cd.set([0, 0, 0, 0], o); }
+    car.colorDirty = true; car.colorImg.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(cd), car.color.w, car.color.h), 0, 0);
+  }
+  paint.dirty = true; selected = new Set();
+  build3D(); maskChanged();
+  status(`จัด UV ตามแผ่นลายในร้านแล้ว (${jobs.reduce((n, j) => n + j.slots.length, 0).toLocaleString()} สามเหลี่ยม · สีย้ายตาม) · เปิดรูปลายมาเทียบได้ · กด ⬇ ดาวน์โหลด`);
+});
 // 🖼 A shop decal / film picture (png, jpg or the game's .dds) shown over the sheet and on the car, so the
 // panels can be moved where the picture expects them.
 function ddsToCanvas(b) {

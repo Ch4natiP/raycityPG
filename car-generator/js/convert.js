@@ -1223,12 +1223,16 @@ const ATLAS_FLAT = { 1: [0.05, 0.40], 2: [0.05, 0.45], 3: [0.05, 0.50], glass: [
 // are packed in the free bottom strip. The bottom-left corner (the game's block in the colour layer) and
 // Escarabajo's glass rectangle stay free. Trim / lamps sit on one black spot. Mask: every triangle in its
 // colour slot. Returns { mask (1024² RGBA), colour (cw×ch RGBA, clear), size }.
+// The sheet the shop decals are drawn for (Escarabajo's decal, 2026-10-13): the car unfolded — the left side
+// (+x) along the top, upside down (wheels at the top edge, roof line at the bottom), the top view in the
+// middle (left side's edge up), the right side (−x) below it upright; the front of the car to the right
+// everywhere (numbers near the front doors at u ≈ 0.7). Each region filled along both axes.
 const CHART_REGIONS = {
-  left: [0.14, 0.01, 0.98, 0.23], right: [0.14, 0.52, 0.98, 0.73], top: [0.23, 0.255, 0.85, 0.50],
-  front: [0.87, 0.255, 0.98, 0.50], rear: [0.02, 0.385, 0.13, 0.50], bottom: [0.19, 0.76, 0.99, 0.99],
+  left: [0.10, 0.005, 0.95, 0.215], top: [0.10, 0.23, 0.95, 0.515], right: [0.10, 0.525, 0.95, 0.80],
+  front: [0.56, 0.82, 0.75, 0.99], rear: [0.77, 0.82, 0.96, 0.99], bottom: [0.19, 0.82, 0.54, 0.99],
 };
 const CHART_BLACK = [0.07, 0.60];
-function chartsLayout(lod, { slots, cw = 128, ch = 64, size = 1024 }) {
+export function chartsLayout(lod, { slots, cw = 128, ch = 64, size = 1024 }) {
   const SIZE = size; const G = 512; // occupancy grid
   const lo = [Infinity, Infinity, Infinity]; const hi = [-Infinity, -Infinity, -Infinity];
   for (const parts of Object.values(lod)) for (const p of parts) for (let i = 0; i < p.positions.length; i += 3) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p.positions[i + k]); hi[k] = Math.max(hi[k], p.positions[i + k]); }
@@ -1236,13 +1240,17 @@ function chartsLayout(lod, { slots, cw = 128, ch = 64, size = 1024 }) {
   // per side: which axes go to u / v (RayCity: x left, y back, z up; v grows downwards on the sheet)
   // the front of the car towards +u (right), like every game car's sheet (Escarabajo / gtv98: u ≈ −0.18·y), so
   // shop decals land the right way round
-  const AX = { left: [1, 2, true], right: [1, 2, true], top: [1, 0, true], front: [0, 2, false], rear: [0, 2, true] };
+  // [u axis, v axis, u flipped (front to the right), v flipped (upside down)]
+  const AX = { left: [1, 2, true, true], right: [1, 2, true, false], top: [1, 0, true, false], front: [0, 2, false, false], rear: [0, 2, true, false] };
   const scaleOf = {};
   for (const [side, [a, b]] of Object.entries(AX)) { const r = CHART_REGIONS[side]; scaleOf[side] = Math.min((r[2] - r[0]) / ext[a], (r[3] - r[1]) / ext[b]); }
-  const projUV = (side, q, sc = scaleOf[side]) => {
-    const [a, b, flip] = AX[side]; const r = CHART_REGIONS[side];
-    const fa = (q[a] - lo[a]) * sc; const fb = (hi[b] - q[b]) * sc; // b: height / width from the top edge
-    return [r[0] + (flip ? (ext[a] * sc - fa) : fa), r[1] + fb];
+  const projUV = (side, q, sc = null) => {
+    const [a, b, flip, vflip] = AX[side]; const r = CHART_REGIONS[side];
+    // the region filled along both axes like the decal sheet (sc given: one scale, for packed pieces)
+    const fa = sc ? (q[a] - lo[a]) * sc : ((q[a] - lo[a]) / ext[a]) * (r[2] - r[0]);
+    const fb = sc ? (hi[b] - q[b]) * sc : ((hi[b] - q[b]) / ext[b]) * (r[3] - r[1]);
+    const W = sc ? ext[a] * sc : r[2] - r[0]; const H = sc ? ext[b] * sc : r[3] - r[1];
+    return [r[0] + (flip ? W - fa : fa), r[1] + (vflip ? H - fb : fb)];
   };
   const slotOfMat = (m) => {
     if (m === 'Glass_Gray') return 'glass';
@@ -1261,14 +1269,20 @@ function chartsLayout(lod, { slots, cw = 128, ch = 64, size = 1024 }) {
     const k = slotOfMat(p.name); const P = p.positions; const I = p.indices;
     for (let t = 0; t < I.length; t += 3) {
       const q = [I[t], I[t + 1], I[t + 2]].map((i) => [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]);
-      const fn = cross(sub(q[1], q[0]), sub(q[2], q[0]));
+      // facing by the files' normals (the winding can run either way); the face's own if they cancel out
+      const vi0 = [I[t], I[t + 1], I[t + 2]]; let fn = [0, 1, 2].map((kk) => vi0.reduce((sum, i) => sum + p.normals[i * 3 + kk], 0));
+      if (Math.abs(fn[0]) + Math.abs(fn[1]) + Math.abs(fn[2]) < 1e-6) fn = cross(sub(q[1], q[0]), sub(q[2], q[0]));
       const ax = Math.abs(fn[0]); const ay = Math.abs(fn[1]); const az = Math.abs(fn[2]);
+      // facing down (the floor, the wheel-arch liners): black like game cars, by the files' normals
+      const Nn = p.normals; const vi = [I[t], I[t + 1], I[t + 2]];
+      const nz = vi.reduce((sum, i) => sum + Nn[i * 3 + 2], 0); const nl = Math.hypot(vi.reduce((sum, i) => sum + Nn[i * 3], 0), vi.reduce((sum, i) => sum + Nn[i * 3 + 1], 0), nz) || 1;
       let side;
       if (typeof k !== 'number') side = 'flat';
+      else if (nz / nl < -0.35) side = 'flat';
       else if (az >= ax && az >= ay) side = fn[2] >= 0 ? 'top' : 'bottom';
       else if (ax >= ay) side = fn[0] >= 0 ? 'left' : 'right';
       else side = fn[1] < 0 ? 'front' : 'rear';
-      tris.push({ pi, t, side, slot: k, q });
+      tris.push({ pi, t, side, slot: side === 'flat' && typeof k === 'number' ? 'black' : k, q });
     }
   });
   const key = (v) => `${Math.round(v[0] * 1e4)},${Math.round(v[1] * 1e4)},${Math.round(v[2] * 1e4)}`;
@@ -2036,7 +2050,7 @@ function islandMask(lod, px, w, h) {
   // texels no triangle votes for: colour 1 (not the template's band / hood showing through)
   for (let i = 0; i < lab.length; i++) px.set(RGB[lab[i] || 1], i * 4);
 }
-export function islandUVs(lod, bent, { slots = true } = {}) {
+export function islandUVs(lod, bent, { slots = true, clamp = true } = {}) {
   const sets = new Map(); // key → { P: [], isl: [] (island per triangle) }
   const islands = [];
   const add = (key, tri, id) => { const e = sets.get(key) || { P: [], isl: [] }; e.P.push(...tri); e.isl.push(id); sets.set(key, e); };
@@ -2088,6 +2102,7 @@ export function islandUVs(lod, bent, { slots = true } = {}) {
   const mapUV = (isl, x) => {
     const u = isl.cu[0] * x[0] + isl.cu[1] * x[1] + isl.cu[2] * x[2] + isl.cu[3];
     const v = isl.cv[0] * x[0] + isl.cv[1] * x[1] + isl.cv[2] * x[2] + isl.cv[3];
+    if (!clamp) return [Math.min(1, Math.max(0, u)), Math.min(1, Math.max(0, v))];
     const [a, b, c2, d] = isl.box;
     return [Math.min(b, Math.max(a, u)), Math.min(d, Math.max(c2, v))];
   };

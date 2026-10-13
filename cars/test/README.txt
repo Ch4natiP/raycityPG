@@ -278,3 +278,7 @@ front/rear views to the free bottom strip. Glass, part files, colour layer and a
 the mask carries each triangle's 59 colour to its new place (every triangle keeps its colour, 147 edge
 triangles of 57,105 sit on a colour edge). 0 outside the sheet, 0 in the game's block. With the test decal the
 car shows the same as Escarabajo (63_decal_preview.png).
+Video 2026-10-13 16:59 (pack 63): decals right, but the glass red — 59's glass / brake / indicator spots
+(0.81,0.05 / 0.76,0.05 / 0.60,0.61) now lie under the decal sheet, so the film painted them.
+64_your_canyon_63_glass_fixed.zip: those spots moved into Escarabajo's glass corner (u < 0.125, v 0.25-0.375,
+mask red, nothing else there): glass 0.06,0.31, brake 0.06,0.35, indicator 0.09,0.35. Everything else = 63.

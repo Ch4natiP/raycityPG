@@ -92,7 +92,7 @@ async function openFiles(entries) {
     c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(c0.data), c0.w, c0.h), 0, 0);
     car.colorImg = c;
   } catch { car.color = null; car.colorImg = null; }
-  selected = new Set(); undo.length = 0; redo.length = 0; paint.sel = new Map(); paint.dirty = false; box0 = null; carMid = null;
+  selected = new Set(); selectedPts = new Map(); undo.length = 0; redo.length = 0; paint.sel = new Map(); paint.dirty = false; box0 = null; carMid = null;
   $('file-sel').innerHTML = `<option value="*">ทุกไฟล์</option>${car.meshes.map((m, i) => `<option value="${i}">${m.rel}</option>`).join('')}`;
   $('car-info').textContent = `${car.name} · ${car.files.size} ไฟล์ · ${car.meshes.length} ไฟล์ที่มีรูปทรง`;
   build3D(); viewFrom('iso');
@@ -187,6 +187,8 @@ function draw2D() {
     });
   }
   g2.fillStyle = 'rgba(200,90,255,0.55)'; g2.fill(art);
+  if (drag && drag.box) { g2.save(); g2.strokeStyle = '#ffd400'; g2.setLineDash([5, 4]); g2.strokeRect(Math.min(drag.x0, drag.x1), Math.min(drag.y0, drag.y1), Math.abs(drag.x1 - drag.x0), Math.abs(drag.y1 - drag.y0)); g2.restore(); }
+  if (selectedPts.size) { g2.fillStyle = '#ffd400'; for (const [k, pts] of selectedPts) { const [mi, pi] = k.split('|').map(Number); const U = car.meshes[mi].parts[pi].uvs; for (const i of pts) { const [x, y] = toPx(U[i * 2], U[i * 2 + 1]); g2.fillRect(x - 3, y - 3, 6, 6); } } }
   draw2D.onArt = onArt;
   return stretched;
 }
@@ -252,7 +254,57 @@ function restore(s) {
   car.meshes.forEach((m, mi) => { m.parts.forEach((p, pi) => Object.assign(p, s[mi][pi])); m.isl = m.parts.map(islandsOf); m.dirty = true; });
   refresh(); build3D();
 }
+// single UV points picked in point mode: "mesh|part" → Set(point)
+let selectedPts = new Map();
+// An edit of the selected UVs: the UVs and the mask before it, so the colours can follow the islands
+let edit = null;
+function beginEdit() {
+  const carry = $('opt-carry') && $('opt-carry').checked && car.mask;
+  if (carry) { undo.push(comboSnap()); if (undo.length > 60) undo.shift(); redo.length = 0; } else pushUndo();
+  edit = { carry, uvs: car.meshes.map((m) => m.parts.map((p) => p.uvs.slice())), mask: carry ? car.mask.data.slice() : null };
+}
+function endEdit() {
+  if (!edit) return;
+  if (edit.carry) carryColours(edit);
+  edit = null; refresh(); update3DUVs();
+}
+// every triangle whose UVs moved: its texels at the new place take the colour from the old place
+function carryColours(e) {
+  const { w, h, data } = car.mask; const old = e.mask; let moved = 0;
+  car.meshes.forEach((m, mi) => m.parts.forEach((p, pi) => {
+    const o = e.uvs[mi] && e.uvs[mi][pi]; if (!o || o.length !== p.uvs.length) return;
+    const U = p.uvs; const I = p.indices;
+    for (let t = 0; t < I.length; t += 3) {
+      const v = [I[t], I[t + 1], I[t + 2]];
+      if (v.every((i) => U[i * 2] === o[i * 2] && U[i * 2 + 1] === o[i * 2 + 1])) continue;
+      moved++;
+      const q = v.map((i) => [U[i * 2] * w, U[i * 2 + 1] * h]); const s0 = v.map((i) => [o[i * 2] * w, o[i * 2 + 1] * h]);
+      const area = (q[1][0] - q[0][0]) * (q[2][1] - q[0][1]) - (q[2][0] - q[0][0]) * (q[1][1] - q[0][1]);
+      if (Math.abs(area) < 1e-6) { // flat: the spot moves with its colour
+        const sx = Math.min(w - 1, Math.max(0, Math.floor(s0[0][0]))); const sy = Math.min(h - 1, Math.max(0, Math.floor(s0[0][1])));
+        const x = Math.min(w - 1, Math.max(0, Math.floor(q[0][0]))); const y = Math.min(h - 1, Math.max(0, Math.floor(q[0][1])));
+        data.set(old.subarray((sy * w + sx) * 4, (sy * w + sx) * 4 + 4), (y * w + x) * 4); continue;
+      }
+      const x0 = Math.max(0, Math.floor(Math.min(q[0][0], q[1][0], q[2][0])) - 1); const x1 = Math.min(w - 1, Math.ceil(Math.max(q[0][0], q[1][0], q[2][0])) + 1);
+      const y0 = Math.max(0, Math.floor(Math.min(q[0][1], q[1][1], q[2][1])) - 1); const y1 = Math.min(h - 1, Math.ceil(Math.max(q[0][1], q[1][1], q[2][1])) + 1);
+      const grow = 1.2 / Math.sqrt(Math.abs(area));
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        const cx = x + 0.5; const cy = y + 0.5;
+        const b0 = ((q[1][0] - cx) * (q[2][1] - cy) - (q[2][0] - cx) * (q[1][1] - cy)) / area;
+        const b1 = ((q[2][0] - cx) * (q[0][1] - cy) - (q[0][0] - cx) * (q[2][1] - cy)) / area;
+        const b2 = 1 - b0 - b1;
+        if (b0 < -grow || b1 < -grow || b2 < -grow) continue;
+        const c0 = Math.min(1, Math.max(0, b0)); const c1 = Math.min(1, Math.max(0, b1)); const c2 = Math.max(0, 1 - c0 - c1);
+        const sx = Math.min(w - 1, Math.max(0, Math.floor(c0 * s0[0][0] + c1 * s0[1][0] + c2 * s0[2][0])));
+        const sy = Math.min(h - 1, Math.max(0, Math.floor(c0 * s0[0][1] + c1 * s0[1][1] + c2 * s0[2][1])));
+        data.set(old.subarray((sy * w + sx) * 4, (sy * w + sx) * 4 + 4), (y * w + x) * 4);
+      }
+    }
+  }));
+  if (moved) { paint.dirty = true; maskChanged(); }
+}
 function forSelectedVerts(fn) {
+  for (const [k, pts] of selectedPts) { const [mi, pi] = k.split('|').map(Number); const m = car.meshes[mi]; const p = m.parts[pi]; for (const i of pts) fn(p, i); m.dirty = true; }
   const groups = new Map();
   for (const key of selected) { const [mi, pi, id] = key.split('|').map(Number); const k = `${mi}|${pi}`; if (!groups.has(k)) groups.set(k, new Set()); groups.get(k).add(id); }
   for (const [k, ids] of groups) {
@@ -267,11 +319,11 @@ function selBox() {
   return { cu: (a + c) / 2, cv: (b + d) / 2, box: [a, b, c, d] };
 }
 function transformSel(f) {
-  if (!selected.size) { status('เลือกเกาะก่อน (คลิกในจอซ้าย หรือคลิกบนรถ)'); return; }
-  pushUndo();
+  if (!selected.size && !selectedPts.size) { status('เลือกเกาะก่อน (คลิกในจอซ้าย หรือคลิกบนรถ)'); return; }
+  beginEdit();
   const { cu, cv } = selBox();
   forSelectedVerts((p, i) => { const [u, v] = f(p.uvs[i * 2] - cu, p.uvs[i * 2 + 1] - cv); p.uvs[i * 2] = cu + u; p.uvs[i * 2 + 1] = cv + v; });
-  refresh(); update3DUVs();
+  endEdit();
 }
 
 // Cut by face direction inside each triangle's island box (or the whole car's stretched triangles):
@@ -418,16 +470,31 @@ uvc.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) { drag = { pan: true, x, y, vx: view.x, vy: view.y }; return; }
   if (paint.on && car.mask) { paintStart(); drag = { paint: true }; paintAt2D(...toUV(x, y)); return; }
   const [u, v] = toUV(x, y);
+  if (modal) { modalEnd(true); return; } // a click confirms G / R / S
+  if ($('pick-mode').value === 'point') {
+    const hit = pickPoint(u, v);
+    if (hit) {
+      const k = `${hit.mi}|${hit.pi}`;
+      if (!e.shiftKey && !(selectedPts.get(k) && selectedPts.get(k).has(hit.ids[0]))) { selectedPts = new Map(); selected = new Set(); }
+      const set = selectedPts.get(k) || new Set(); hit.ids.forEach((i) => set.add(i)); selectedPts.set(k, set);
+      beginEdit(); drag = { move: true, u, v }; refresh(); return;
+    }
+    if (!e.shiftKey) { selectedPts = new Map(); selected = new Set(); }
+    drag = { box: true, x0: x, y0: y, x1: x, y1: y }; refresh(); return;
+  }
   // a colour spot (pieces with all their UVs on one texel): every piece on it selected and lit on the car
   const spot = spotKeys(u, v);
-  if (spot.size && !paint.on) { selected = spot; refresh(); status(`จุดสีนี้: ${spot.size} ชิ้น (สีส้มบนรถ) · ทั้งชิ้นใช้สีของจุดนี้ · ลากเพื่อย้ายจุดได้`); pushUndo(); drag = { move: true, u, v }; return; }
+  if (spot.size && !paint.on) { selected = spot; selectedPts = new Map(); refresh(); status(`จุดสีนี้: ${spot.size} ชิ้น (สีส้มบนรถ) · ทั้งชิ้นใช้สีของจุดนี้ · ลากเพื่อย้ายจุดได้`); beginEdit(); drag = { move: true, u, v }; return; }
   const key = pickUV(u, v);
   if (key) {
-    if (!e.shiftKey && !selected.has(key)) selected = new Set();
+    if (!e.shiftKey && !selected.has(key)) { selected = new Set(); selectedPts = new Map(); }
     selected.add(key);
-    pushUndo();
+    beginEdit();
     drag = { move: true, u, v };
-  } else if (!e.shiftKey) selected = new Set();
+  } else {
+    if (!e.shiftKey) { selected = new Set(); selectedPts = new Map(); }
+    drag = { box: true, x0: x, y0: y, x1: x, y1: y }; // drag on empty sheet: a frame selects every island it touches
+  }
   refresh();
 });
 uvc.addEventListener('pointermove', (e) => {
@@ -435,11 +502,81 @@ uvc.addEventListener('pointermove', (e) => {
   const r = uvc.getBoundingClientRect(); const x = e.clientX - r.left; const y = e.clientY - r.top;
   if (drag.pan) { view.x = drag.vx + x - drag.x; view.y = drag.vy + y - drag.y; refresh(); return; }
   if (drag.paint) { paintAt2D(...toUV(x, y)); return; }
+  if (drag.box) { drag.x1 = x; drag.y1 = y; refresh(); return; }
   const [u, v] = toUV(x, y); const du = u - drag.u; const dv = v - drag.v; drag.u = u; drag.v = v;
   forSelectedVerts((p, i) => { p.uvs[i * 2] += du; p.uvs[i * 2 + 1] += dv; });
   refresh(); update3DUVs();
 });
-uvc.addEventListener('pointerup', () => { if (drag?.paint) paintEnd(); drag = null; });
+uvc.addEventListener('pointerup', () => {
+  if (drag?.paint) paintEnd();
+  if (drag?.move) endEdit();
+  if (drag?.box) boxSelect(drag);
+  drag = null;
+});
+// frame selection on the sheet: islands (or points in point mode) with a point inside
+function boxSelect(d) {
+  const [ua, va] = toUV(Math.min(d.x0, d.x1), Math.min(d.y0, d.y1)); const [ub, vb] = toUV(Math.max(d.x0, d.x1), Math.max(d.y0, d.y1));
+  if (Math.abs(d.x1 - d.x0) < 3 && Math.abs(d.y1 - d.y0) < 3) { refresh(); return; }
+  const pointMode = $('pick-mode').value === 'point';
+  for (const mi of shown()) car.meshes[mi].parts.forEach((p, pi) => {
+    if (p.positions.length / 3 <= 8) return; const U = p.uvs; const isl = car.meshes[mi].isl[pi];
+    for (let i = 0; i < U.length / 2; i++) {
+      if (U[i * 2] < ua || U[i * 2] > ub || U[i * 2 + 1] < va || U[i * 2 + 1] > vb) continue;
+      if (pointMode) { const k = `${mi}|${pi}`; const set = selectedPts.get(k) || new Set(); set.add(i); selectedPts.set(k, set); } else selected.add(`${mi}|${pi}|${isl.vertIsl[i]}`);
+    }
+  });
+  refresh();
+  status(`เลือกแล้ว: ${selected.size} เกาะ${selectedPts.size ? ` · ${[...selectedPts.values()].reduce((n, x) => n + x.size, 0)} จุด` : ''} · ลากย้าย / G ย้าย · R หมุน · S ย่อขยาย (ตามเมาส์)`);
+}
+// the UV point nearest the mouse (within 8 px), with every point at the same place (welded in UV)
+function pickPoint(u, v) {
+  const [qx, qy] = toPx(u, v); let best = null; let bd = 8;
+  for (const mi of shown()) car.meshes[mi].parts.forEach((p, pi) => {
+    if (p.positions.length / 3 <= 8) return; const U = p.uvs;
+    for (let i = 0; i < U.length / 2; i++) { const [x, y] = toPx(U[i * 2], U[i * 2 + 1]); const d = Math.hypot(x - qx, y - qy); if (d < bd) { bd = d; best = { mi, pi, i }; } }
+  });
+  if (!best) return null;
+  const p = car.meshes[best.mi].parts[best.pi]; const U = p.uvs; const ids = [];
+  for (let i = 0; i < U.length / 2; i++) if (Math.abs(U[i * 2] - U[best.i * 2]) < 1e-7 && Math.abs(U[i * 2 + 1] - U[best.i * 2 + 1]) < 1e-7) ids.push(i);
+  return { mi: best.mi, pi: best.pi, ids };
+}
+// G / R / S with the mouse (Blender-like): move, turn by any angle, scale; click or Enter confirms, Esc / right click cancels
+let modal = null; let lastMouse = [0.5, 0.5];
+uvc.addEventListener('pointermove', (e) => {
+  const r = uvc.getBoundingClientRect(); lastMouse = toUV(e.clientX - r.left, e.clientY - r.top);
+  if (!modal) return;
+  const [u, v] = lastMouse; const { cu, cv } = modal;
+  const a0 = Math.atan2(modal.v0 - cv, modal.u0 - cu); const a1 = Math.atan2(v - cv, u - cu);
+  const d0 = Math.hypot(modal.u0 - cu, modal.v0 - cv) || 1e-6; const d1 = Math.hypot(u - cu, v - cv);
+  let ang = a1 - a0; if (e.ctrlKey) ang = Math.round(ang / (Math.PI / 12)) * (Math.PI / 12); // Ctrl: 15° steps
+  const sc = d1 / d0; const ca = Math.cos(ang); const sa = Math.sin(ang);
+  let k = 0;
+  forSelectedVerts((p, i) => {
+    const bu = modal.base[k * 2]; const bv = modal.base[k * 2 + 1]; k++;
+    let nu = bu; let nv = bv;
+    if (modal.type === 'G') { nu = bu + (u - modal.u0); nv = bv + (v - modal.v0); if (e.shiftKey) { if (Math.abs(u - modal.u0) > Math.abs(v - modal.v0)) nv = bv; else nu = bu; } }
+    else if (modal.type === 'R') { nu = cu + (bu - cu) * ca - (bv - cv) * sa; nv = cv + (bu - cu) * sa + (bv - cv) * ca; }
+    else { nu = cu + (bu - cu) * sc; nv = cv + (bv - cv) * sc; }
+    p.uvs[i * 2] = nu; p.uvs[i * 2 + 1] = nv;
+  });
+  status(modal.type === 'G' ? 'ย้าย (Shift = แนวตรง) · คลิก/Enter ยืนยัน · Esc ยกเลิก' : modal.type === 'R' ? `หมุน ${(ang * 180 / Math.PI).toFixed(1)}° (Ctrl = ทีละ 15°) · คลิก/Enter ยืนยัน · Esc ยกเลิก` : `ย่อ/ขยาย ×${sc.toFixed(2)} · คลิก/Enter ยืนยัน · Esc ยกเลิก`);
+  refresh(); update3DUVs();
+});
+function modalStart(type) {
+  if (!selected.size && !selectedPts.size) { status('เลือกเกาะหรือจุดก่อน แล้วกด G / R / S'); return; }
+  beginEdit();
+  const base = []; forSelectedVerts((p, i) => base.push(p.uvs[i * 2], p.uvs[i * 2 + 1]));
+  const { cu, cv } = selBox();
+  modal = { type, base, cu, cv, u0: lastMouse[0], v0: lastMouse[1] };
+  if (type !== 'G' && Math.hypot(modal.u0 - cu, modal.v0 - cv) < 0.01) { modal.u0 = cu + 0.05; modal.v0 = cv; }
+  status(`${type === 'G' ? 'ย้าย' : type === 'R' ? 'หมุน' : 'ย่อ/ขยาย'}: ขยับเมาส์ · คลิก/Enter ยืนยัน · Esc ยกเลิก`);
+}
+function modalEnd(ok) {
+  if (!modal) return;
+  if (!ok) { let k = 0; forSelectedVerts((p, i) => { p.uvs[i * 2] = modal.base[k * 2]; p.uvs[i * 2 + 1] = modal.base[k * 2 + 1]; k++; }); edit = null; undo.pop(); modal = null; refresh(); update3DUVs(); status('ยกเลิก'); return; }
+  modal = null; endEdit(); status('เรียบร้อย · Ctrl+Z ย้อน');
+}
+uvc.addEventListener('contextmenu', () => { if (modal) modalEnd(false); });
 uvc.addEventListener('wheel', (e) => {
   e.preventDefault();
   const r = uvc.getBoundingClientRect(); const x = e.clientX - r.left; const y = e.clientY - r.top;
@@ -1266,7 +1403,14 @@ window.addEventListener('keydown', (e) => {
   else if (paint.on && ['1', '2', '3', '0'].includes(k)) document.querySelector(`#paint-slots button[data-slot="${k}"]`).click();
   else if (paint.on && k === 'i') setMode('pick');
   else if (paint.on && k === 'enter' && paint.mode === 'select') $('btn-sel-paint').click();
-  else if (k === 'r') $('btn-rot').click();
+  else if (modal && k === 'enter') { e.preventDefault(); modalEnd(true); }
+  else if (modal && k === 'escape') modalEnd(false);
+  else if (!paint.on && (k === 'g' || k === 'r' || k === 's') && !e.ctrlKey && !e.metaKey) modalStart(k.toUpperCase());
+  else if (!paint.on && ['arrowleft', 'arrowright', 'arrowup', 'arrowdown'].includes(k) && (selected.size || selectedPts.size)) {
+    e.preventDefault(); const st = (e.shiftKey ? 10 : 1) / 1024; const du = k === 'arrowleft' ? -st : k === 'arrowright' ? st : 0; const dv = k === 'arrowup' ? -st : k === 'arrowdown' ? st : 0;
+    beginEdit(); forSelectedVerts((p, i) => { p.uvs[i * 2] += du; p.uvs[i * 2 + 1] += dv; }); endEdit();
+  }
+  else if (k === 'tab') { e.preventDefault(); $('pick-mode').value = $('pick-mode').value === 'island' ? 'point' : 'island'; selected = new Set(); selectedPts = new Map(); refresh(); status($('pick-mode').value === 'point' ? 'โหมดจุด: คลิก/ลากกรอบเลือกจุด UV' : 'โหมดเกาะ'); }
   else if (k === '+' || k === '=') $('btn-bigger').click();
   else if (k === '-') $('btn-smaller').click();
   else if (k === 'a' && !e.altKey) { car.meshes.forEach((m, mi) => { if (!shown().includes(mi)) return; m.isl.forEach((q, pi) => { for (let i = 0; i < q.count; i++) selected.add(`${mi}|${pi}|${i}`); }); }); refresh(); }

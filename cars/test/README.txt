@@ -271,3 +271,10 @@ Video 2026-10-13 16:40 (pack 61 + EMPEREUR): the decal nearly right; the owner a
 wells black. underTris: faces looking down, plus low faces set back > 12 cm from the widest outward face of
 their 10 cm slice (wheel-well walls), not looking up → the black spot (chartsLayout, 📐, ⬛).
 62_your_canyon_black_wells.zip  pack 61 with the wheel wells black too (5,755 triangles on the black spot).
+Pack 62 did not work in game. 63_your_canyon_59_uv_on_decal_sheet.zip: pack 59 (the good one) with nothing but
+its UV moved: 59's own islands (no re-cutting) are moved / scaled onto Escarabajo's decal sheet — left side to
+the upside-down top band, right side to v 0.46-0.75, top view (fitted from 59's own layout) to v 0.21-0.54,
+front/rear views to the free bottom strip. Glass, part files, colour layer and all other files are 59's bytes;
+the mask carries each triangle's 59 colour to its new place (every triangle keeps its colour, 147 edge
+triangles of 57,105 sit on a colour edge). 0 outside the sheet, 0 in the game's block. With the test decal the
+car shows the same as Escarabajo (63_decal_preview.png).

@@ -1164,6 +1164,120 @@ $('btn-like-esc').addEventListener('click', async () => {
   build3D(); maskChanged();
   status(`จัด UV ตามแผ่นลายในร้านแล้ว (${jobs.reduce((n, j) => n + j.slots.length, 0).toLocaleString()} สามเหลี่ยม · สีย้ายตาม) · เปิดรูปลายมาเทียบได้ · กด ⬇ ดาวน์โหลด`);
 });
+// 🎯 The car's own UV islands (its cut kept, nothing re-cut) moved onto the shop decals' sheet: each island
+// fitted (affine, least squares) from where it is to where Escarabajo's sheet wants its points — left side on
+// top upside down, top view in the middle, right side below; front / rear / floor pieces packed into the free
+// bottom strip. Glass and lamp spots go to Escarabajo's glass corner, off the sheet. Colours follow.
+const SHEET = {
+  L: (x, y, z) => [1.000 - 0.891 * y, 0.017 + 0.284 * z],
+  T: (x, y, z) => [0.966 - 0.804 * y, 0.540 - 0.326 * x],
+  R: (x, y, z) => [0.994 - 0.874 * y, 0.753 - 0.291 * z],
+};
+const GLASS_SPOT = { 1: [0.06, 0.31], 2: [0.03, 0.35], 3: [0.06, 0.35], 4: [0.09, 0.35] };
+function fitAffine(src, dst) { // src, dst: [[u, v]…] → f(u, v) or null
+  let a = [0, 0, 0, 0, 0, 0]; const M = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]; const bu = [0, 0, 0]; const bv = [0, 0, 0];
+  for (let i = 0; i < src.length; i++) { const r = [src[i][0], src[i][1], 1]; for (let j = 0; j < 3; j++) { for (let k = 0; k < 3; k++) M[j][k] += r[j] * r[k]; bu[j] += r[j] * dst[i][0]; bv[j] += r[j] * dst[i][1]; } }
+  const det = (m) => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+  const D = det(M); if (!(Math.abs(D) > 1e-14)) return null;
+  const solve = (b) => [0, 1, 2].map((c) => det(M.map((row, j) => row.map((x, k) => (k === c ? b[j] : x)))) / D);
+  const [p, q] = [solve(bu), solve(bv)]; a = [...p, ...q];
+  return (u, v) => [a[0] * u + a[1] * v + a[2], a[3] * u + a[4] * v + a[5]];
+}
+$('btn-to-sheet').addEventListener('click', async () => {
+  if (!car.meshes.length || !car.mask) return;
+  status('กำลังย้ายเกาะ UV เดิมลงแผ่นลาย…'); await new Promise((r) => setTimeout(r, 30));
+  const { w, h, data } = car.mask; const old = data.slice();
+  const slotAt = (u, v) => { const x = Math.min(w - 1, Math.max(0, Math.floor(u * w))); const y = Math.min(h - 1, Math.max(0, Math.floor(v * h))); const o = (y * w + x) * 4; return old[o] > 128 ? 1 : old[o + 1] > 128 ? 2 : old[o + 2] > 128 ? 3 : 0; };
+  const mn = [Infinity, Infinity, Infinity]; const mx = [-Infinity, -Infinity, -Infinity];
+  for (const m of car.meshes) for (const p of m.parts) if (p.flags[0] === 0 && p.positions.length / 3 > 8) for (let i = 0; i < p.positions.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], p.positions[i + k]); mx[k] = Math.max(mx[k], p.positions[i + k]); }
+  const nrm = (P, i) => [0, 1, 2].map((k) => (P[i * 3 + k] - mn[k]) / ((mx[k] - mn[k]) || 1));
+  undo.push(comboSnap()); if (undo.length > 60) undo.shift(); redo.length = 0;
+  const oldUV = new Map(); const strip = []; let fitted = 0; let spots = 0;
+  for (const m of car.meshes) m.parts.forEach((p) => {
+    const U = p.uvs; const I = p.indices; const P = p.positions;
+    if (p.flags[0] !== 0) { // glass / lamps: one spot each, off the sheet, mask red
+      const s = GLASS_SPOT[p.flags[0]]; if (!s) return; oldUV.set(p, U.slice());
+      for (let i = 0; i < U.length; i += 2) { U[i] = s[0]; U[i + 1] = s[1]; } spots++; return;
+    }
+    if (P.length / 3 <= 8) return;
+    oldUV.set(p, U.slice());
+    const isl = islandsOf(p); const groups = new Map();
+    for (let t = 0; t < I.length; t += 3) { const g = isl.vertIsl[I[t]]; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(t); }
+    const sg = outwardSign(p); const N = p.normals;
+    for (const tris of groups.values()) {
+      let flat = true; const votes = [0, 0, 0, 0]; const n = [0, 0, 0]; let cx = 0; let cnt = 0; const pts = new Set();
+      for (const t of tris) {
+        const [a, b, c] = [I[t], I[t + 1], I[t + 2]];
+        const ar = (U[b * 2] - U[a * 2]) * (U[c * 2 + 1] - U[a * 2 + 1]) - (U[c * 2] - U[a * 2]) * (U[b * 2 + 1] - U[a * 2 + 1]);
+        if (Math.abs(ar) > 1e-9) flat = false;
+        votes[slotAt((U[a * 2] + U[b * 2] + U[c * 2]) / 3, (U[a * 2 + 1] + U[b * 2 + 1] + U[c * 2 + 1]) / 3)]++;
+        const e1 = [P[b * 3] - P[a * 3], P[b * 3 + 1] - P[a * 3 + 1], P[b * 3 + 2] - P[a * 3 + 2]]; const e2 = [P[c * 3] - P[a * 3], P[c * 3 + 1] - P[a * 3 + 1], P[c * 3 + 2] - P[a * 3 + 2]];
+        const A = Math.hypot(e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]);
+        for (const v of [a, b, c]) { for (let k = 0; k < 3; k++) n[k] += sg * N[v * 3 + k] * A; pts.add(v); }
+      }
+      // spots (one texel) and black trim keep their place
+      if (flat || votes[0] > votes[1] + votes[2] + votes[3]) continue;
+      for (const v of pts) { cx += nrm(P, v)[0]; cnt++; } cx /= cnt;
+      const [ax, ay, az] = n.map(Math.abs); let view = null;
+      if (ax >= ay && ax >= az) view = (n[0] > 0) === (cx > 0.5) ? (n[0] > 0 ? 'L' : 'R') : null; // inner walls → strip
+      else if (az >= ay && n[2] > 0) view = 'T';
+      const list = [...pts];
+      if (view) {
+        const f = fitAffine(list.map((v) => [U[v * 2], U[v * 2 + 1]]), list.map((v) => SHEET[view](...nrm(P, v))));
+        if (f) { for (const v of list) { const [nu, nv] = f(U[v * 2], U[v * 2 + 1]); U[v * 2] = nu; U[v * 2 + 1] = nv; } fitted++; continue; }
+      }
+      strip.push({ U, list });
+    }
+  });
+  // front / rear / floor pieces: shelf-packed into the free bottom strip (u 0.19-0.99, v 0.80-0.99)
+  { const pad = 3 / w; const boxes = strip.map((e) => { let a = Infinity; let b = Infinity; let c = -Infinity; let d = -Infinity; for (const v of e.list) { a = Math.min(a, e.U[v * 2]); c = Math.max(c, e.U[v * 2]); b = Math.min(b, e.U[v * 2 + 1]); d = Math.max(d, e.U[v * 2 + 1]); } return { ...e, a, b, w: c - a, h: d - b }; }).sort((p, q) => q.h - p.h);
+    const place = (sc, go) => { let x = 0.19; let y = 0.80; let rh = 0; for (const e of boxes) { if (x + e.w * sc > 0.99) { x = 0.19; y += rh + pad; rh = 0; } if (y + e.h * sc > 0.99) return false; if (go) for (const v of e.list) { e.U[v * 2] = x + (e.U[v * 2] - e.a) * sc; e.U[v * 2 + 1] = y + (e.U[v * 2 + 1] - e.b) * sc; } x += e.w * sc + pad; rh = Math.max(rh, e.h * sc); } return true; };
+    let sc = 1; while (!place(sc, false) && sc > 0.05) sc *= 0.9; place(sc, true); }
+  // colours: new mask red; moved triangles take their old texels (a grown pass, then an exact one so
+  // neighbours never bleed into each other); spots that did not move get their old texels back
+  data.fill(0); for (let i = 0; i < w * h; i++) data.set([255, 0, 0, 255], i * 4);
+  const keep = [];
+  // files not on the page (placeholders, variants unlike default) keep their UVs: their colour spots stay too
+  const sameAs = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+  for (const [rel, b] of car.files) {
+    if (!/\.0m$/i.test(rel) || car.meshes.some((m) => sameAs(m.orig, b))) continue;
+    try {
+      for (const q of omParts(parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)))) { const U = q.uvs; const I = q.indices; for (let t = 0; t < I.length; t += 3) { const tri = [I[t], I[t + 1], I[t + 2]].map((i) => [U[i * 2], U[i * 2 + 1]]); if (Math.abs((tri[1][0] - tri[0][0]) * (tri[2][1] - tri[0][1]) - (tri[2][0] - tri[0][0]) * (tri[1][1] - tri[0][1])) < 1e-9) keep.push(tri); } }
+    } catch { /* not a mesh */ }
+  }
+  for (const pass of [0, 1]) for (const m of car.meshes) for (const p of m.parts) {
+    const o = oldUV.get(p); const U = p.uvs; const I = p.indices;
+    if (!o || p.flags[0] !== 0) { if (pass === 0 && p.flags[0] === 0) for (let t = 0; t < I.length; t += 3) keep.push([I[t], I[t + 1], I[t + 2]].map((i) => [U[i * 2], U[i * 2 + 1]])); continue; }
+    for (let t = 0; t < I.length; t += 3) {
+      const v = [I[t], I[t + 1], I[t + 2]];
+      const q = v.map((i) => [U[i * 2] * w, U[i * 2 + 1] * h]); const s0 = v.map((i) => [o[i * 2] * w, o[i * 2 + 1] * h]);
+      const area = (q[1][0] - q[0][0]) * (q[2][1] - q[0][1]) - (q[2][0] - q[0][0]) * (q[1][1] - q[0][1]);
+      if (Math.abs(area) < 1e-6 || v.every((i) => U[i * 2] === o[i * 2] && U[i * 2 + 1] === o[i * 2 + 1])) { if (pass === 0) keep.push(v.map((i) => [o[i * 2], o[i * 2 + 1]])); continue; }
+      const x0 = Math.max(0, Math.floor(Math.min(q[0][0], q[1][0], q[2][0])) - 2); const x1 = Math.min(w - 1, Math.ceil(Math.max(q[0][0], q[1][0], q[2][0])) + 2);
+      const y0 = Math.max(0, Math.floor(Math.min(q[0][1], q[1][1], q[2][1])) - 2); const y1 = Math.min(h - 1, Math.ceil(Math.max(q[0][1], q[1][1], q[2][1])) + 2);
+      const grow = pass === 0 ? 2 / Math.sqrt(Math.abs(area)) : 0;
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        const cx = x + 0.5; const cy = y + 0.5;
+        const b0 = ((q[1][0] - cx) * (q[2][1] - cy) - (q[2][0] - cx) * (q[1][1] - cy)) / area; const b1 = ((q[2][0] - cx) * (q[0][1] - cy) - (q[0][0] - cx) * (q[2][1] - cy)) / area; const b2 = 1 - b0 - b1;
+        if (b0 < -grow || b1 < -grow || b2 < -grow) continue;
+        const c0 = Math.min(1, Math.max(0, b0)); const c1 = Math.min(1, Math.max(0, b1)); const c2 = Math.max(0, 1 - c0 - c1);
+        const sx = Math.min(w - 1, Math.max(0, Math.floor(c0 * s0[0][0] + c1 * s0[1][0] + c2 * s0[2][0]))); const sy = Math.min(h - 1, Math.max(0, Math.floor(c0 * s0[0][1] + c1 * s0[1][1] + c2 * s0[2][1])));
+        data.set(old.subarray((sy * w + sx) * 4, (sy * w + sx) * 4 + 4), (y * w + x) * 4);
+      }
+    }
+  }
+  for (const tri of keep) { const u = (tri[0][0] + tri[1][0] + tri[2][0]) / 3; const v = (tri[0][1] + tri[1][1] + tri[2][1]) / 3; const sx = Math.floor(u * w); const sy = Math.floor(v * h); for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const x = Math.min(w - 1, Math.max(0, sx + dx)); const y = Math.min(h - 1, Math.max(0, sy + dy)); const o = (y * w + x) * 4; data.set(old.subarray(o, o + 4), o); } }
+  for (const s of Object.values(GLASS_SPOT)) { const sx = Math.floor(s[0] * w); const sy = Math.floor(s[1] * h); for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) data.set([255, 0, 0, 255], ((sy + dy) * w + sx + dx) * 4); }
+  if (car.color) {
+    const cd = car.color.data;
+    for (let y = 0; y < car.color.h; y++) for (let x = 0; x < car.color.w; x++) { if ((x + 0.5) / car.color.w <= RESERVED[2] && (y + 0.5) / car.color.h >= RESERVED[1]) continue; const o = (y * car.color.w + x) * 4; if (cd[o + 3]) cd.set([0, 0, 0, 0], o); }
+    car.colorDirty = true; car.colorImg.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(cd), car.color.w, car.color.h), 0, 0);
+  }
+  for (const m of car.meshes) { m.isl = m.parts.map(islandsOf); m.dirty = true; }
+  paint.dirty = true; selected = new Set(); selectedPts = new Map();
+  build3D(); maskChanged();
+  status(`ย้ายเกาะเดิมลงแผ่นลายแล้ว: ${fitted} เกาะ (ซ้าย/บน/ขวา) · ${strip.length} ชิ้น (หน้า/หลัง/ใต้) ไปแถบล่าง · กระจก/ไฟ ${spots} ชิ้น ไปมุมกระจกแบบ Escarabajo · สีย้ายตาม · เปิดรูปลายมาเทียบได้`);
+});
 // 🖼 A shop decal / film picture (png, jpg or the game's .dds) shown over the sheet and on the car, so the
 // panels can be moved where the picture expects them.
 function ddsToCanvas(b) {

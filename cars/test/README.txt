@@ -327,3 +327,10 @@ is one full colour at any size. Fore / aft slider next to the ride height one (w
 y −1.22 / 1.14; in the video the front tyre sits forward in its arch).
 68_your_canyon_tail_lamps_red_lower_forward.zip  pack 66 (tail panel in rearlight) + 🔴 (339 triangles red,
 88 black) + body 4 cm lower and 3 cm forward.
+Video 2026-10-13 18:14 (pack 68): body shape good, but the tail panel still black / white — no red, so the
+game is not drawing rearlight's paint with our picture (or not reading it). gtv98's lamp pictures (canyon's
+folders come from gtv98's): rearlight 256×256, headlight 256×128, _s.dds full size DXT3 without mipmaps; ours
+were 64×64 with mipmaps (Escarabajo's way). RayCity UV now writes them full size.
+69_TEST_tail_picture_solid_red.zip  a test: pack 68 with rearlight's picture 256×256, every transparent pixel
+solid red, _s.dds like gtv98's. Red tail panel in game = the picture is read (then the colour cells work);
+still black = the picture is not read at all (check the .jmd takes rearlight/*.png and *_s.dds).

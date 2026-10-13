@@ -858,7 +858,7 @@ async function lampPictures(out) {
         for (let y = by; y < by + 4 && y < h; y++) for (let x = bx; x < bx + 4 && x < w; x++) data.set(c, (y * w + x) * 4);
       }
       out.set(`${dir}/${tex}.png`, await png(data, w, h));
-      out.set(`${dir}/${tex}_s.dds`, dds(data, w, h, 'half')); // (Escarabajo's part pictures: 64×64 DXT3 with mipmaps)
+      out.set(`${dir}/${tex}_s.dds`, dds(data, w, h, 'full')); // (as gtv98's, which canyon's folders come from: full size, no mipmaps)
       n++;
     }
   }

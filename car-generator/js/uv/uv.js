@@ -90,7 +90,7 @@ async function openFiles(entries) {
     c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(c0.data), c0.w, c0.h), 0, 0);
     car.colorImg = c;
   } catch { car.color = null; car.colorImg = null; }
-  selected = new Set(); undo.length = 0; redo.length = 0; paint.sel = new Map(); paint.dirty = false; box0 = null;
+  selected = new Set(); undo.length = 0; redo.length = 0; paint.sel = new Map(); paint.dirty = false; box0 = null; carMid = null;
   $('file-sel').innerHTML = `<option value="*">ทุกไฟล์</option>${car.meshes.map((m, i) => `<option value="${i}">${m.rel}</option>`).join('')}`;
   $('car-info').textContent = `${car.name} · ${car.files.size} ไฟล์ · ${car.meshes.length} ไฟล์ที่มีรูปทรง`;
   build3D(); viewFrom('iso');
@@ -336,8 +336,7 @@ const cam = new THREE.PerspectiveCamera(40, 1, 0.02, 100); cam.position.set(4.5,
 const controls = new OrbitControls(cam, gl);
 controls.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
 controls.target.set(0, 0.6, 0);
-// mirrored in x so the car reads as in game (Escarabajo's decal text read backwards without it)
-const carGroup = new THREE.Group(); carGroup.rotation.x = -Math.PI / 2; carGroup.scale.x = -1; scene.add(carGroup);
+const carGroup = new THREE.Group(); carGroup.rotation.x = -Math.PI / 2; scene.add(carGroup);
 let texCanvas = null; let tex = null;
 function makeTexture() {
   texCanvas = document.createElement('canvas'); texCanvas.width = texCanvas.height = 1024;
@@ -597,6 +596,19 @@ function fillTri(U, a, b, c) {
     if (s0 >= -grow && s1 >= -grow && s2 >= -grow) setTexel(y * w + x);
   }
 }
+// +1 when a piece's normals point away from the car's middle, −1 when into it (cached per piece)
+let carMid = null;
+function outwardSign(p) {
+  if (p._sg) return p._sg;
+  if (!carMid) {
+    const mn = [Infinity, Infinity, Infinity]; const mx = [-Infinity, -Infinity, -Infinity];
+    for (const m of car.meshes) for (const q of m.parts) if (q.positions.length / 3 > 8) for (let i = 0; i < q.positions.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], q.positions[i + k]); mx[k] = Math.max(mx[k], q.positions[i + k]); }
+    carMid = [0, 1, 2].map((k) => (mn[k] + mx[k]) / 2);
+  }
+  let s = 0; const P = p.positions; const N = p.normals;
+  for (let i = 0; i < P.length; i += 3) s += (P[i] - carMid[0]) * N[i] + (P[i + 1] - carMid[1]) * N[i + 1] + (P[i + 2] - carMid[2]) * N[i + 2];
+  p._sg = s >= 0 ? 1 : -1; return p._sg;
+}
 // every paintable triangle: fn(mesh, part, t, centre[3], normal[3]) — glass left out
 function eachTri(fn) {
   for (const mesh of carGroup.children) {
@@ -605,8 +617,9 @@ function eachTri(fn) {
     for (let t = 0; t < p.indices.length; t += 3) {
       const [a, b, c] = [p.indices[t], p.indices[t + 1], p.indices[t + 2]];
       const e1 = [P[b * 3] - P[a * 3], P[b * 3 + 1] - P[a * 3 + 1], P[b * 3 + 2] - P[a * 3 + 2]]; const e2 = [P[c * 3] - P[a * 3], P[c * 3 + 1] - P[a * 3 + 1], P[c * 3 + 2] - P[a * 3 + 2]];
-      // facing: the files' own normals (the winding of game files can run either way)
-      const Nn = p.normals; let n = [Nn[a * 3] + Nn[b * 3] + Nn[c * 3], Nn[a * 3 + 1] + Nn[b * 3 + 1] + Nn[c * 3 + 1], Nn[a * 3 + 2] + Nn[b * 3 + 2] + Nn[c * 3 + 2]];
+      // facing: the files' own normals (the winding of game files can run either way), read reversed for a
+      // piece whose normals point into the car
+      const Nn = p.normals; const sg = outwardSign(p); let n = [sg * (Nn[a * 3] + Nn[b * 3] + Nn[c * 3]), sg * (Nn[a * 3 + 1] + Nn[b * 3 + 1] + Nn[c * 3 + 1]), sg * (Nn[a * 3 + 2] + Nn[b * 3 + 2] + Nn[c * 3 + 2])];
       if (!(Math.abs(n[0]) + Math.abs(n[1]) + Math.abs(n[2]) > 1e-9)) n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
       fn(mesh, p, t / 3, [(P[a * 3] + P[b * 3] + P[c * 3]) / 3, (P[a * 3 + 1] + P[b * 3 + 1] + P[c * 3 + 1]) / 3, (P[a * 3 + 2] + P[b * 3 + 2] + P[c * 3 + 2]) / 3], n);
     }
@@ -868,9 +881,16 @@ document.querySelectorAll('#protect input').forEach((c) => c.addEventListener('c
 $('btn-floor-black').addEventListener('click', () => {
   if (!car.mask) return;
   const keep = paint.slot; paint.slot = 0; paintStart(); let n = 0;
-  eachTri((mesh, p, t, c, nrm) => { const l = Math.hypot(nrm[0], nrm[1], nrm[2]) || 1; if (nrm[2] / l < -0.35) { fillT(p, t); n++; } });
+  let shared = 0;
+  eachTri((mesh, p, t, c, nrm) => {
+    const l = Math.hypot(nrm[0], nrm[1], nrm[2]) || 1; if (nrm[2] / l >= -0.35) return;
+    // a piece on one colour spot shares it with others: painting the spot would blacken them all
+    const U = p.uvs; const [a, b, cc] = [p.indices[t * 3], p.indices[t * 3 + 1], p.indices[t * 3 + 2]];
+    if (Math.abs((U[b * 2] - U[a * 2]) * (U[cc * 2 + 1] - U[a * 2 + 1]) - (U[cc * 2] - U[a * 2]) * (U[b * 2 + 1] - U[a * 2 + 1])) < 1e-9) { shared++; return; }
+    fillT(p, t); n++;
+  });
   paintEnd(); paint.slot = keep; paint.dirty = true; maskChanged();
-  status(`พื้นรถ + ใต้ซุ้มล้อ เป็นดำแล้ว (${n.toLocaleString()} สามเหลี่ยม) · Ctrl+Z ย้อน`);
+  status(`พื้นรถ + ใต้ซุ้มล้อ เป็นดำแล้ว (${n.toLocaleString()} สามเหลี่ยม)${shared ? ` · ข้าม ${shared.toLocaleString()} ที่อยู่บนจุดสีร่วม (กด 📐 ก่อน แล้วค่อยกดปุ่มนี้)` : ''} · Ctrl+Z ย้อน`);
 });
 $('btn-paint-all').addEventListener('click', () => {
   if (!car.mask) return;
@@ -937,7 +957,9 @@ $('btn-like-esc').addEventListener('click', async () => {
         const [a, b, c] = [I[t], I[t + 1], I[t + 2]];
         const flat = Math.abs((U[b * 2] - U[a * 2]) * (U[c * 2 + 1] - U[a * 2 + 1]) - (U[c * 2] - U[a * 2]) * (U[b * 2 + 1] - U[a * 2 + 1])) < 1e-9;
         const sl = slotAt((U[a * 2] + U[b * 2] + U[c * 2]) / 3, (U[a * 2 + 1] + U[b * 2 + 1] + U[c * 2 + 1]) / 3);
-        if (flat || sl === 0) keep.push(a, b, c); else { move.push(a, b, c); slots.push(sl); }
+        // black pieces (trim) keep their spot; painted ones — also pieces on one colour spot — are laid out
+        // so shop decals show on them
+        if (sl === 0) keep.push(a, b, c); else { move.push(a, b, c); slots.push(sl); }
       }
       if (!move.length) return;
       const proxy = { name: 'Body_Color', positions: p.positions, normals: p.normals, uvs: p.uvs, indices: Uint32Array.from(move) };
@@ -983,7 +1005,7 @@ $('btn-like-esc').addEventListener('click', async () => {
       if (p.positions.length / 3 <= 8) continue; const U = p.uvs; const I = p.indices;
       for (let t = 0; t < I.length; t += 3) {
         const [a, b, c] = [I[t], I[t + 1], I[t + 2]];
-        if (Math.abs((U[b * 2] - U[a * 2]) * (U[c * 2 + 1] - U[a * 2 + 1]) - (U[c * 2] - U[a * 2]) * (U[b * 2 + 1] - U[a * 2 + 1])) >= 1e-9 && p.flags[0] === 0 && slotAt((U[a * 2] + U[b * 2] + U[c * 2]) / 3, (U[a * 2 + 1] + U[b * 2 + 1] + U[c * 2 + 1]) / 3) !== 0) continue;
+        if (p.flags[0] === 0 && slotAt((U[a * 2] + U[b * 2] + U[c * 2]) / 3, (U[a * 2 + 1] + U[b * 2 + 1] + U[c * 2 + 1]) / 3) !== 0) continue;
         // kept (flat spot, black panel or glass): its old texels back
         for (const i of [a, b, c]) { const x = Math.min(w - 1, Math.max(0, Math.floor(U[i * 2] * w))); const y = Math.min(h - 1, Math.max(0, Math.floor(U[i * 2 + 1] * h))); for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = Math.min(w - 1, Math.max(0, x + dx)); const yy = Math.min(h - 1, Math.max(0, y + dy)); const o = (yy * w + xx) * 4; data.set(old.subarray(o, o + 4), o); } }
       }

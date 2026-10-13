@@ -253,6 +253,11 @@ upside down, middle band (0.23-0.52) the top view (hood with the big emblem at t
 (0.52-0.80) the other side upright; front of the car to the right everywhere, the numbers near the front doors.
 chartsLayout (new body) and RayCity UV's 📐 button lay a car out on exactly that sheet (regions filled along
 both axes), panels never sharing texture; faces looking down (floor, wheel-arch liners) go to a black spot.
-The 3D views were mirrored (Escarabajo's decal text read backwards): fixed (x mirrored, double-sided).
+(The 3D views are right as they were: a mirror tried on 2026-10-13 was taken back — Escarabajo's side text reads as in game without it. Measured on Escarabajo and gtv98: top band = +x side, u falls with y, v grows with z (upside down); middle = top view, +x at small v; lower band = −x side upright.)
 60_your_canyon_decal_sheet.zip  the owner's canyon laid out on the decal sheet with RayCity UV (colours moved
                          with it), floor + wheel-arch liners black, glass untouched (mask red, colour 0,0,0,0).
+Pack 60 in game: half the car black — the owner's canyon has many pieces sharing one red colour spot, and the
+floor-black step painted that spot. 61_your_canyon_decal_sheet_fixed.zip: pieces on a shared red spot are laid
+out on the decal sheet too (decals can show on them), faces looking down (floor, arch liners) go to a black
+spot of their own; the floor tool now skips shared spots; normals pointing into the car (this canyon) are read
+reversed.

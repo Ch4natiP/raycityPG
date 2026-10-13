@@ -1265,17 +1265,24 @@ export function chartsLayout(lod, { slots, cw = 128, ch = 64, size = 1024 }) {
   const tris = []; // { p, t, side, slot }
   const parts = [];
   for (const list of Object.values(lod)) for (const p of list) parts.push(p);
+  // which way the files' normals point: outwards (away from the car's middle) for most triangles, or
+  // inwards (the owner's canyon) — then they are read reversed
+  const mid = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+  const outward = (p) => {
+    let sgn = 0; const P = p.positions; const N = p.normals;
+    for (let i = 0; i < P.length; i += 3) sgn += (P[i] - mid[0]) * N[i] + (P[i + 1] - mid[1]) * N[i + 1] + (P[i + 2] - mid[2]) * N[i + 2];
+    return sgn >= 0 ? 1 : -1;
+  };
   parts.forEach((p, pi) => {
-    const k = slotOfMat(p.name); const P = p.positions; const I = p.indices;
+    const k = slotOfMat(p.name); const P = p.positions; const I = p.indices; const nsign = outward(p);
     for (let t = 0; t < I.length; t += 3) {
       const q = [I[t], I[t + 1], I[t + 2]].map((i) => [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]);
       // facing by the files' normals (the winding can run either way); the face's own if they cancel out
-      const vi0 = [I[t], I[t + 1], I[t + 2]]; let fn = [0, 1, 2].map((kk) => vi0.reduce((sum, i) => sum + p.normals[i * 3 + kk], 0));
+      const vi0 = [I[t], I[t + 1], I[t + 2]]; let fn = [0, 1, 2].map((kk) => nsign * vi0.reduce((sum, i) => sum + p.normals[i * 3 + kk], 0));
       if (Math.abs(fn[0]) + Math.abs(fn[1]) + Math.abs(fn[2]) < 1e-6) fn = cross(sub(q[1], q[0]), sub(q[2], q[0]));
       const ax = Math.abs(fn[0]); const ay = Math.abs(fn[1]); const az = Math.abs(fn[2]);
       // facing down (the floor, the wheel-arch liners): black like game cars, by the files' normals
-      const Nn = p.normals; const vi = [I[t], I[t + 1], I[t + 2]];
-      const nz = vi.reduce((sum, i) => sum + Nn[i * 3 + 2], 0); const nl = Math.hypot(vi.reduce((sum, i) => sum + Nn[i * 3], 0), vi.reduce((sum, i) => sum + Nn[i * 3 + 1], 0), nz) || 1;
+      const nz = fn[2]; const nl = Math.hypot(fn[0], fn[1], fn[2]) || 1;
       let side;
       if (typeof k !== 'number') side = 'flat';
       else if (nz / nl < -0.35) side = 'flat';

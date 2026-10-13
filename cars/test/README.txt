@@ -342,3 +342,13 @@ picture (+ full-size _s.dds) for every picture a list.xml names that is missing.
 70_your_canyon_68_every_folder_picture.zip  pack 68 (red tail cells, black housing, 4 cm lower, 3 cm forward)
 + clear pictures for frontbumper, grill, headlight, hood, mainspoiler, rearbumper, roof, skirt (default and
 rbrc_001); rearlight's picture 128×128 full-size _s.dds.
+The owner (pack 70): the stray colour is the shop decal's colour; the tail lamps never light (brake / reverse).
+Decal: shop decals also paint the bottom strip (Escarabajo's body front / rear faces sit at u 0.7-1,
+v 0.7-0.8), so canyon's front / rear / floor pieces packed there showed bits of the decal. 🎯 now packs them
+left of the sheet's rear end (u < 0.10, where the sides end at 0.11 and the top view at 0.16), in three areas
+clear of the film cell, lamp spots and game block (v 0.127-0.247, 0.378-0.438, 0.462-0.655).
+Lamps: Escarabajo's default car uses rearlight/base with escarabajo_rearlight_base (its _s.dds differs from the
+.png); its lamps (kind 3 brake, 4 indicator) are spread over a clear patch of the picture (brake u 0.272-0.373,
+v 0.846-0.896; indicator 0.386-0.422, 0.858-0.894), not one opaque spot. 🔴 now does the same.
+71_your_canyon_no_decal_on_bumpers_lamps_like_escarabajo.zip  pack 70 + 🎯 (156 front / rear pieces moved,
+93 %) + 🔴 (lamps over Escarabajo's patches, kept clear).

@@ -825,7 +825,18 @@ $('btn-tail-auto').addEventListener('click', () => {
   }
   red = by.tail.length + by.turn.length; const nTris = I.length / 3;
   for (const k of ['tail', 'turn', 'trim']) if (by[k].length) colourTris(p, by[k], k);
-  for (const l of rl.parts) if (l.flags[0] === 3 || l.flags[0] === 4) for (let t = 0; t < l.indices.length; t += 3) rasterUV(q, l.uvs, l.indices[t], l.indices[t + 1], l.indices[t + 2], l.flags[0] === 4 ? LAMP_PAINT.turn : LAMP_PAINT.tail);
+  // the lamps themselves like Escarabajo's: spread (seen from behind) over a clear patch of the picture
+  // (brake u 0.272-0.373, v 0.846-0.896; indicator 0.386-0.422, 0.858-0.894) — clear when off, the game
+  // lights them; a lamp on one opaque spot does not light up
+  for (const l of rl.parts) {
+    const R = l.flags[0] === 3 ? [0.272, 0.846, 0.373, 0.896] : l.flags[0] === 4 ? [0.386, 0.858, 0.422, 0.894] : null; if (!R) continue;
+    const L = l.positions; let x0 = Infinity; let x1 = -Infinity; let z0 = Infinity; let z1 = -Infinity;
+    for (let i = 0; i < L.length; i += 3) { x0 = Math.min(x0, L[i]); x1 = Math.max(x1, L[i]); z0 = Math.min(z0, L[i + 2]); z1 = Math.max(z1, L[i + 2]); }
+    const U = new Float32Array(l.uvs.length);
+    for (let i = 0; i < L.length / 3; i++) { U[i * 2] = R[0] + (R[2] - R[0]) * ((x1 - L[i * 3]) / ((x1 - x0) || 1)); U[i * 2 + 1] = R[1] + (R[3] - R[1]) * ((z1 - L[i * 3 + 2]) / ((z1 - z0) || 1)); }
+    l.uvs = U; rl.dirty = true;
+    for (let y = Math.floor(R[1] * q.h); y < Math.ceil(R[3] * q.h); y++) for (let x = Math.floor(R[0] * q.w); x < Math.ceil(R[2] * q.w); x++) q.data.set([0, 0, 0, 0], (y * q.w + x) * 4);
+  }
   lampPicShow('rearlight');
   for (const x of car.meshes) x.isl = x.parts.map(islandsOf);
   build3D(); refresh();
@@ -1470,12 +1481,27 @@ $('btn-to-sheet').addEventListener('click', async () => {
       strip.push({ U, list });
     }
   });
-  // front / rear / floor pieces: shelf-packed into the free bottom strip (u 0.19-0.99, v 0.80-0.99)
-  { const pad = 3 / w; const boxes = strip.map((e) => { let a = Infinity; let b = Infinity; let c = -Infinity; let d = -Infinity; for (const v of e.list) { a = Math.min(a, e.U[v * 2]); c = Math.max(c, e.U[v * 2]); b = Math.min(b, e.U[v * 2 + 1]); d = Math.max(d, e.U[v * 2 + 1]); } return { ...e, a, b, w: c - a, h: d - b }; }).sort((p, q) => q.h - p.h);
-    // rows reaching the plate's cell (u 0.75-1, v 0.875-1) stop before it
-    const xEnd = (y, hh) => (y + hh > PLATE_RECT[1] - 0.002 ? PLATE_RECT[0] - 0.005 : 0.99);
-    const place = (sc, go) => { let x = 0.19; let y = 0.80; let rh = 0; for (const e of boxes) { if (x + e.w * sc > xEnd(y, Math.max(rh, e.h * sc))) { x = 0.19; y += rh + pad; rh = 0; } if (y + e.h * sc > 0.99) return false; if (go) for (const v of e.list) { e.U[v * 2] = x + (e.U[v * 2] - e.a) * sc; e.U[v * 2 + 1] = y + (e.U[v * 2 + 1] - e.b) * sc; } x += e.w * sc + pad; rh = Math.max(rh, e.h * sc); } return true; };
-    let sc = 1; while (!place(sc, false) && sc > 0.05) sc *= 0.9; place(sc, true); }
+  // front / rear / floor pieces: shelf-packed where the shop decals never draw — left of the sheet's rear end
+  // (u < 0.10; the sides end at u 0.11, the top view at 0.16), between the film cell, the lamp spots and the
+  // game's block. The bottom strip is not free: decals paint it (Escarabajo's front / rear faces sit there),
+  // so pieces put there showed bits of the decal.
+  { const pad = 2 / w; const boxes = strip.map((e) => { let a = Infinity; let b = Infinity; let c = -Infinity; let d = -Infinity; for (const v of e.list) { a = Math.min(a, e.U[v * 2]); c = Math.max(c, e.U[v * 2]); b = Math.min(b, e.U[v * 2 + 1]); d = Math.max(d, e.U[v * 2 + 1]); } return { ...e, a, b, w: c - a, h: d - b }; }).sort((p, q) => q.h - p.h);
+    const AREAS = FREE_AREAS;
+    const place = (sc, go) => {
+      let k = 0; let x = AREAS[0][0]; let y = AREAS[0][1]; let rh = 0;
+      for (const e of boxes) {
+        for (;;) {
+          const A = AREAS[k];
+          if (x + e.w * sc > A[2]) { x = A[0]; y += rh + pad; rh = 0; }
+          if (y + e.h * sc <= A[3] && x + e.w * sc <= A[2]) break;
+          k++; if (k >= AREAS.length) return false; x = AREAS[k][0]; y = AREAS[k][1]; rh = 0;
+        }
+        if (go) for (const v of e.list) { e.U[v * 2] = x + (e.U[v * 2] - e.a) * sc; e.U[v * 2 + 1] = y + (e.U[v * 2 + 1] - e.b) * sc; }
+        x += e.w * sc + pad; rh = Math.max(rh, e.h * sc);
+      }
+      return true;
+    };
+    let sc = 1; while (!place(sc, false) && sc > 0.01) sc *= 0.93; place(sc, true); stripScale = sc; }
   // colours: new mask red; moved triangles take their old texels (a grown pass, then an exact one so
   // neighbours never bleed into each other); spots that did not move get their old texels back
   data.fill(0); for (let i = 0; i < w * h; i++) data.set([255, 0, 0, 255], i * 4);
@@ -1519,11 +1545,14 @@ $('btn-to-sheet').addEventListener('click', async () => {
   for (const m of car.meshes) { m.isl = m.parts.map(islandsOf); m.dirty = true; }
   paint.dirty = true; selected = new Set(); selectedPts = new Map();
   build3D(); maskChanged();
-  status(`ย้ายเกาะเดิมลงแผ่นลายแล้ว: ${fitted} เกาะ (ซ้าย/บน/ขวา) · ${strip.length} ชิ้น (หน้า/หลัง/ใต้) ไปแถบล่าง · กระจก ${gl.n.toLocaleString()} สามเหลี่ยม จัดแบบ Escarabajo (ฟิล์มลงถูกที่) · ไฟ ${gl.lamps} ชิ้น พ้นแผ่นลาย · สีย้ายตาม · เปิดรูปลายมาเทียบได้`);
+  status(`ย้ายเกาะเดิมลงแผ่นลายแล้ว: ${fitted} เกาะ (ซ้าย/บน/ขวา) · ${strip.length} ชิ้น (หน้า/หลัง/ใต้) ไปมุมซ้ายที่ลายไม่ทับ (ย่อ ${Math.round(stripScale * 100)}%) · กระจก ${gl.n.toLocaleString()} สามเหลี่ยม จัดแบบ Escarabajo (ฟิล์มลงถูกที่) · ไฟ ${gl.lamps} ชิ้น พ้นแผ่นลาย · สีย้ายตาม · เปิดรูปลายมาเทียบได้`);
 });
 // 🪟 Glass like Escarabajo's on the films' picture (filmGlass), lamps' colour spots off the sheets, the film,
 // plate and lamp cells red in the mask and clear in the colour layer (no film = clear glass).
 const LAMP_SPOT = { 2: [0.03, 0.45], 3: [0.06, 0.45], 4: [0.09, 0.45] };
+// sheet areas no shop decal draws on (left of the rear end), clear of the film cell, lamp spots and game block
+const FREE_AREAS = [[0.004, 0.127, 0.099, 0.247], [0.004, 0.378, 0.099, 0.438], [0.004, 0.462, 0.099, 0.655]];
+let stripScale = 1;
 const inRect = (u, v, r) => u >= r[0] && u <= r[2] && v >= r[1] && v <= r[3];
 function paintIn(r) { // paint triangles of the page's files whose middle lies in r (plates left out)
   let n = 0;

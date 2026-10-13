@@ -285,3 +285,15 @@ mask red, nothing else there): glass 0.06,0.31, brake 0.06,0.35, indicator 0.09,
 Video 2026-10-13 17:06 (pack 64 in game): glass clear, decals straight, white car clean. The owner: pack 64 is
 the main one from now on; pack 59 is kept for now. RayCity UV's 🎯 button (move the car's own islands onto the
 decal sheet) does what made pack 64 from pack 59, for any car: run on 59 it gives the same sheet, colours and glass.
+Video 2026-10-13 17:14 (pack 64 in the shop): with a Film the whole glass turned one colour, and no plate.
+Escarabajo measured: the film picture (128×128) sits at u 0-0.125, v 0.25-0.375 — windshield top 30 % on the
+two top rows (left half v 0.252-0.287, right half 0.287-0.322), rear window on v 0.325-0.374 (u 0.008 right →
+0.123 left), side windows and the rest of the windshield on the line u 0.119; the plate (0.41 × 0.11 m, 8 points,
+6 triangles, frontbumper/default part 0 and rearbumper/default part 1) covers u 0.75-1, v 0.875-1 (plate
+picture 256×128); nothing else uses those cells, mask red there. Pack 64 had all glass on one point of the
+film's sun strip, and canyon's plate holders squashed to a point.
+convert.js filmGlass / plateQuad; RayCity UV: 🪟 (glass like Escarabajo), 🔖 (plates, auto-placed on the car's
+middle, sliders for height / lean / gap), 🎞 / 🔖 pictures shown on the car; 🎯 does the glass too and keeps
+the plate's cell free. 65_your_canyon_film_glass_and_plates.zip: made on the page from pack 59 (🎯 then 🔖):
+colours as 59 (234 of 57,105 triangles differ, nearly all on colour edges), front plate where canyon's own
+holder was (z 0.50), rear plate on the rear bumper middle (z 0.48), lamps' spots at v 0.45.

@@ -2410,6 +2410,90 @@ export async function clearColourArt(out, name) {
   out.set(`${name}_color_s.dds`, dds(px, w, h, mode));
   return n;
 }
+// Glass laid out on the shop films' sheet like Escarabajo's (measured from its body / roof glass): the film
+// picture sits at u 0-0.125, v 0.25-0.375 —
+//   windshield, top 30 % of its height: the sun strip, left half on row v 0.252-0.287, right half on
+//     v 0.287-0.322, u 0.002-0.123 across the half (centre at u 0.123 on the left row, 0.002 on the right)
+//   rear window: u 0.008 (right, +x) - 0.123 (left), v 0.325 (top) - 0.374 (bottom)
+//   side windows and the rest of the windshield: the line u 0.119, v 0.325 (top) - 0.375 (bottom)
+// Without a film that corner is red in the mask and clear in the colour layer, so the glass stays clear.
+export const FILM_RECT = [0, 0.25, 0.125, 0.375];
+export function filmGlass(parts) {
+  const all = parts.filter((p) => p.indices.length);
+  if (!all.length) return 0;
+  const mn = [Infinity, Infinity, Infinity]; const mx = [-Infinity, -Infinity, -Infinity];
+  for (const p of all) for (let i = 0; i < p.positions.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], p.positions[i + k]); mx[k] = Math.max(mx[k], p.positions[i + k]); }
+  const mid = [(mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2, mn[2]];
+  // every triangle with its outward normal and its kind of window
+  const tris = [];
+  for (const p of all) {
+    const P = p.positions; const N = p.normals; let s = 0;
+    for (let i = 0; i < P.length; i += 3) s += (P[i] - mid[0]) * N[i] + (P[i + 1] - mid[1]) * N[i + 1] + (P[i + 2] - mid[2]) * N[i + 2];
+    const sg = s >= 0 ? 1 : -1;
+    for (let t = 0; t < p.indices.length; t += 3) {
+      const v = [p.indices[t], p.indices[t + 1], p.indices[t + 2]].map((i) => ({ p: [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]], n: [N[i * 3], N[i * 3 + 1], N[i * 3 + 2]] }));
+      const n = [0, 1, 2].map((k) => sg * (v[0].n[k] + v[1].n[k] + v[2].n[k]));
+      const kind = Math.abs(n[0]) > Math.abs(n[1]) ? 'side' : n[1] < 0 ? 'front' : 'rear';
+      tris.push({ p, v, kind });
+    }
+  }
+  const range = (kind, k) => { let a = Infinity; let b = -Infinity; for (const t of tris) if (t.kind === kind) for (const v of t.v) { a = Math.min(a, v.p[k]); b = Math.max(b, v.p[k]); } return [a, b]; };
+  const [fzb, fzt] = range('front', 2); const [szb, szt] = range('side', 2); const [rzb, rzt] = range('rear', 2); const [rxa, rxb] = range('rear', 0);
+  const sOf = (z) => (fzt - z) / ((fzt - fzb) || 1); // 0 at the windshield's top, 1 at its bottom
+  const BAND = 0.3;
+  // half width of the windshield along its height (top and band bottom, straight between)
+  let hwTop = 0; let hwBot = 0;
+  for (const t of tris) if (t.kind === 'front') for (const v of t.v) { const s = sOf(v.p[2]); if (s < 0.1) hwTop = Math.max(hwTop, Math.abs(v.p[0])); if (s >= 0.2 && s <= 0.4) hwBot = Math.max(hwBot, Math.abs(v.p[0])); }
+  hwTop = hwTop || hwBot || 1; hwBot = hwBot || hwTop;
+  const hw = (s) => hwTop + (hwBot - hwTop) * Math.min(1, s / BAND);
+  const lerp = (a, b, f) => ({ p: a.p.map((x, k) => x + (b.p[k] - x) * f), n: a.n.map((x, k) => x + (b.n[k] - x) * f) });
+  // split a polygon by f(v) = 0 into [negative side, positive side]
+  const split = (poly, f) => {
+    const neg = []; const pos = [];
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i]; const b = poly[(i + 1) % poly.length]; const fa = f(a); const fb = f(b);
+      (fa < 0 ? neg : pos).push(a);
+      if ((fa < 0) !== (fb < 0) && fa !== fb) { const c = lerp(a, b, fa / (fa - fb)); neg.push(c); pos.push(c); }
+    }
+    return [neg, pos];
+  };
+  const out = new Map(all.map((p) => [p, { P: [], N: [], U: [], I: [] }]));
+  const emit = (p, poly, uvOf) => {
+    if (poly.length < 3) return; const o = out.get(p); const base = o.P.length / 3;
+    for (const v of poly) { o.P.push(...v.p); o.N.push(...v.n); o.U.push(...uvOf(v)); }
+    for (let i = 1; i + 1 < poly.length; i++) o.I.push(base, base + i, base + i + 1);
+  };
+  const line = (z, zb, zt) => [0.119, 0.325 + 0.05 * Math.min(1, Math.max(0, (zt - z) / ((zt - zb) || 1)))];
+  for (const t of tris) {
+    if (t.kind === 'side') { emit(t.p, t.v, (v) => line(v.p[2], szb, szt)); continue; }
+    if (t.kind === 'rear') { emit(t.p, t.v, (v) => [0.008 + 0.115 * (rxb - v.p[0]) / ((rxb - rxa) || 1), 0.325 + 0.049 * (rzt - v.p[2]) / ((rzt - rzb) || 1)]); continue; }
+    const [band, low] = split(t.v, (v) => sOf(v.p[2]) - BAND);
+    emit(t.p, low, (v) => line(sOf(v.p[2]), BAND, 1).map((x, k) => (k ? 0.325 + 0.05 * (sOf(v.p[2]) - BAND) / (1 - BAND) : x)));
+    const [left, right] = split(band, (v) => v.p[0]);
+    emit(t.p, left, (v) => { const s = Math.max(0, sOf(v.p[2])); return [0.123 - 0.121 * Math.min(1, Math.abs(v.p[0]) / hw(s)), 0.252 + 0.035 * s / BAND]; });
+    emit(t.p, right, (v) => { const s = Math.max(0, sOf(v.p[2])); return [0.002 + 0.121 * Math.min(1, Math.abs(v.p[0]) / hw(s)), 0.287 + 0.035 * s / BAND]; });
+  }
+  let n = 0;
+  for (const [p, o] of out) { p.positions = Float32Array.from(o.P); p.normals = Float32Array.from(o.N); p.uvs = Float32Array.from(o.U); p.indices = Uint32Array.from(o.I); n += o.I.length / 3; }
+  return n;
+}
+// The licence plate like Escarabajo's: a 0.41 × 0.11 m plate of 8 points / 6 triangles over the whole cell
+// u 0.75-1, v 0.875-1 (the game draws the plate picture there, which is why nothing else may use that cell).
+// centre [x, y, z]; facing −1 front plate, +1 rear plate; out = how much further out its top edge stands (m).
+export const PLATE_RECT = [0.75, 0.875, 1, 1];
+export function plateQuad(centre, facing, out = 0) {
+  // Escarabajo's front plate around its centre (x right, z up), uv as in its file
+  const pts = [[-0.2035, 0.0505, 0.750, 0.881], [-0.2035, -0.0475, 0.750, 0.994], [-0.1935, -0.0525, 0.756, 1.000], [0.1935, -0.0525, 0.994, 1.000], [0.2035, -0.0475, 1.000, 0.994], [0.2035, 0.0505, 1.000, 0.881], [0.1935, 0.0555, 0.994, 0.875], [-0.1935, 0.0555, 0.756, 0.875]];
+  const H = 0.108; const len = Math.hypot(H, out);
+  const P = []; const U = []; const N = [];
+  for (const [x, z, u, v] of pts) {
+    const f = (z + 0.0525) / H - 0.5; // −0.5 bottom … 0.5 top
+    // seen from behind, the rear plate's x runs the other way, so the picture reads right
+    P.push(centre[0] + (facing > 0 ? -x : x), centre[1] + facing * out * f, centre[2] + z);
+    U.push(u, v); N.push(0, (facing * H) / len, -out / len);
+  }
+  return { positions: Float32Array.from(P), normals: Float32Array.from(N), uvs: Float32Array.from(U), indices: Uint32Array.from([0, 1, 2, 2, 3, 4, 4, 5, 6, 2, 4, 6, 0, 2, 6, 7, 0, 6]) };
+}
 // Escarabajo's own values (the owner, 2026-10-13: the glass colour is to be Escarabajo's).
 export const ESCARABAJO_GLASS = { rect: [0, 0.25, 0.125, 0.125], colour: [1, 1, 1, 0], mask: [255, 0, 0, 255] };
 export async function glassLikeEscarabajo(out, name) {

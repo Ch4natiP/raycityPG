@@ -117,10 +117,21 @@
       <p class="hint">เอารูปลาย/ฟิล์มจากไฟล์เกมมาเปิด จะเห็นลายทับบนรูปซ้ายและบนรถ · ลากเกาะ UV ให้แผงตรงกับลาย (หน้ารถต้องหันขวา)</p>
     </section>
     <section class="paint">
-      <h2>🪟 กระจก</h2>
+      <h2>🪟 กระจก + ฟิล์ม · 🔖 ป้ายทะเบียน (แบบ Escarabajo)</h2>
+      <div class="btns"><button id="btn-film-glass" class="accent">🪟 จัดกระจกแบบ Escarabajo (ฟิล์มลงถูกที่)</button></div>
+      <p class="hint">ฟิล์มในร้านใช้รูป 128×128 ที่มุม u 0–0.125, v 0.25–0.375: แถวบน = แถบบังแดดกระจกหน้า (ครึ่งซ้าย/ครึ่งขวา), แถวล่าง = กระจกหลังทั้งบาน, ขอบขวา = กระจกข้าง · ไม่ใส่ฟิล์ม กระจกใสปกติ</p>
+      <div class="btns"><button id="btn-plates" class="accent">🔖 ใส่ป้ายทะเบียน หน้า + หลัง</button></div>
+      <div class="row"><span>ป้ายหน้า สูง</span><input id="plate-fz" type="range" min="0.05" max="0.8" step="0.005" value="0"><b id="plate-fz-v"></b></div>
+      <div class="row"><span>ป้ายหลัง สูง</span><input id="plate-rz" type="range" min="0.05" max="0.8" step="0.005" value="0"><b id="plate-rz-v"></b></div>
+      <div class="row"><span>ป้ายหลัง เอียง</span><input id="plate-rt" type="range" min="-0.1" max="0.1" step="0.005" value="0"><b id="plate-rt-v"></b></div>
+      <div class="row"><span>ห่างตัวรถ</span><input id="plate-gap" type="range" min="-0.03" max="0.05" step="0.0025" value="0.01"><b id="plate-gap-v"></b></div>
+      <p class="hint">ป้าย 0.41×0.11 ม. เหมือน Escarabajo ใช้รูปที่ช่อง u 0.75–1, v 0.875–1 (รูปป้าย 256×128) · ช่องนี้กับช่องฟิล์มต้องว่าง ไม่มีแผงอื่นทับ · เลื่อนแถบแล้วป้ายย้ายตามทันที</p>
+      <div class="btns"><button id="btn-film-img">🎞 เปิดรูปฟิล์ม (128×128)</button><button id="btn-plate-img">🔖 เปิดรูปป้าย (256×128)</button><input id="file-film" type="file" accept=".dds,.png,.jpg,.jpeg,.webp" hidden><input id="file-plate" type="file" accept=".dds,.png,.jpg,.jpeg,.webp" hidden></div>
+      <p id="plate-info" class="hint"></p>
+      <details><summary>สีใต้กระจก (แบบเดิม)</summary>
       <div class="row"><span>แบบ</span><select id="glass-look"><option value="paint">แบบ Escarabajo</option><option value="mine">แบบรถขาวทั้งคันที่ทำเอง (canyon)</option></select></div>
-      <div class="btns"><button id="btn-glass" class="accent">🪟 ตั้งกระจก</button></div>
-      <p class="hint">กระจกเอาสีจากรูปสีใต้ UV ของกระจก: ถ้าใต้กระจกเป็นแดง กระจกจะเป็นสีเดียวกับตัวรถ · ปุ่มนี้ตั้งเฉพาะใต้กระจก ไม่โดนแผงอื่น</p>
+      <div class="btns"><button id="btn-glass">🪟 ตั้งสีใต้กระจก</button></div>
+      </details>
     </section>
     <section class="paint">
       <h2>⚠ รูปแปลกติดบนรถ (ล้อ / หมากรุก / แถบสี)</h2>

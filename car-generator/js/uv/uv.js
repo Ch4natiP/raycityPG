@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { parseOM, writeOM, omParts } from '../om.js';
 import { makeZip, readZip } from '../zip.js';
-import { decodePNG, png, dds, chartsLayout, underTris } from '../convert.js';
+import { decodePNG, png, dds, chartsLayout, underTris, filmGlass, plateQuad, FILM_RECT, PLATE_RECT } from '../convert.js';
 import { decodeSpec } from '../carSpec.js';
 
 const $ = (id) => document.getElementById(id);
@@ -21,6 +21,7 @@ const status = (t) => { $('status').textContent = t; };
 
 const car = { name: '', files: new Map(), meshes: [], mask: null, maskImg: null, color: null, colorImg: null, colorDirty: false };
 let decalImg = null; // a shop decal / film picture opened to line the UVs up with
+let filmImg = null; let plateImg = null; // a window film (128×128) / plate (256×128) picture, drawn in their cells
 // The colour layer (<name>_color.png, 128×64) is drawn over the car where its alpha is up: every game car
 // keeps the same block at its bottom-left (black / purple squares, a black-white ramp) for the game's own
 // use, so paint UVs must stay out of it (a car whose tail lid sat there showed checkers and stripes).
@@ -61,7 +62,7 @@ async function openFiles(entries) {
     const b = car.files.get(rel);
     const om = parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
     const parts = omParts(om);
-    if (!parts.some((q) => q.positions.length / 3 > 8)) continue;
+    if (!parts.some((q) => q.positions.length / 3 > 8) && !/^(front|rear)bumper\//.test(rel)) continue; // (a bumper of only a plate holder stays: the plate goes there)
     // a part with its own texture (list.xml tex, e.g. the tail lamps' red / amber bands) doesn't use the
     // body's paint mask: left off the sheet and not painted
     const dir = rel.includes('/') ? rel.split('/')[0] : '';
@@ -92,7 +93,7 @@ async function openFiles(entries) {
     c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(c0.data), c0.w, c0.h), 0, 0);
     car.colorImg = c;
   } catch { car.color = null; car.colorImg = null; }
-  selected = new Set(); selectedPts = new Map(); undo.length = 0; redo.length = 0; paint.sel = new Map(); paint.dirty = false; box0 = null; carMid = null;
+  selected = new Set(); selectedPts = new Map(); undo.length = 0; redo.length = 0; paint.sel = new Map(); paint.dirty = false; box0 = null; carMid = null; platesOn = false;
   $('file-sel').innerHTML = `<option value="*">ทุกไฟล์</option>${car.meshes.map((m, i) => `<option value="${i}">${m.rel}</option>`).join('')}`;
   $('car-info').textContent = `${car.name} · ${car.files.size} ไฟล์ · ${car.meshes.length} ไฟล์ที่มีรูปทรง`;
   build3D(); viewFrom('iso');
@@ -139,6 +140,8 @@ function draw2D() {
   const [x0, y0] = toPx(0, 0); const [x1, y1] = toPx(1, 1);
   if (car.maskImg) { g2.globalAlpha = 0.55; g2.drawImage(car.maskImg, x0, y0, x1 - x0, y1 - y0); g2.globalAlpha = 1; }
   if (decalImg && $('decal-on').checked) { g2.globalAlpha = +$('decal-alpha').value; g2.drawImage(decalImg, x0, y0, x1 - x0, y1 - y0); g2.globalAlpha = 1; }
+  const cell = (img, r) => { if (!img) return; const [a, b] = toPx(r[0], r[1]); const [c, d] = toPx(r[2], r[3]); g2.drawImage(img, a, b, c - a, d - b); };
+  cell(filmImg, FILM_RECT); cell(plateImg, PLATE_RECT);
   if (car.colorImg && $('opt-color').checked) { g2.imageSmoothingEnabled = false; g2.drawImage(car.colorImg, x0, y0, x1 - x0, y1 - y0); g2.imageSmoothingEnabled = true; }
   g2.strokeStyle = '#777'; g2.strokeRect(x0, y0, x1 - x0, y1 - y0);
   if (car.meshes.length) {
@@ -408,6 +411,8 @@ function drawTexture() {
   if (car.maskImg) g.drawImage(paint.preview && car.mask ? previewCanvas() : car.maskImg, 0, 0, 1024, 1024); else { g.fillStyle = '#c33'; g.fillRect(0, 0, 1024, 1024); }
   if (car.colorImg && $('opt-color') && $('opt-color').checked) { g.imageSmoothingEnabled = false; g.drawImage(car.colorImg, 0, 0, 1024, 1024); g.imageSmoothingEnabled = true; }
   if (decalImg && $('decal-on') && $('decal-on').checked) g.drawImage(decalImg, 0, 0, 1024, 1024);
+  if (filmImg) g.drawImage(filmImg, FILM_RECT[0] * 1024, FILM_RECT[1] * 1024, (FILM_RECT[2] - FILM_RECT[0]) * 1024, (FILM_RECT[3] - FILM_RECT[1]) * 1024);
+  if (plateImg) g.drawImage(plateImg, PLATE_RECT[0] * 1024, PLATE_RECT[1] * 1024, (PLATE_RECT[2] - PLATE_RECT[0]) * 1024, (PLATE_RECT[3] - PLATE_RECT[1]) * 1024);
   if (!paint.on && !paint.preview) {
     g.globalAlpha = 0.35; g.fillStyle = '#fff';
     for (let i = 0; i < 32; i++) for (let j = 0; j < 32; j++) if ((i + j) % 2) g.fillRect(i * 32, j * 32, 32, 32);
@@ -415,18 +420,19 @@ function drawTexture() {
   }
   if (tex) tex.needsUpdate = true;
 }
+function collapsed(P) { let d = 0; for (let i = 3; i < P.length; i += 3) d = Math.max(d, Math.abs(P[i] - P[0]) + Math.abs(P[i + 1] - P[1]) + Math.abs(P[i + 2] - P[2])); return d < 0.01; }
 function build3D() {
   carGroup.clear();
   if (!car.meshes.length) return;
   makeTexture();
   car.meshes.forEach((m, mi) => m.parts.forEach((p, pi) => {
-    if (p.positions.length / 3 <= 8) return;
+    if (p.positions.length / 3 <= 8 && collapsed(p.positions)) return; // plate holders squashed to a point
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(p.positions), 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(p.normals), 3));
     geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(p.uvs), 2));
     geo.setIndex(new THREE.BufferAttribute(Uint32Array.from(p.indices), 1));
-    const mat = p.flags[0] === 1 ? new THREE.MeshStandardMaterial({ color: '#6fa8dc', transparent: true, opacity: 0.4, side: THREE.DoubleSide }) : new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6, side: THREE.DoubleSide });
+    const mat = p.flags[0] === 1 ? (filmImg ? new THREE.MeshStandardMaterial({ map: tex, transparent: true, opacity: 0.8, side: THREE.DoubleSide }) : new THREE.MeshStandardMaterial({ color: '#6fa8dc', transparent: true, opacity: 0.4, side: THREE.DoubleSide })) : new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6, side: THREE.DoubleSide });
     const mesh = new THREE.Mesh(geo, mat); mesh.userData = { mi, pi };
     carGroup.add(mesh);
   }));
@@ -679,7 +685,8 @@ async function saveZip() {
     if (!m.dirty) continue;
     const parts = m.parts.map((p) => ({ ...p, kind: p.flags[0] }));
     const bytes = writeOM(m.om, parts);
-    for (const [rel, b] of car.files) if (b.length === m.orig.length && b.every((x, i) => x === m.orig[i])) { out.set(rel, bytes); n++; }
+    const dir = (r) => (r.includes('/') ? r.split('/')[0] : '');
+    for (const [rel, b] of car.files) if (dir(rel) === dir(m.rel) && b.length === m.orig.length && b.every((x, i) => x === m.orig[i])) { out.set(rel, bytes); n++; }
   }
   if (paint.dirty && car.mask) {
     const { w, h, data } = car.mask; const px = new Uint8ClampedArray(data);
@@ -1167,13 +1174,13 @@ $('btn-like-esc').addEventListener('click', async () => {
 // 🎯 The car's own UV islands (its cut kept, nothing re-cut) moved onto the shop decals' sheet: each island
 // fitted (affine, least squares) from where it is to where Escarabajo's sheet wants its points — left side on
 // top upside down, top view in the middle, right side below; front / rear / floor pieces packed into the free
-// bottom strip. Glass and lamp spots go to Escarabajo's glass corner, off the sheet. Colours follow.
+// bottom strip, clear of the plate's cell. Glass laid out like Escarabajo's for the films, lamp spots off the
+// sheets (glassLikeEsc). Colours follow.
 const SHEET = {
   L: (x, y, z) => [1.000 - 0.891 * y, 0.017 + 0.284 * z],
   T: (x, y, z) => [0.966 - 0.804 * y, 0.540 - 0.326 * x],
   R: (x, y, z) => [0.994 - 0.874 * y, 0.753 - 0.291 * z],
 };
-const GLASS_SPOT = { 1: [0.06, 0.31], 2: [0.03, 0.35], 3: [0.06, 0.35], 4: [0.09, 0.35] };
 function fitAffine(src, dst) { // src, dst: [[u, v]…] → f(u, v) or null
   let a = [0, 0, 0, 0, 0, 0]; const M = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]; const bu = [0, 0, 0]; const bv = [0, 0, 0];
   for (let i = 0; i < src.length; i++) { const r = [src[i][0], src[i][1], 1]; for (let j = 0; j < 3; j++) { for (let k = 0; k < 3; k++) M[j][k] += r[j] * r[k]; bu[j] += r[j] * dst[i][0]; bv[j] += r[j] * dst[i][1]; } }
@@ -1195,10 +1202,7 @@ $('btn-to-sheet').addEventListener('click', async () => {
   const oldUV = new Map(); const strip = []; let fitted = 0; let spots = 0;
   for (const m of car.meshes) m.parts.forEach((p) => {
     const U = p.uvs; const I = p.indices; const P = p.positions;
-    if (p.flags[0] !== 0) { // glass / lamps: one spot each, off the sheet, mask red
-      const s = GLASS_SPOT[p.flags[0]]; if (!s) return; oldUV.set(p, U.slice());
-      for (let i = 0; i < U.length; i += 2) { U[i] = s[0]; U[i + 1] = s[1]; } spots++; return;
-    }
+    if (p.flags[0] !== 0) { if (p.flags[0] === 1 || LAMP_SPOT[p.flags[0]]) spots++; return; } // glass / lamps: glassLikeEsc below
     if (P.length / 3 <= 8) return;
     oldUV.set(p, U.slice());
     const isl = islandsOf(p); const groups = new Map();
@@ -1215,8 +1219,8 @@ $('btn-to-sheet').addEventListener('click', async () => {
         const A = Math.hypot(e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]);
         for (const v of [a, b, c]) { for (let k = 0; k < 3; k++) n[k] += sg * N[v * 3 + k] * A; pts.add(v); }
       }
-      // spots (one texel) and black trim keep their place
-      if (flat || votes[0] > votes[1] + votes[2] + votes[3]) continue;
+      // spots (one texel), black trim and plates keep their place
+      if (flat || votes[0] > votes[1] + votes[2] + votes[3] || tris.every((t) => isPlateTri(p, t))) continue;
       for (const v of pts) { cx += nrm(P, v)[0]; cnt++; } cx /= cnt;
       const [ax, ay, az] = n.map(Math.abs); let view = null;
       if (ax >= ay && ax >= az) view = (n[0] > 0) === (cx > 0.5) ? (n[0] > 0 ? 'L' : 'R') : null; // inner walls → strip
@@ -1231,7 +1235,9 @@ $('btn-to-sheet').addEventListener('click', async () => {
   });
   // front / rear / floor pieces: shelf-packed into the free bottom strip (u 0.19-0.99, v 0.80-0.99)
   { const pad = 3 / w; const boxes = strip.map((e) => { let a = Infinity; let b = Infinity; let c = -Infinity; let d = -Infinity; for (const v of e.list) { a = Math.min(a, e.U[v * 2]); c = Math.max(c, e.U[v * 2]); b = Math.min(b, e.U[v * 2 + 1]); d = Math.max(d, e.U[v * 2 + 1]); } return { ...e, a, b, w: c - a, h: d - b }; }).sort((p, q) => q.h - p.h);
-    const place = (sc, go) => { let x = 0.19; let y = 0.80; let rh = 0; for (const e of boxes) { if (x + e.w * sc > 0.99) { x = 0.19; y += rh + pad; rh = 0; } if (y + e.h * sc > 0.99) return false; if (go) for (const v of e.list) { e.U[v * 2] = x + (e.U[v * 2] - e.a) * sc; e.U[v * 2 + 1] = y + (e.U[v * 2 + 1] - e.b) * sc; } x += e.w * sc + pad; rh = Math.max(rh, e.h * sc); } return true; };
+    // rows reaching the plate's cell (u 0.75-1, v 0.875-1) stop before it
+    const xEnd = (y, hh) => (y + hh > PLATE_RECT[1] - 0.002 ? PLATE_RECT[0] - 0.005 : 0.99);
+    const place = (sc, go) => { let x = 0.19; let y = 0.80; let rh = 0; for (const e of boxes) { if (x + e.w * sc > xEnd(y, Math.max(rh, e.h * sc))) { x = 0.19; y += rh + pad; rh = 0; } if (y + e.h * sc > 0.99) return false; if (go) for (const v of e.list) { e.U[v * 2] = x + (e.U[v * 2] - e.a) * sc; e.U[v * 2 + 1] = y + (e.U[v * 2 + 1] - e.b) * sc; } x += e.w * sc + pad; rh = Math.max(rh, e.h * sc); } return true; };
     let sc = 1; while (!place(sc, false) && sc > 0.05) sc *= 0.9; place(sc, true); }
   // colours: new mask red; moved triangles take their old texels (a grown pass, then an exact one so
   // neighbours never bleed into each other); spots that did not move get their old texels back
@@ -1267,7 +1273,7 @@ $('btn-to-sheet').addEventListener('click', async () => {
     }
   }
   for (const tri of keep) { const u = (tri[0][0] + tri[1][0] + tri[2][0]) / 3; const v = (tri[0][1] + tri[1][1] + tri[2][1]) / 3; const sx = Math.floor(u * w); const sy = Math.floor(v * h); for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const x = Math.min(w - 1, Math.max(0, sx + dx)); const y = Math.min(h - 1, Math.max(0, sy + dy)); const o = (y * w + x) * 4; data.set(old.subarray(o, o + 4), o); } }
-  for (const s of Object.values(GLASS_SPOT)) { const sx = Math.floor(s[0] * w); const sy = Math.floor(s[1] * h); for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) data.set([255, 0, 0, 255], ((sy + dy) * w + sx + dx) * 4); }
+  const gl = glassLikeEsc();
   if (car.color) {
     const cd = car.color.data;
     for (let y = 0; y < car.color.h; y++) for (let x = 0; x < car.color.w; x++) { if ((x + 0.5) / car.color.w <= RESERVED[2] && (y + 0.5) / car.color.h >= RESERVED[1]) continue; const o = (y * car.color.w + x) * 4; if (cd[o + 3]) cd.set([0, 0, 0, 0], o); }
@@ -1276,8 +1282,143 @@ $('btn-to-sheet').addEventListener('click', async () => {
   for (const m of car.meshes) { m.isl = m.parts.map(islandsOf); m.dirty = true; }
   paint.dirty = true; selected = new Set(); selectedPts = new Map();
   build3D(); maskChanged();
-  status(`ย้ายเกาะเดิมลงแผ่นลายแล้ว: ${fitted} เกาะ (ซ้าย/บน/ขวา) · ${strip.length} ชิ้น (หน้า/หลัง/ใต้) ไปแถบล่าง · กระจก/ไฟ ${spots} ชิ้น ไปมุมกระจกแบบ Escarabajo · สีย้ายตาม · เปิดรูปลายมาเทียบได้`);
+  status(`ย้ายเกาะเดิมลงแผ่นลายแล้ว: ${fitted} เกาะ (ซ้าย/บน/ขวา) · ${strip.length} ชิ้น (หน้า/หลัง/ใต้) ไปแถบล่าง · กระจก ${gl.n.toLocaleString()} สามเหลี่ยม จัดแบบ Escarabajo (ฟิล์มลงถูกที่) · ไฟ ${gl.lamps} ชิ้น พ้นแผ่นลาย · สีย้ายตาม · เปิดรูปลายมาเทียบได้`);
 });
+// 🪟 Glass like Escarabajo's on the films' picture (filmGlass), lamps' colour spots off the sheets, the film,
+// plate and lamp cells red in the mask and clear in the colour layer (no film = clear glass).
+const LAMP_SPOT = { 2: [0.03, 0.45], 3: [0.06, 0.45], 4: [0.09, 0.45] };
+const inRect = (u, v, r) => u >= r[0] && u <= r[2] && v >= r[1] && v <= r[3];
+function paintIn(r) { // paint triangles of the page's files whose middle lies in r (plates left out)
+  let n = 0;
+  for (const m of car.meshes) for (const p of m.parts) { if (p.flags[0] !== 0) continue; const U = p.uvs; const I = p.indices;
+    for (let t = 0; t < I.length; t += 3) { const u = (U[I[t] * 2] + U[I[t + 1] * 2] + U[I[t + 2] * 2]) / 3; const v = (U[I[t] * 2 + 1] + U[I[t + 1] * 2 + 1] + U[I[t + 2] * 2 + 1]) / 3; if (inRect(u, v, r) && !isPlateTri(p, t)) n++; } }
+  return n;
+}
+function redCells() {
+  if (car.mask) {
+    const { w, h, data } = car.mask;
+    const fill = (r) => { for (let y = Math.floor(r[1] * h); y < Math.min(h, Math.ceil(r[3] * h)); y++) for (let x = Math.floor(r[0] * w); x < Math.min(w, Math.ceil(r[2] * w)); x++) data.set([255, 0, 0, 255], (y * w + x) * 4); };
+    fill(FILM_RECT); fill(PLATE_RECT); for (const sp of Object.values(LAMP_SPOT)) fill([sp[0] - 0.006, sp[1] - 0.006, sp[0] + 0.006, sp[1] + 0.006]);
+    paint.dirty = true;
+  }
+  if (car.color) {
+    const { w, h, data } = car.color; let ch = false;
+    for (const r of [FILM_RECT, PLATE_RECT]) for (let y = Math.floor(r[1] * h); y < Math.min(h, Math.ceil(r[3] * h)); y++) for (let x = Math.floor(r[0] * w); x < Math.min(w, Math.ceil(r[2] * w)); x++) { if ((x + 0.5) / w <= RESERVED[2] && (y + 0.5) / h >= RESERVED[1]) continue; const o = (y * w + x) * 4; if (data[o + 3]) { data.set([0, 0, 0, 0], o); ch = true; } }
+    if (ch) { car.colorDirty = true; car.colorImg.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(data), w, h), 0, 0); }
+  }
+}
+function glassLikeEsc() {
+  const glass = []; let lamps = 0;
+  for (const m of car.meshes) for (const p of m.parts) {
+    if (p.flags[0] === 1) { glass.push(p); m.dirty = true; }
+    const sp = LAMP_SPOT[p.flags[0]]; const U = p.uvs;
+    // a lamp on one colour spot (not its own picture) goes to its spot off the sheets
+    if (sp && U.length && U.every((x, i) => x === U[i & 1])) { for (let i = 0; i < U.length; i += 2) { U[i] = sp[0]; U[i + 1] = sp[1]; } lamps++; m.dirty = true; }
+  }
+  const n = filmGlass(glass);
+  redCells();
+  return { n, lamps };
+}
+$('btn-film-glass').addEventListener('click', () => {
+  if (!car.meshes.length) return;
+  undo.push(comboSnap()); if (undo.length > 60) undo.shift(); redo.length = 0;
+  const { n, lamps } = glassLikeEsc();
+  for (const m of car.meshes) m.isl = m.parts.map(islandsOf);
+  build3D(); if (car.mask) maskChanged(); refresh();
+  const over = paintIn(FILM_RECT);
+  status(`จัดกระจกแบบ Escarabajo แล้ว (${n.toLocaleString()} สามเหลี่ยม) · ไฟ ${lamps} ชิ้น ย้ายพ้นแผ่นลาย${over ? ` · ⚠ มีแผงทับช่องฟิล์ม ${over} สามเหลี่ยม (กด 🎯 หรือลากออก)` : ''} · เปิดรูปฟิล์มมาดูได้`);
+});
+// 🔖 Licence plates like Escarabajo's (plateQuad), placed on the car's own front / rear at the middle.
+// A bumper's plate holder (8 points of paint, Escarabajo keeps its plate so) becomes the plate; without one
+// the plate's 8 points join the bumper's paint (or the body's). Moving a slider places both again.
+const isPlateTri = (p, t) => [p.indices[t], p.indices[t + 1], p.indices[t + 2]].every((i) => inRect(p.uvs[i * 2], p.uvs[i * 2 + 1], PLATE_RECT));
+function stripPlates(p) { // a part without its plate triangles (points used only by them dropped)
+  if (p.positions.length / 3 <= 8) return false;
+  const I = p.indices; const keep = []; let had = false;
+  for (let t = 0; t < I.length; t += 3) { if (isPlateTri(p, t)) had = true; else keep.push(I[t], I[t + 1], I[t + 2]); }
+  if (!had) return false;
+  const map = new Int32Array(p.positions.length / 3).fill(-1); let n = 0; for (const i of keep) if (map[i] < 0) map[i] = n++;
+  const P = new Float32Array(n * 3); const N = new Float32Array(n * 3); const U = new Float32Array(n * 2);
+  for (let i = 0; i < map.length; i++) if (map[i] >= 0) { const j = map[i]; P.set(p.positions.subarray(i * 3, i * 3 + 3), j * 3); N.set(p.normals.subarray(i * 3, i * 3 + 3), j * 3); U.set(p.uvs.subarray(i * 2, i * 2 + 2), j * 2); }
+  Object.assign(p, { positions: P, normals: N, uvs: U, indices: Uint32Array.from(keep.map((i) => map[i])) }); p._sg = 0;
+  return true;
+}
+function plateBox() {
+  const mn = [Infinity, Infinity, Infinity]; const mx = [-Infinity, -Infinity, -Infinity];
+  for (const m of car.meshes) for (const p of m.parts) if (p.flags[0] === 0 && p.positions.length / 3 > 8) for (let i = 0; i < p.positions.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], p.positions[i + k]); mx[k] = Math.max(mx[k], p.positions[i + k]); }
+  return { mn, mx };
+}
+// the car's outermost surface at the middle (|x| < 18 cm) around height z: front = smallest y, rear = biggest
+function surfaceAt(z, facing) {
+  let best = null;
+  for (const m of car.meshes) for (const p of m.parts) {
+    if (p.flags[0] === 1 || p.positions.length / 3 <= 8) continue; const P = p.positions; const I = p.indices;
+    for (let t = 0; t < I.length; t += 3) {
+      if (isPlateTri(p, t)) continue;
+      const c = [0, 1, 2].map((k) => (P[I[t] * 3 + k] + P[I[t + 1] * 3 + k] + P[I[t + 2] * 3 + k]) / 3);
+      if (Math.abs(c[0]) > 0.18 || Math.abs(c[2] - z) > 0.04) continue;
+      if (best === null || facing * c[1] > facing * best) best = c[1];
+    }
+  }
+  return best;
+}
+function holder(slot) { const m = car.meshes.find((q) => q.rel === `${slot}bumper/default_2.0m`); if (!m) return null; const k = m.parts.findIndex((p) => p.flags[0] === 0 && p.positions.length / 3 === 8); return k < 0 ? null : { m, p: m.parts[k] }; }
+function initPlateSliders() {
+  const { mn, mx } = plateBox(); if (!isFinite(mn[2])) return;
+  const H = mx[2] - mn[2];
+  for (const [id, slot, frac] of [['plate-fz', 'front', 0.21], ['plate-rz', 'rear', 0.3]]) {
+    const el = $(id); el.min = mn[2].toFixed(3); el.max = mx[2].toFixed(3);
+    // where the model had its plate (its holder, if it sits at the middle), else Escarabajo's height share
+    const hd = holder(slot); const z = hd && Math.abs(hd.p.positions[0]) < 0.15 && hd.p.positions[2] > mn[2] && hd.p.positions[2] < mx[2] ? hd.p.positions[2] : mn[2] + frac * H;
+    el.value = z.toFixed(3);
+  }
+  showPlateVals();
+}
+function showPlateVals() { for (const id of ['plate-fz', 'plate-rz', 'plate-rt', 'plate-gap']) $(`${id}-v`).textContent = `${(+$(id).value * 100).toFixed(1)} ซม.`; }
+function placePlates() {
+  for (const m of car.meshes) for (const p of m.parts) if (p.flags[0] === 0 && stripPlates(p)) m.dirty = true;
+  const gap = +$('plate-gap').value; const rt = +$('plate-rt').value; const res = [];
+  for (const [slot, facing, z] of [['front', -1, +$('plate-fz').value], ['rear', 1, +$('plate-rz').value]]) {
+    const lo = surfaceAt(z - 0.04, facing); const hi = surfaceAt(z + 0.04, facing); const mid = surfaceAt(z, facing);
+    const ys = [lo, mid, hi].filter((v) => v !== null); if (!ys.length) continue;
+    const y = facing > 0 ? Math.max(...ys) : Math.min(...ys);
+    // the rear plate leans with the surface behind it, plus the slider
+    const out = facing > 0 ? (lo !== null && hi !== null ? (hi - lo) * (0.108 / 0.08) : 0) + rt : 0;
+    const q = plateQuad([0, y + facing * gap, z], facing, out);
+    const hd = holder(slot);
+    if (hd) { Object.assign(hd.p, q); hd.p._sg = 0; hd.m.dirty = true; res.push(slot); continue; }
+    const m = car.meshes.find((x) => x.rel === `${slot}bumper/default_2.0m` && x.parts.some((p) => p.flags[0] === 0 && p.positions.length / 3 > 8)) || car.meshes.find((x) => x.rel === 'body_2.0m');
+    const p = m && m.parts.filter((x) => x.flags[0] === 0).sort((a, b) => b.positions.length - a.positions.length)[0]; if (!p) continue;
+    const base = p.positions.length / 3; const cat = (a, b, T) => { const r = new T(a.length + b.length); r.set(a); r.set(b, a.length); return r; };
+    Object.assign(p, { positions: cat(p.positions, q.positions, Float32Array), normals: cat(p.normals, q.normals, Float32Array), uvs: cat(p.uvs, q.uvs, Float32Array), indices: cat(p.indices, q.indices.map((i) => i + base), Uint32Array) });
+    p._sg = 0; m.dirty = true; res.push(slot);
+  }
+  return res;
+}
+let platesOn = false; let plateUndo = false;
+function plateNow() {
+  if (!car.meshes.length) return;
+  if (!plateUndo) { undo.push(comboSnap()); if (undo.length > 60) undo.shift(); redo.length = 0; plateUndo = true; }
+  const done = placePlates(); platesOn = true;
+  redCells();
+  for (const m of car.meshes) m.isl = m.parts.map(islandsOf);
+  build3D(); if (car.mask) maskChanged(); refresh(); showPlateVals();
+  const over = paintIn(PLATE_RECT);
+  $('plate-info').textContent = `ป้าย: ${done.map((s) => (s === 'front' ? 'หน้า' : 'หลัง')).join(' + ') || 'วางไม่ได้ (ไม่เจอผิวรถตรงกลาง)'}${over ? ` · ⚠ มีแผงทับช่องป้าย ${over} สามเหลี่ยม: ลากออก หรือกด 🎯` : ' · ช่องป้ายว่าง ✅'}`;
+}
+$('btn-plates').addEventListener('click', () => { if (!car.meshes.length) return; initPlateSliders(); plateUndo = false; plateNow(); });
+for (const id of ['plate-fz', 'plate-rz', 'plate-rt', 'plate-gap']) {
+  $(id).addEventListener('input', () => { showPlateVals(); if (platesOn) plateNow(); });
+  $(id).addEventListener('change', () => { plateUndo = false; });
+}
+async function pictureFile(f) {
+  if (/\.dds$/i.test(f.name)) return ddsToCanvas(new Uint8Array(await f.arrayBuffer()));
+  const bm = await createImageBitmap(f); const cv = document.createElement('canvas'); cv.width = bm.width; cv.height = bm.height; cv.getContext('2d').drawImage(bm, 0, 0); return cv;
+}
+$('btn-film-img').addEventListener('click', () => $('file-film').click());
+$('btn-plate-img').addEventListener('click', () => $('file-plate').click());
+$('file-film').addEventListener('change', async (e) => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { filmImg = await pictureFile(f); build3D(); drawTexture(); refresh(); status(`เปิดรูปฟิล์ม ${f.name} · แสดงบนกระจก (ช่อง u 0–0.125, v 0.25–0.375)`); } catch (err) { status(`เปิดรูปไม่ได้: ${err.message}`); } });
+$('file-plate').addEventListener('change', async (e) => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { plateImg = await pictureFile(f); drawTexture(); refresh(); status(`เปิดรูปป้าย ${f.name} · แสดงบนป้าย (ช่อง u 0.75–1, v 0.875–1)`); } catch (err) { status(`เปิดรูปไม่ได้: ${err.message}`); } });
 // 🖼 A shop decal / film picture (png, jpg or the game's .dds) shown over the sheet and on the car, so the
 // panels can be moved where the picture expects them.
 function ddsToCanvas(b) {

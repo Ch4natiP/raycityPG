@@ -70,7 +70,7 @@ async function openFiles(entries) {
       try {
         const t = await decodePNG(car.files.get(`${dir}/${tex}.png`)); let solid = 0;
         for (let i = 3; i < t.data.length; i += 4) if (t.data[i] >= 250) solid++;
-        if (solid > (t.data.length / 4) * 0.9) continue;
+        if (solid > (t.data.length / 4) * 0.7) continue; // (our lamp bands: 75 % opaque; Escarabajo's lamp texture about half)
       } catch { /* unreadable: keep it */ }
     }
     car.meshes.push({ rel, om, parts, orig: b, isl: parts.map(islandsOf), dirty: false });
@@ -185,6 +185,23 @@ function draw2D() {
   return stretched;
 }
 
+// Islands sitting flat (all corners on one texel) within a few pixels of a sheet point
+function spotKeys(u, v) {
+  const out = new Set(); const [qx, qy] = toPx(u, v);
+  for (const mi of shown()) {
+    const m = car.meshes[mi];
+    m.parts.forEach((p, pi) => {
+      if (p.positions.length / 3 <= 8) return; const U = p.uvs;
+      for (let t = 0; t < p.indices.length; t += 3) {
+        const a = p.indices[t]; const b = p.indices[t + 1]; const c = p.indices[t + 2];
+        if (Math.abs((U[b * 2] - U[a * 2]) * (U[c * 2 + 1] - U[a * 2 + 1]) - (U[c * 2] - U[a * 2]) * (U[b * 2 + 1] - U[a * 2 + 1])) > 1e-12) continue;
+        const [px0, py0] = toPx(U[a * 2], U[a * 2 + 1]);
+        if (Math.hypot(px0 - qx, py0 - qy) < 6) out.add(`${mi}|${pi}|${m.isl[pi].vertIsl[a]}`);
+      }
+    });
+  }
+  return out;
+}
 // Island under a sheet point (topmost: last drawn)
 function pickUV(u, v) {
   const ids = shown();
@@ -196,7 +213,12 @@ function pickUV(u, v) {
         const a = p.indices[t]; const b = p.indices[t + 1]; const c = p.indices[t + 2];
         const U = p.uvs;
         const d = (U[b * 2] - U[a * 2]) * (U[c * 2 + 1] - U[a * 2 + 1]) - (U[c * 2] - U[a * 2]) * (U[b * 2 + 1] - U[a * 2 + 1]);
-        if (Math.abs(d) < 1e-12) continue;
+        if (Math.abs(d) < 1e-12) {
+          // flat (the whole triangle on one spot, a piece coloured by one texel): picked within a few pixels
+          const [px0, py0] = toPx(U[a * 2], U[a * 2 + 1]); const [qx, qy] = toPx(u, v);
+          if (Math.hypot(px0 - qx, py0 - qy) < 6) return `${mi}|${pi}|${m.isl[pi].vertIsl[a]}`;
+          continue;
+        }
         const l1 = ((U[b * 2] - u) * (U[c * 2 + 1] - v) - (U[c * 2] - u) * (U[b * 2 + 1] - v)) / d;
         const l2 = ((U[c * 2] - u) * (U[a * 2 + 1] - v) - (U[a * 2] - u) * (U[c * 2 + 1] - v)) / d;
         if (l1 >= 0 && l2 >= 0 && l1 + l2 <= 1) return `${mi}|${pi}|${m.isl[pi].vertIsl[a]}`;
@@ -389,6 +411,9 @@ uvc.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) { drag = { pan: true, x, y, vx: view.x, vy: view.y }; return; }
   if (paint.on && car.mask) { paintStart(); drag = { paint: true }; paintAt2D(...toUV(x, y)); return; }
   const [u, v] = toUV(x, y);
+  // a colour spot (pieces with all their UVs on one texel): every piece on it selected and lit on the car
+  const spot = spotKeys(u, v);
+  if (spot.size && !paint.on) { selected = spot; refresh(); status(`จุดสีนี้: ${spot.size} ชิ้น (สีส้มบนรถ) · ทั้งชิ้นใช้สีของจุดนี้ · ลากเพื่อย้ายจุดได้`); pushUndo(); drag = { move: true, u, v }; return; }
   const key = pickUV(u, v);
   if (key) {
     if (!e.shiftKey && !selected.has(key)) selected = new Set();
@@ -910,6 +935,22 @@ function refresh() {
   let isl = 0; for (const m of car.meshes) for (const q of m.isl) isl += q.count;
   const art = draw2D.onArt || 0;
   $('stats').textContent = car.meshes.length ? `เกาะ UV ${isl.toLocaleString()} · เลือก ${selected.size}\nสามเหลี่ยมลายยืด (แดง): ${st.toLocaleString()}${st ? ' → กด 🩹' : ' ✅'}\nสามเหลี่ยมทับลาย/โซนเกม (ม่วง): ${art.toLocaleString()}${art ? ' → กด 🧽 หรือย้ายเกาะออก' : ' ✅'}` : '';
+  if ($('spot-info')) {
+    // pieces sitting on one texel, by the mask colour there
+    const cnt = { R: 0, G: 0, B: 0, K: 0 };
+    if (car.mask) for (const m of car.meshes) for (const p of m.parts) {
+      if (p.positions.length / 3 <= 8 || p.flags[0] === 1) continue;
+      for (let t = 0; t < p.indices.length; t += 3) {
+        const [a, b, c] = [p.indices[t], p.indices[t + 1], p.indices[t + 2]]; const U = p.uvs;
+        if (Math.abs((U[b * 2] - U[a * 2]) * (U[c * 2 + 1] - U[a * 2 + 1]) - (U[c * 2] - U[a * 2]) * (U[b * 2 + 1] - U[a * 2 + 1])) > 1e-12) continue;
+        const x = Math.min(car.mask.w - 1, Math.max(0, Math.floor(U[a * 2] * car.mask.w))); const y = Math.min(car.mask.h - 1, Math.max(0, Math.floor(U[a * 2 + 1] * car.mask.h)));
+        const o = (y * car.mask.w + x) * 4; const d = car.mask.data;
+        cnt[d[o] > 128 ? 'R' : d[o + 1] > 128 ? 'G' : d[o + 2] > 128 ? 'B' : 'K']++;
+      }
+    }
+    const any = cnt.R + cnt.G + cnt.B + cnt.K;
+    $('spot-info').textContent = !car.meshes.length ? '' : any ? `ชิ้นที่ทั้งชิ้นใช้จุดสีเดียว: แดง ${cnt.R.toLocaleString()} · เขียว ${cnt.G.toLocaleString()} · น้ำเงิน ${cnt.B.toLocaleString()} · ดำ ${cnt.K.toLocaleString()} สามเหลี่ยม — คลิกที่จุดในจอซ้าย = ไฮไลต์ชิ้นนั้นบนรถ (สีส้ม)` : 'ไม่มีชิ้นไหนใช้จุดสี (จุดที่เห็นบนรูปไม่มีชิ้นไหนใช้ ลบได้)';
+  }
   if ($('art-info')) $('art-info').textContent = car.meshes.length ? (art ? `⚠ มี ${art.toLocaleString()} สามเหลี่ยมที่จะมีรูปแปลกติดในเกม (สีม่วงในจอซ้าย)` : '✅ ไม่มีแผงไหนทับลาย') : '';
 }
 function loop() {

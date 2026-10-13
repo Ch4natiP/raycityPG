@@ -366,3 +366,5 @@ The owner: lower the nose so the front arch gap matches the rear. RayCity UV "�
 down by the amount at the front wheels (y −1.23), nothing at the rear wheels (1.15), straight between.
 73_your_canyon_72_nose_down_2_5cm.zip  pack 72 with the nose 2.5 cm down (rear unchanged); rearlight pictures
 kept as Escarabajo's bytes.
+Video 2026-10-13 18:56 (pack 73): the tail lamps light up red when braking — the upside-down reading of part
+pictures was the cause; Escarabajo's picture with its lamp patches works.

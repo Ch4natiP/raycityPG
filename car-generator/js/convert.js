@@ -1290,16 +1290,17 @@ export function chartsLayout(lod, { slots, cw = 128, ch = 64, size = 1024 }) {
       if (Math.abs(fn[0]) + Math.abs(fn[1]) + Math.abs(fn[2]) < 1e-6) fn = cross(sub(q[1], q[0]), sub(q[2], q[0]));
       const ax = Math.abs(fn[0]); const ay = Math.abs(fn[1]); const az = Math.abs(fn[2]);
       // facing down (the floor, the wheel-arch liners): black like game cars, by the files' normals
-      const nz = fn[2]; const nl = Math.hypot(fn[0], fn[1], fn[2]) || 1;
       let side;
       if (typeof k !== 'number') side = 'flat';
-      else if (nz / nl < -0.35) side = 'flat';
       else if (az >= ax && az >= ay) side = fn[2] >= 0 ? 'top' : 'bottom';
       else if (ax >= ay) side = fn[0] >= 0 ? 'left' : 'right';
       else side = fn[1] < 0 ? 'front' : 'rear';
-      tris.push({ pi, t, side, slot: side === 'flat' && typeof k === 'number' ? 'black' : k, q });
+      tris.push({ pi, t, side, slot: k, q, fn });
     }
   });
+  // the floor and the wheel wells black, on the black spot
+  const under = underTris(tris.map((tr) => ({ c: [0, 1, 2].map((kk) => (tr.q[0][kk] + tr.q[1][kk] + tr.q[2][kk]) / 3), n: tr.fn })));
+  tris.forEach((tr, i) => { if (under[i] && typeof tr.slot === 'number') { tr.side = 'flat'; tr.slot = 'black'; } });
   const key = (v) => `${Math.round(v[0] * 1e4)},${Math.round(v[1] * 1e4)},${Math.round(v[2] * 1e4)}`;
   const par = new Int32Array(tris.length).map((_, i) => i);
   const find = (x) => { while (par[x] !== x) { par[x] = par[par[x]]; x = par[x]; } return x; };
@@ -1935,6 +1936,26 @@ export async function templateMaskSlots(bent, template) {
 // triangle stretches across the texture (black / other pictures in game, packs 44-53) and shop decals,
 // films and the mask land where they land on the template. Trim, grilles and lamps sit on one black spot.
 const ISLAND_BLACK = [0.336, 0.383]; // empty in gtv98's sheet
+// Faces that belong black (no garage colour) like game cars: the floor and every face looking down, and the
+// wheel wells — low faces set back from the car's side (more than 12 cm inside the widest outward face of
+// their 10 cm slice along the car), not looking up. tris: [{ c: centre, n: outward normal }] → [bool].
+export function underTris(tris) {
+  let z0 = Infinity; let z1 = -Infinity; let y0 = Infinity;
+  for (const t of tris) { z0 = Math.min(z0, t.c[2]); z1 = Math.max(z1, t.c[2]); y0 = Math.min(y0, t.c[1]); }
+  const H = z1 - z0; const slice = (y) => Math.floor((y - y0) / 0.1);
+  const wide = new Map();
+  for (const t of tris) {
+    const l = Math.hypot(t.n[0], t.n[1], t.n[2]) || 1;
+    if (Math.abs(t.n[0]) / l > 0.6 && t.n[0] * Math.sign(t.c[0]) > 0) { const k = slice(t.c[1]); wide.set(k, Math.max(wide.get(k) || 0, Math.abs(t.c[0]))); }
+  }
+  return tris.map((t) => {
+    const l = Math.hypot(t.n[0], t.n[1], t.n[2]) || 1; const nz = t.n[2] / l;
+    if (nz < -0.35) return true;
+    if (t.c[2] > z0 + H * 0.55 || nz > 0.5) return false;
+    const k = slice(t.c[1]); const w = Math.max(wide.get(k) || 0, wide.get(k - 1) || 0, wide.get(k + 1) || 0);
+    return w > 0 && Math.abs(t.c[0]) < w - 0.12;
+  });
+}
 // The tail lid among paint triangles ({ c: centre, n: normal }, RayCity space: y back, z up): the rear
 // end's back-facing panel between bumper and roof line (tailgate / back of the trunk lid), and for a
 // car that isn't a pickup also the trunk's top (facing up, the last fifth of the length, above the

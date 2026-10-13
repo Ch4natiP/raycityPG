@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { parseOM, writeOM, omParts } from '../om.js';
 import { makeZip, readZip } from '../zip.js';
-import { decodePNG, png, dds, chartsLayout } from '../convert.js';
+import { decodePNG, png, dds, chartsLayout, underTris } from '../convert.js';
 import { decodeSpec } from '../carSpec.js';
 
 const $ = (id) => document.getElementById(id);
@@ -1023,15 +1023,17 @@ $('btn-floor-black').addEventListener('click', () => {
   if (!car.mask) return;
   const keep = paint.slot; paint.slot = 0; paintStart(); let n = 0;
   let shared = 0;
-  eachTri((mesh, p, t, c, nrm) => {
-    const l = Math.hypot(nrm[0], nrm[1], nrm[2]) || 1; if (nrm[2] / l >= -0.35) return;
+  const all = []; eachTri((mesh, p, t, c, nrm) => all.push({ p, t, c, n: nrm }));
+  const under = underTris(all); let ui = 0;
+  eachTri((mesh, p, t) => {
+    if (!under[ui++]) return;
     // a piece on one colour spot shares it with others: painting the spot would blacken them all
     const U = p.uvs; const [a, b, cc] = [p.indices[t * 3], p.indices[t * 3 + 1], p.indices[t * 3 + 2]];
     if (Math.abs((U[b * 2] - U[a * 2]) * (U[cc * 2 + 1] - U[a * 2 + 1]) - (U[cc * 2] - U[a * 2]) * (U[b * 2 + 1] - U[a * 2 + 1])) < 1e-9) { shared++; return; }
     fillT(p, t); n++;
   });
   paintEnd(); paint.slot = keep; paint.dirty = true; maskChanged();
-  status(`พื้นรถ + ใต้ซุ้มล้อ เป็นดำแล้ว (${n.toLocaleString()} สามเหลี่ยม)${shared ? ` · ข้าม ${shared.toLocaleString()} ที่อยู่บนจุดสีร่วม (กด 📐 ก่อน แล้วค่อยกดปุ่มนี้)` : ''} · Ctrl+Z ย้อน`);
+  status(`พื้นรถ + ซุ้มล้อ เป็นดำแล้ว (${n.toLocaleString()} สามเหลี่ยม)${shared ? ` · ข้าม ${shared.toLocaleString()} ที่อยู่บนจุดสีร่วม (กด 📐 ก่อน แล้วค่อยกดปุ่มนี้)` : ''} · Ctrl+Z ย้อน`);
 });
 $('btn-paint-all').addEventListener('click', () => {
   if (!car.mask) return;

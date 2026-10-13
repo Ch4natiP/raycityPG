@@ -267,3 +267,7 @@ Exact sheet (measured on Escarabajo; gtv98 within a few %), x, y, z scaled 0..1 
   right side u = 0.994 − 0.874·y, v = 0.753 − 0.291·z
 chartsLayout and RayCity UV's 📐 use these numbers. The game's block in the colour layer is only u < 0.08 /
 v > 0.69 and u < 0.16 / v > 0.84 (the checks now use that shape). Pack 61 rebuilt with it (0 stretched, 0 in the block).
+Video 2026-10-13 16:40 (pack 61 + EMPEREUR): the decal nearly right; the owner asks for the floor and the wheel
+wells black. underTris: faces looking down, plus low faces set back > 12 cm from the widest outward face of
+their 10 cm slice (wheel-well walls), not looking up → the black spot (chartsLayout, 📐, ⬛).
+62_your_canyon_black_wells.zip  pack 61 with the wheel wells black too (5,755 triangles on the black spot).

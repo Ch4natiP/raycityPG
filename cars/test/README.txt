@@ -362,3 +362,7 @@ template): panel near the lamps → its solid red lamp texel (0.191, 0.465), the
 (0.113, 0.609), lamps over its brake / indicator glow patches.
 72_your_canyon_escarabajo_tail_lamp_picture.zip  pack 71 with rearlight's picture = Escarabajo's
 escarabajo_rearlight_base .png / _s.dds byte for byte, panel UVs on its red / black.
+The owner: lower the nose so the front arch gap matches the rear. RayCity UV "กดหน้ารถลง" slider: every mesh
+down by the amount at the front wheels (y −1.23), nothing at the rear wheels (1.15), straight between.
+73_your_canyon_72_nose_down_2_5cm.zip  pack 72 with the nose 2.5 cm down (rear unchanged); rearlight pictures
+kept as Escarabajo's bytes.

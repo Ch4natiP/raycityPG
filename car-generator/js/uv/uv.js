@@ -929,6 +929,7 @@ $('btn-lamp-panel').addEventListener('click', () => {
   $('body-info').textContent = moved ? `ย้ายแผง ${moved.toLocaleString()} สามเหลี่ยม (${[...new Set(where)].join(', ')}) · รับสีรถแล้ว` : 'ไม่มีแผงสีในโฟลเดอร์ไฟให้ย้าย';
   status($('body-info').textContent);
 });
+$('ride-nose').addEventListener('input', () => { const v = +$('ride-nose').value; $('ride-nose-v').textContent = v ? `${v > 0 ? 'ลง' : 'ขึ้น'} ${Math.abs(v * 100).toFixed(1)} ซม.` : '0 ซม.'; });
 $('ride-shift').addEventListener('input', () => { const v = +$('ride-shift').value; $('ride-shift-v').textContent = v ? `${v < 0 ? 'ไปหน้า' : 'ไปหลัง'} ${Math.abs(v * 100).toFixed(1)} ซม.` : '0 ซม.'; });
 $('ride-drop').addEventListener('input', () => { const v = +$('ride-drop').value; $('ride-drop-v').textContent = `${v >= 0 ? 'ลง' : 'ขึ้น'} ${Math.abs(v * 100).toFixed(1)} ซม.`; });
 async function saveZip() {
@@ -943,12 +944,14 @@ async function saveZip() {
   }
   const lampN = await lampPictures(out);
   // ride height / wheel arches: every mesh file moved down and along (the wheels stay where the game puts them)
-  const drop = +$('ride-drop').value; const shift = +$('ride-shift').value; let lowered = 0;
-  if (drop || shift) for (const [rel, b] of out) {
+  const drop = +$('ride-drop').value; const shift = +$('ride-shift').value; const nose = +$('ride-nose').value; let lowered = 0;
+  // nose: down by `nose` at the front wheels, nothing at the rear wheels (the game's: y −1.23 / 1.15), straight between
+  const YF = -1.23; const YR = 1.15;
+  if (drop || shift || nose) for (const [rel, b] of out) {
     if (!/\.0m$/i.test(rel)) continue;
     try {
       const om = parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)); const parts = omParts(om);
-      for (const q of parts) { const P = Float32Array.from(q.positions); for (let i = 0; i < P.length; i += 3) { P[i + 1] += shift; P[i + 2] -= drop; } q.positions = P; } // (y < 0 is the front: forward = minus)
+      for (const q of parts) { const P = Float32Array.from(q.positions); for (let i = 0; i < P.length; i += 3) { P[i + 2] -= drop + nose * ((YR - P[i + 1]) / (YR - YF)); P[i + 1] += shift; } q.positions = P; } // (y < 0 is the front: forward = minus)
       out.set(rel, writeOM(om, parts.map((q) => ({ ...q, kind: q.flags[0] })))); lowered++;
     } catch { /* not a mesh */ }
   }
@@ -969,7 +972,7 @@ async function saveZip() {
   const zipFiles = [...out].sort((a, b) => a[0].localeCompare(b[0])).map(([rel, data]) => ({ path: `${car.name}/${rel}`, data }));
   const blob = await makeZip(zipFiles);
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${car.name}.zip`; a.click();
-  $('save-log').textContent = `ดาวน์โหลด ${car.name}.zip แล้ว · เขียนใหม่ ${n} ไฟล์ .0m${paint.dirty ? ' · รูปสี (_base.png + _s.dds) ใหม่' : ''}${car.colorDirty ? ' · ชั้นลาย _color ใหม่' : ''}${lampN ? ` · รูปสีไฟ ${lampN} รูป` : ''}${lowered ? ` · ตัวรถ${drop ? ` ลง ${(drop * 100).toFixed(1)} ซม.` : ''}${shift ? ` ${shift < 0 ? 'ไปหน้า' : 'ไปหลัง'} ${Math.abs(shift * 100).toFixed(1)} ซม.` : ''} (${lowered} ไฟล์)` : ''}`;
+  $('save-log').textContent = `ดาวน์โหลด ${car.name}.zip แล้ว · เขียนใหม่ ${n} ไฟล์ .0m${paint.dirty ? ' · รูปสี (_base.png + _s.dds) ใหม่' : ''}${car.colorDirty ? ' · ชั้นลาย _color ใหม่' : ''}${lampN ? ` · รูปสีไฟ ${lampN} รูป` : ''}${lowered ? ` · ตัวรถ${drop ? ` ลง ${(drop * 100).toFixed(1)} ซม.` : ''}${shift ? ` ${shift < 0 ? 'ไปหน้า' : 'ไปหลัง'} ${Math.abs(shift * 100).toFixed(1)} ซม.` : ''}${nose ? ` หน้า${nose > 0 ? 'ลง' : 'ขึ้น'} ${Math.abs(nose * 100).toFixed(1)} ซม.` : ''} (${lowered} ไฟล์)` : ''}`;
 }
 
 // ---------------------------------------------------------------------------------------------

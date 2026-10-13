@@ -890,7 +890,7 @@ $('opt-color').addEventListener('change', () => { drawTexture(); refresh(); });
 //   clear: mask black (no garage colour) + colour layer dark with some alpha (tinted, see-through)
 //   clearer: mask black + colour layer alpha 0 (pack 48: fully clear)
 //   paint: mask red + colour layer near black alpha 0 (Escarabajo's values: the glass takes colour 1)
-const GLASS_LOOK = { clear: [[0, 0, 0, 255], [16, 20, 24, 96]], clearer: [[0, 0, 0, 255], [0, 0, 0, 0]], paint: [[255, 0, 0, 255], [1, 1, 1, 0]] };
+const GLASS_LOOK = { clear: [[0, 0, 0, 255], [16, 20, 24, 96]], clearer: [[0, 0, 0, 255], [0, 0, 0, 0]], paint: [[255, 0, 0, 255], [1, 1, 1, 0]] }; // paint = Escarabajo's values
 $('btn-glass').addEventListener('click', () => {
   if (!car.mask) return;
   const [mrgba, crgba] = GLASS_LOOK[$('glass-look').value];

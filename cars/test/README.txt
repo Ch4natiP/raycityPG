@@ -237,3 +237,5 @@ came out in the body colour (the mask is red under the glass UVs, so the glass t
                          (no garage colour), colour layer 16,20,24 alpha 96 (dark, see-through) — between pack 48
                          (black, alpha 0: fully clear) and red (glass in the paint colour). RayCity UV has a 🪟
                          glass setting (clear / clearer / paint colour); builds now default to the clear one.
+The owner: the glass colour is to be Escarabajo's → builds back to Escarabajo's values (mask red, colour layer
+1,1,1 alpha 0); RayCity UV's 🪟 setting lists "แบบ Escarabajo" first (58's clear look kept as an experiment).

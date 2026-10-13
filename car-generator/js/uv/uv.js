@@ -24,7 +24,9 @@ let decalImg = null; // a shop decal / film picture opened to line the UVs up wi
 // The colour layer (<name>_color.png, 128×64) is drawn over the car where its alpha is up: every game car
 // keeps the same block at its bottom-left (black / purple squares, a black-white ramp) for the game's own
 // use, so paint UVs must stay out of it (a car whose tail lid sat there showed checkers and stripes).
-const RESERVED = [0, 0.66, 0.17, 1]; // u0, v0, u1, v1
+const RESERVED = [0, 0.66, 0.17, 1]; // u0, v0, u1, v1 (the box the block sits in)
+// the block itself: a black square (u < 0.08, v 0.69-0.84) over a purple one, and a black-white ramp (u 0.08-0.16, v > 0.84)
+const inBlock = (u, v) => (u <= 0.08 && v >= 0.69) || (u <= 0.16 && v >= 0.84);
 let selected = new Set(); // island keys "mesh|part|island"
 const undo = []; const redo = [];
 
@@ -141,8 +143,10 @@ function draw2D() {
   g2.strokeStyle = '#777'; g2.strokeRect(x0, y0, x1 - x0, y1 - y0);
   if (car.meshes.length) {
     const [rx0, ry0] = toPx(RESERVED[0], RESERVED[1]); const [rx1, ry1] = toPx(RESERVED[2], RESERVED[3]);
-    g2.save(); g2.strokeStyle = '#d070ff'; g2.setLineDash([6, 4]); g2.lineWidth = 2; g2.strokeRect(rx0, ry0, rx1 - rx0, ry1 - ry0); g2.restore();
-    g2.fillStyle = '#e0a0ff'; g2.font = '11px system-ui, sans-serif'; g2.fillText('โซนของเกม ห้ามวางแผงรถ', rx0 + 3, ry0 - 4);
+    g2.save(); g2.strokeStyle = '#d070ff'; g2.setLineDash([6, 4]); g2.lineWidth = 2; g2.beginPath();
+    for (const [u, v] of [[0, 0.69], [0.08, 0.69], [0.08, 0.84], [0.16, 0.84], [0.16, 1], [0, 1]]) { const [x, y] = toPx(u, v); if (u === 0 && v === 0.69) g2.moveTo(x, y); else g2.lineTo(x, y); }
+    g2.closePath(); g2.stroke(); g2.restore();
+    g2.fillStyle = '#e0a0ff'; g2.font = '11px system-ui, sans-serif'; g2.fillText('โซนของเกม ห้ามวางแผงรถ', rx0 + 3, toPx(0, 0.69)[1] - 4);
   }
   if (!car.meshes.length) { g2.fillStyle = '#bbb'; g2.font = '16px system-ui, sans-serif'; g2.fillText('กด 📦 เปิด .zip รถ ทางซ้ายก่อน (zip ที่ดาวน์โหลดจาก RayCity Easy)', x0 + 20, y0 + 40); g2.fillText('หรือในหน้า RayCity Easy กดปุ่ม 🖌 ลงสี / แก้ UV ต่อ', x0 + 20, y0 + 66); }
   if (guide && $('opt-guide').checked) {
@@ -153,7 +157,7 @@ function draw2D() {
   let stretched = 0; let onArt = 0;
   // triangles whose middle sits on the game's block or on a visible picture of the colour layer
   const artAt = (u, v) => {
-    if (u >= RESERVED[0] && u <= RESERVED[2] && v >= RESERVED[1] && v <= RESERVED[3]) return true;
+    if (inBlock(u, v)) return true;
     if (!car.color) return false;
     const x = Math.min(car.color.w - 1, Math.max(0, Math.floor(u * car.color.w))); const y = Math.min(car.color.h - 1, Math.max(0, Math.floor(v * car.color.h)));
     return car.color.data[(y * car.color.w + x) * 4 + 3] > 40;
@@ -1152,9 +1156,9 @@ $('btn-clear-zone').addEventListener('click', () => {
   for (const m of car.meshes) for (const p of m.parts) for (let i = 0; i < p.uvs.length; i += 2) {
     const u = p.uvs[i]; const v = p.uvs[i + 1];
     minU = Math.min(minU, u); minV = Math.min(minV, v);
-    if (u < RESERVED[2] + M) confV = Math.max(confV, v);
+    if (inBlock(u - M, v + M)) confV = Math.max(confV, v);
   }
-  const limit = RESERVED[1] - M;
+  const limit = 0.69 - M;
   if (confV <= limit) { status('ไม่มีลายเส้นอยู่ในโซนของเกมแล้ว ✅'); return; }
   let s = 1; let dv = confV - limit; // shift up
   if (minV - dv < M) { // no room: shrink about the top-left of the layout, then shift

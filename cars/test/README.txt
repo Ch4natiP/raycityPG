@@ -261,3 +261,9 @@ floor-black step painted that spot. 61_your_canyon_decal_sheet_fixed.zip: pieces
 out on the decal sheet too (decals can show on them), faces looking down (floor, arch liners) go to a black
 spot of their own; the floor tool now skips shared spots; normals pointing into the car (this canyon) are read
 reversed.
+Exact sheet (measured on Escarabajo; gtv98 within a few %), x, y, z scaled 0..1 over the car, y = 0 the front:
+  left side  u = 1.000 − 0.891·y, v = 0.017 + 0.284·z   (upside down)
+  top view   u = 0.966 − 0.804·y, v = 0.540 − 0.326·x
+  right side u = 0.994 − 0.874·y, v = 0.753 − 0.291·z
+chartsLayout and RayCity UV's 📐 use these numbers. The game's block in the colour layer is only u < 0.08 /
+v > 0.69 and u < 0.16 / v > 0.84 (the checks now use that shape). Pack 61 rebuilt with it (0 stretched, 0 in the block).

@@ -1244,7 +1244,15 @@ export function chartsLayout(lod, { slots, cw = 128, ch = 64, size = 1024 }) {
   const AX = { left: [1, 2, true, true], right: [1, 2, true, false], top: [1, 0, true, false], front: [0, 2, false, false], rear: [0, 2, true, false] };
   const scaleOf = {};
   for (const [side, [a, b]] of Object.entries(AX)) { const r = CHART_REGIONS[side]; scaleOf[side] = Math.min((r[2] - r[0]) / ext[a], (r[3] - r[1]) / ext[b]); }
+  // Escarabajo's own mapping, measured on its sheet (gtv98 the same within 1-6 %): with x, y, z scaled to
+  // 0..1 over the car (y = 0 the front), u and v of its left side, top view and right side
+  const ESC = {
+    left: (n) => [1.000 - 0.891 * n[1], 0.017 + 0.284 * n[2]],
+    top: (n) => [0.966 - 0.804 * n[1], 0.540 - 0.326 * n[0]],
+    right: (n) => [0.994 - 0.874 * n[1], 0.753 - 0.291 * n[2]],
+  };
   const projUV = (side, q, sc = null) => {
+    if (!sc && ESC[side]) return ESC[side]([0, 1, 2].map((k) => (q[k] - lo[k]) / ext[k]));
     const [a, b, flip, vflip] = AX[side]; const r = CHART_REGIONS[side];
     // the region filled along both axes like the decal sheet (sc given: one scale, for packed pieces)
     const fa = sc ? (q[a] - lo[a]) * sc : ((q[a] - lo[a]) / ext[a]) * (r[2] - r[0]);

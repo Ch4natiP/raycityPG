@@ -678,6 +678,36 @@ async function importOBJ(text) {
 // ---------------------------------------------------------------------------------------------
 // Save: every edited mesh, and the files that were copies of it (LODs, tuning variants)
 
+// Lamps (headlight 2 / brake 3 / indicator 4) take their colour from their folder's own picture
+// (list.xml tex, 128×128 over the part's UVs; Escarabajo: red lamps in escarabajo_rearlight). A folder whose
+// picture is missing shows its lamps black: the picture is made (clear, the lamp colour in its spot's 4×4
+// block), or the colour put into the one there.
+const LAMP_RGB = { 2: [255, 250, 235, 255], 3: [210, 18, 18, 255], 4: [255, 150, 0, 255] };
+async function lampPictures(out) {
+  let n = 0;
+  for (const m of car.meshes) {
+    const dir = m.rel.includes('/') ? m.rel.split('/')[0] : ''; if (!dir) continue;
+    const spots = new Map();
+    for (const p of m.parts) { const c = LAMP_RGB[p.flags[0]]; const U = p.uvs; if (c && U.length && U.every((x, i) => x === U[i & 1])) spots.set(`${U[0]},${U[1]}`, [U[0], U[1], c]); }
+    if (!spots.size) continue;
+    const list = car.files.has(`${dir}/list.xml`) ? decodeSpec(car.files.get(`${dir}/list.xml`)) : '';
+    const names = [...list.matchAll(/mesh='default'[^>]*tex='([^']*)'/g)].map((x) => x[1]);
+    for (const tex of new Set(names)) {
+      let pic = { w: 128, h: 128, data: new Uint8ClampedArray(128 * 128 * 4) };
+      const had = out.get(`${dir}/${tex}.png`);
+      if (had) { try { pic = await decodePNG(had); } catch { /* unreadable: a new one */ } }
+      const { w, h, data } = pic;
+      for (const [u, v, c] of spots.values()) {
+        const bx = Math.floor(Math.min(w - 1, u * w) / 4) * 4; const by = Math.floor(Math.min(h - 1, v * h) / 4) * 4;
+        for (let y = by; y < by + 4 && y < h; y++) for (let x = bx; x < bx + 4 && x < w; x++) data.set(c, (y * w + x) * 4);
+      }
+      out.set(`${dir}/${tex}.png`, await png(data, w, h));
+      out.set(`${dir}/${tex}_s.dds`, dds(data, w, h, 'half')); // (Escarabajo's part pictures: 64×64 DXT3 with mipmaps)
+      n++;
+    }
+  }
+  return n;
+}
 async function saveZip() {
   const out = new Map(car.files);
   let n = 0;
@@ -688,6 +718,7 @@ async function saveZip() {
     const dir = (r) => (r.includes('/') ? r.split('/')[0] : '');
     for (const [rel, b] of car.files) if (dir(rel) === dir(m.rel) && b.length === m.orig.length && b.every((x, i) => x === m.orig[i])) { out.set(rel, bytes); n++; }
   }
+  const lampN = await lampPictures(out);
   if (paint.dirty && car.mask) {
     const { w, h, data } = car.mask; const px = new Uint8ClampedArray(data);
     out.set(`${car.name}_base.png`, await png(px, w, h));
@@ -705,7 +736,7 @@ async function saveZip() {
   const zipFiles = [...out].sort((a, b) => a[0].localeCompare(b[0])).map(([rel, data]) => ({ path: `${car.name}/${rel}`, data }));
   const blob = await makeZip(zipFiles);
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${car.name}.zip`; a.click();
-  $('save-log').textContent = `ดาวน์โหลด ${car.name}.zip แล้ว · เขียนใหม่ ${n} ไฟล์ .0m${paint.dirty ? ' · รูปสี (_base.png + _s.dds) ใหม่' : ''}${car.colorDirty ? ' · ชั้นลาย _color ใหม่' : ''}`;
+  $('save-log').textContent = `ดาวน์โหลด ${car.name}.zip แล้ว · เขียนใหม่ ${n} ไฟล์ .0m${paint.dirty ? ' · รูปสี (_base.png + _s.dds) ใหม่' : ''}${car.colorDirty ? ' · ชั้นลาย _color ใหม่' : ''}${lampN ? ` · รูปสีไฟ ${lampN} รูป` : ''}`;
 }
 
 // ---------------------------------------------------------------------------------------------

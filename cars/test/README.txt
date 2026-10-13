@@ -297,3 +297,12 @@ middle, sliders for height / lean / gap), 🎞 / 🔖 pictures shown on the car;
 the plate's cell free. 65_your_canyon_film_glass_and_plates.zip: made on the page from pack 59 (🎯 then 🔖):
 colours as 59 (234 of 57,105 triangles differ, nearly all on colour edges), front plate where canyon's own
 holder was (z 0.50), rear plate on the rear bumper middle (z 0.48), lamps' spots at v 0.45.
+Video 2026-10-13 17:35 (pack 65 in the shop): films land right (sun strip on the windshield, rear window
+picture), plates show; the owner asks about black on the car. Canyon's tail panel is one brake-lamp piece
+(kind 3, the whole panel, x ±0.76) and lamps take their colour from their folder's own picture (list.xml tex,
+128×128 over the part's UVs — Escarabajo's escarabajo_rearlight has its red lamps); canyon's folders have no
+pictures, so the lamps show black. RayCity UV now writes the lamp colour into the folder's picture when saving
+(made clear 128×128 with the colour in the lamp spot's 4×4 block if missing, _s.dds 64×64 DXT3 like
+Escarabajo's): brake red, indicator amber, headlight white.
+66_your_canyon_65_tail_lamps.zip  pack 65 + rearlight/canyon_rearlight_default(.png/_s.dds) and _rbrc_001
+(brake red at 0.06,0.45, indicator amber at 0.09,0.45). Nothing else changed.

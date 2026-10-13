@@ -334,3 +334,11 @@ were 64×64 with mipmaps (Escarabajo's way). RayCity UV now writes them full siz
 69_TEST_tail_picture_solid_red.zip  a test: pack 68 with rearlight's picture 256×256, every transparent pixel
 solid red, _s.dds like gtv98's. Red tail panel in game = the picture is read (then the colour cells work);
 still black = the picture is not read at all (check the .jmd takes rearlight/*.png and *_s.dds).
+Video 2026-10-13 18:20 (test pack 69): the picture IS read — the black housing cell shows around the tail
+lamps as drawn — but the test red also showed on the boot lid edge, the front bumper and the grill: folders
+whose list.xml names a picture that is missing (every canyon folder but rearlight) are drawn with another
+folder's picture. That is the stray colour asked about with pack 67. RayCity UV now writes a clear 128×128
+picture (+ full-size _s.dds) for every picture a list.xml names that is missing.
+70_your_canyon_68_every_folder_picture.zip  pack 68 (red tail cells, black housing, 4 cm lower, 3 cm forward)
++ clear pictures for frontbumper, grill, headlight, hood, mainspoiler, rearbumper, roof, skirt (default and
+rbrc_001); rearlight's picture 128×128 full-size _s.dds.

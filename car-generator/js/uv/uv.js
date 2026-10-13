@@ -846,7 +846,7 @@ async function lampPictures(out) {
     for (const m of car.meshes) if (m.rel.startsWith(`${dir}/`)) for (const p of m.parts) { const c = LAMP_RGB[p.flags[0]]; const U = p.uvs; if (c && U.length && U.every((x, i) => x === U[i & 1])) spots.set(`${U[0]},${U[1]}`, [U[0], U[1], c]); }
     if (!spots.size && !lamp.pics.has(dir)) continue;
     const list = car.files.has(`${dir}/list.xml`) ? decodeSpec(car.files.get(`${dir}/list.xml`)) : '';
-    const names = [...list.matchAll(/mesh='default'[^>]*tex='([^']*)'/g)].map((x) => x[1]);
+    const names = [...list.matchAll(/tex='([^']+)'/g)].map((x) => x[1]); // every variant's picture (a missing one borrows another folder's)
     for (const tex of new Set(names)) {
       let pic = { w: 128, h: 128, data: new Uint8ClampedArray(128 * 128 * 4) };
       const had = out.get(`${dir}/${tex}.png`);
@@ -860,6 +860,16 @@ async function lampPictures(out) {
       out.set(`${dir}/${tex}.png`, await png(data, w, h));
       out.set(`${dir}/${tex}_s.dds`, dds(data, w, h, 'full')); // (as gtv98's, which canyon's folders come from: full size, no mipmaps)
       n++;
+    }
+  }
+  // every picture a folder's list.xml names must be there: a missing one makes the game draw that folder with
+  // another folder's picture (the rearlight's red showed on the front bumper / grill / boot lid): clear ones
+  const clear = new Uint8ClampedArray(128 * 128 * 4);
+  for (const [rel, b] of car.files) {
+    const mm = rel.match(/^([^/]+)\/list\.xml$/); if (!mm) continue;
+    for (const [, tex] of decodeSpec(b).matchAll(/tex='([^']+)'/g)) {
+      if (out.has(`${mm[1]}/${tex}.png`)) continue;
+      out.set(`${mm[1]}/${tex}.png`, await png(clear, 128, 128)); out.set(`${mm[1]}/${tex}_s.dds`, dds(clear, 128, 128, 'full')); n++;
     }
   }
   return n;

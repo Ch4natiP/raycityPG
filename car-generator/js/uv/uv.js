@@ -708,6 +708,35 @@ async function lampPictures(out) {
   }
   return n;
 }
+// 🧩 The paint of the lamp folders (rearlight / headlight default) is drawn with the folder's own picture in
+// the game, not the car's colours (no picture: black): its triangles join the bumper's paint (rear / front, the
+// body without one), so they take the 3 colours. The lamp folder keeps one squashed triangle in their place.
+$('btn-lamp-panel').addEventListener('click', () => {
+  if (!car.meshes.length) return;
+  undo.push(comboSnap()); if (undo.length > 60) undo.shift(); redo.length = 0;
+  let moved = 0; const where = [];
+  for (const [lamp, bumper] of [['rearlight', 'rearbumper'], ['headlight', 'frontbumper']]) {
+    const src = car.meshes.find((m) => m.rel === `${lamp}/default_2.0m`); if (!src) continue;
+    const dstM = car.meshes.find((m) => m.rel === `${bumper}/default_2.0m` && m.parts.some((p) => p.flags[0] === 0 && p.positions.length / 3 > 8)) || car.meshes.find((m) => m.rel === 'body_2.0m');
+    const dst = dstM && dstM.parts.filter((p) => p.flags[0] === 0 && p.positions.length / 3 > 8).sort((a, b) => b.positions.length - a.positions.length)[0];
+    if (!dst) continue;
+    for (const p of src.parts) {
+      if (p.flags[0] !== 0 || p.positions.length / 3 <= 8 || p.indices.length <= 3) continue;
+      const base = dst.positions.length / 3; const cat = (a, b, T) => { const r = new T(a.length + b.length); r.set(a); r.set(b, a.length); return r; };
+      Object.assign(dst, { positions: cat(dst.positions, p.positions, Float32Array), normals: cat(dst.normals, p.normals, Float32Array), uvs: cat(dst.uvs, p.uvs, Float32Array), indices: cat(dst.indices, Uint32Array.from(p.indices, (i) => i + base), Uint32Array) });
+      moved += p.indices.length / 3;
+      // what stays: one triangle squashed onto the first point
+      const a = p.indices[0];
+      Object.assign(p, { positions: Float32Array.from([...p.positions.subarray(a * 3, a * 3 + 3), ...p.positions.subarray(a * 3, a * 3 + 3), ...p.positions.subarray(a * 3, a * 3 + 3)]), normals: Float32Array.from([...p.normals.subarray(a * 3, a * 3 + 3), ...p.normals.subarray(a * 3, a * 3 + 3), ...p.normals.subarray(a * 3, a * 3 + 3)]), uvs: Float32Array.from([...p.uvs.subarray(a * 2, a * 2 + 2), ...p.uvs.subarray(a * 2, a * 2 + 2), ...p.uvs.subarray(a * 2, a * 2 + 2)]), indices: Uint32Array.from([0, 1, 2]) });
+      p._sg = 0; dst._sg = 0; src.dirty = true; dstM.dirty = true; where.push(`${lamp} → ${dstM.rel.split('/')[0].replace('_2.0m', '')}`);
+    }
+  }
+  for (const m of car.meshes) m.isl = m.parts.map(islandsOf);
+  build3D(); refresh();
+  $('body-info').textContent = moved ? `ย้ายแผง ${moved.toLocaleString()} สามเหลี่ยม (${[...new Set(where)].join(', ')}) · รับสีรถแล้ว` : 'ไม่มีแผงสีในโฟลเดอร์ไฟให้ย้าย';
+  status($('body-info').textContent);
+});
+$('ride-drop').addEventListener('input', () => { const v = +$('ride-drop').value; $('ride-drop-v').textContent = `${v >= 0 ? 'ลง' : 'ขึ้น'} ${Math.abs(v * 100).toFixed(1)} ซม.`; });
 async function saveZip() {
   const out = new Map(car.files);
   let n = 0;
@@ -719,6 +748,16 @@ async function saveZip() {
     for (const [rel, b] of car.files) if (dir(rel) === dir(m.rel) && b.length === m.orig.length && b.every((x, i) => x === m.orig[i])) { out.set(rel, bytes); n++; }
   }
   const lampN = await lampPictures(out);
+  // ride height: every mesh file moved down (the wheels stay where the game puts them)
+  const drop = +$('ride-drop').value; let lowered = 0;
+  if (drop) for (const [rel, b] of out) {
+    if (!/\.0m$/i.test(rel)) continue;
+    try {
+      const om = parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)); const parts = omParts(om);
+      for (const q of parts) { const P = Float32Array.from(q.positions); for (let i = 2; i < P.length; i += 3) P[i] -= drop; q.positions = P; }
+      out.set(rel, writeOM(om, parts.map((q) => ({ ...q, kind: q.flags[0] })))); lowered++;
+    } catch { /* not a mesh */ }
+  }
   if (paint.dirty && car.mask) {
     const { w, h, data } = car.mask; const px = new Uint8ClampedArray(data);
     out.set(`${car.name}_base.png`, await png(px, w, h));
@@ -736,7 +775,7 @@ async function saveZip() {
   const zipFiles = [...out].sort((a, b) => a[0].localeCompare(b[0])).map(([rel, data]) => ({ path: `${car.name}/${rel}`, data }));
   const blob = await makeZip(zipFiles);
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${car.name}.zip`; a.click();
-  $('save-log').textContent = `ดาวน์โหลด ${car.name}.zip แล้ว · เขียนใหม่ ${n} ไฟล์ .0m${paint.dirty ? ' · รูปสี (_base.png + _s.dds) ใหม่' : ''}${car.colorDirty ? ' · ชั้นลาย _color ใหม่' : ''}${lampN ? ` · รูปสีไฟ ${lampN} รูป` : ''}`;
+  $('save-log').textContent = `ดาวน์โหลด ${car.name}.zip แล้ว · เขียนใหม่ ${n} ไฟล์ .0m${paint.dirty ? ' · รูปสี (_base.png + _s.dds) ใหม่' : ''}${car.colorDirty ? ' · ชั้นลาย _color ใหม่' : ''}${lampN ? ` · รูปสีไฟ ${lampN} รูป` : ''}${lowered ? ` · ตัวรถลดลง ${(drop * 100).toFixed(1)} ซม. (${lowered} ไฟล์)` : ''}`;
 }
 
 // ---------------------------------------------------------------------------------------------

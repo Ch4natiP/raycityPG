@@ -306,3 +306,12 @@ pictures, so the lamps show black. RayCity UV now writes the lamp colour into th
 Escarabajo's): brake red, indicator amber, headlight white.
 66_your_canyon_65_tail_lamps.zip  pack 65 + rearlight/canyon_rearlight_default(.png/_s.dds) and _rbrc_001
 (brake red at 0.06,0.45, indicator amber at 0.09,0.45). Nothing else changed.
+Video 2026-10-13 17:48 (pack 66 driving): the tail panel still black; the owner asks for the car lower (wheel
+arches too far above the tyres). The black is not the lamps: canyon's brake piece is only 6 small lenses plus
+4 side markers; the panel around them is rearlight/default part 0 (paint, 311 triangles), and the game draws
+the lamp folders' paint with the folder's own picture (Escarabajo's rearlight picture has the black housings),
+not with the car's colours. RayCity UV 🧩 moves the lamp folders' paint into the bumper's paint (rear / front),
+leaving one squashed triangle, so it takes the 3 colours; the "ลดความสูงรถ" slider moves every .0m down on
+saving (wheels stay; mesh.xml untouched).
+67_your_canyon_tail_panel_painted_lower_4cm.zip  pack 66 + 🧩 (323 triangles rearlight → rearbumper) + body 4 cm
+lower (51 mesh files). With the rbrc_001 rear bumper the panel is not there (that file left as it was).

@@ -230,3 +230,10 @@ in RayCity Easy (not tested in game yet).
   sizes (Escarabajo 512 / 256 with mips).
 - RayCity UV: frame painting sees only what is in view (depth of the car rendered once) and uses the files'
   normals; parts with their own texture (tail lamps) are left off the sheet and not painted.
+
+Video 2026-10-13 (the owner's own canyon, own UVs): the three colours work (body / hood / tail lid); the windows
+came out in the body colour (the mask is red under the glass UVs, so the glass takes colour 1).
+58_your_canyon_clear_glass.zip  the owner's canyon.zip with only the texels under the glass changed: mask black
+                         (no garage colour), colour layer 16,20,24 alpha 96 (dark, see-through) — between pack 48
+                         (black, alpha 0: fully clear) and red (glass in the paint colour). RayCity UV has a 🪟
+                         glass setting (clear / clearer / paint colour); builds now default to the clear one.

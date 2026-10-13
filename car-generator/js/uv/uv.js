@@ -886,6 +886,44 @@ $('btn-clear-color').addEventListener('click', () => {
   status(`ล้างลายในชั้น _color แล้ว (${n.toLocaleString()} จุด) · เหลือแค่บล็อกของเกมมุมล่างซ้าย · แผงที่ยังม่วงอยู่ = อยู่ในโซนเกม ให้ลากย้ายออก`);
 });
 $('opt-color').addEventListener('change', () => { drawTexture(); refresh(); });
+// 🪟 Glass look: what the paint mask and the colour layer hold under the glass pieces (kind 1).
+//   clear: mask black (no garage colour) + colour layer dark with some alpha (tinted, see-through)
+//   clearer: mask black + colour layer alpha 0 (pack 48: fully clear)
+//   paint: mask red + colour layer near black alpha 0 (Escarabajo's values: the glass takes colour 1)
+const GLASS_LOOK = { clear: [[0, 0, 0, 255], [16, 20, 24, 96]], clearer: [[0, 0, 0, 255], [0, 0, 0, 0]], paint: [[255, 0, 0, 255], [1, 1, 1, 0]] };
+$('btn-glass').addEventListener('click', () => {
+  if (!car.mask) return;
+  const [mrgba, crgba] = GLASS_LOOK[$('glass-look').value];
+  undo.push(comboSnap()); if (undo.length > 60) undo.shift(); redo.length = 0;
+  const fillImg = (img, rgba, U, a, b, c) => {
+    const { w, h, data } = img; const q = [a, b, c].map((i) => [U[i * 2] * w, U[i * 2 + 1] * h]);
+    const area = (q[1][0] - q[0][0]) * (q[2][1] - q[0][1]) - (q[2][0] - q[0][0]) * (q[1][1] - q[0][1]);
+    const x0 = Math.max(0, Math.floor(Math.min(q[0][0], q[1][0], q[2][0])) - 1); const x1 = Math.min(w - 1, Math.ceil(Math.max(q[0][0], q[1][0], q[2][0])) + 1);
+    const y0 = Math.max(0, Math.floor(Math.min(q[0][1], q[1][1], q[2][1])) - 1); const y1 = Math.min(h - 1, Math.ceil(Math.max(q[0][1], q[1][1], q[2][1])) + 1);
+    if (Math.abs(area) < 1e-6) { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) data.set(rgba, (y * w + x) * 4); return; }
+    const grow = 1.2 / Math.sqrt(Math.abs(area));
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const cx = x + 0.5; const cy = y + 0.5;
+      const s0 = ((q[1][0] - q[0][0]) * (cy - q[0][1]) - (q[1][1] - q[0][1]) * (cx - q[0][0])) / area;
+      const s1 = ((q[2][0] - q[1][0]) * (cy - q[1][1]) - (q[2][1] - q[1][1]) * (cx - q[1][0])) / area;
+      const s2 = ((q[0][0] - q[2][0]) * (cy - q[2][1]) - (q[0][1] - q[2][1]) * (cx - q[2][0])) / area;
+      if (s0 >= -grow && s1 >= -grow && s2 >= -grow) data.set(rgba, (y * w + x) * 4);
+    }
+  };
+  let n = 0;
+  for (const m of car.meshes) for (const p of m.parts) {
+    if (p.flags[0] !== 1) continue;
+    for (let t = 0; t < p.indices.length; t += 3) {
+      fillImg(car.mask, mrgba, p.uvs, p.indices[t], p.indices[t + 1], p.indices[t + 2]);
+      if (car.color) fillImg(car.color, crgba, p.uvs, p.indices[t], p.indices[t + 1], p.indices[t + 2]);
+      n++;
+    }
+  }
+  paint.dirty = true;
+  if (car.color) { car.colorDirty = true; car.colorImg.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(car.color.data), car.color.w, car.color.h), 0, 0); }
+  maskChanged();
+  status(n ? `ตั้งกระจก ${n.toLocaleString()} สามเหลี่ยม เป็น "${$('glass-look').selectedOptions[0].textContent}" · กด ⬇ ดาวน์โหลดแล้วลองในเกม` : 'รถคันนี้ไม่มีชิ้นกระจก (ชนิด 1)');
+});
 // ⤒ the whole layout (every UV of the body-mask files, the flat colour spots and glass too) moved up — and
 // made smaller only if there is no room — until nothing is left in the game's block; the paint mask and the
 // colour layer move with it, so every panel keeps its colour.

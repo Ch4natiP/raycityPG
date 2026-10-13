@@ -2357,7 +2357,10 @@ export async function clearColourArt(out, name) {
   out.set(`${name}_color_s.dds`, dds(px, w, h, mode));
   return n;
 }
-export const ESCARABAJO_GLASS = { rect: [0, 0.25, 0.125, 0.125], colour: [1, 1, 1, 0], mask: [255, 0, 0, 255] };
+// Look (2026-10-13, the owner's car in game: glass on red takes the body colour, wanted see-through):
+// mask black (no garage colour) and the colour layer dark with some alpha — between pack 48 (black,
+// alpha 0: fully clear) and Escarabajo's red / alpha 0 (glass in the paint colour).
+export const ESCARABAJO_GLASS = { rect: [0, 0.25, 0.125, 0.125], colour: [16, 20, 24, 96], mask: [0, 0, 0, 255] };
 export async function glassLikeEscarabajo(out, name) {
   const maskPng = out.get(`${name}_base.png`); const colPng = out.get(`${name}_color.png`);
   if (!maskPng) return null;

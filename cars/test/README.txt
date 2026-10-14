@@ -368,3 +368,7 @@ down by the amount at the front wheels (y −1.23), nothing at the rear wheels (
 kept as Escarabajo's bytes.
 Video 2026-10-13 18:56 (pack 73): the tail lamps light up red when braking — the upside-down reading of part
 pictures was the cause; Escarabajo's picture with its lamp patches works.
+2026-10-14: the owner's colour layout (UV page screenshot: colour 2 green at the front / rear ends of both
+sides and the top view, colour 3 blue on the hood, boot lid and the two stripes beside the hood) put into
+pack 73's mask (black spots, film and plate cells kept). 74_your_canyon_73_your_colours.zip, and
+74_uv_colours_with_lines.png (2048², the mask with every paint triangle's UV lines in white over it).

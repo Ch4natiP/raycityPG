@@ -852,6 +852,19 @@ $('btn-tail-auto').addEventListener('click', () => {
     l.uvs = U; rl.dirty = true;
     if (!q.esc) for (let y = Math.floor(R[1] * q.h); y < Math.ceil(R[3] * q.h); y++) for (let x = Math.floor(R[0] * q.w); x < Math.ceil(R[2] * q.w); x++) q.data.set([0, 0, 0, 0], (y * q.w + x) * 4); // (Escarabajo's picture keeps its lamp glow there)
   }
+  // a red backing 3 mm behind each lamp facing back (paint on the red lamp texel): through the lamp's clear /
+  // dim glow the lamp reads red when off, like a real tail lamp; braking lights the lamp in front of it
+  { const red = cellUV('tail', 'rearlight'); const base = p.positions.length / 3; const P2 = [...p.positions]; const N2 = [...p.normals]; const U2 = [...p.uvs]; const I2 = [...p.indices]; let added = 0;
+    for (const l of rl.parts) {
+      if (l.flags[0] !== 3 && l.flags[0] !== 4) continue; const L = l.positions; const LN = l.normals; const sg = outwardSign(l); const LI = l.indices;
+      for (let t = 0; t < LI.length; t += 3) {
+        const ny = sg * (LN[LI[t] * 3 + 1] + LN[LI[t + 1] * 3 + 1] + LN[LI[t + 2] * 3 + 1]) / 3; if (ny < 0.5) continue; // side markers left out
+        for (let k = 0; k < 3; k++) { const i = LI[t + k]; P2.push(L[i * 3], L[i * 3 + 1] - 0.003, L[i * 3 + 2]); N2.push(sg * LN[i * 3], sg * LN[i * 3 + 1], sg * LN[i * 3 + 2]); U2.push(red[0], red[1]); I2.push(base + added * 3 + k); }
+        added++;
+      }
+    }
+    if (added) { Object.assign(p, { positions: Float32Array.from(P2), normals: Float32Array.from(N2), uvs: Float32Array.from(U2), indices: Uint32Array.from(I2) }); p._adj = null; p._sg = 0; dst.m.dirty = true; }
+  }
   lampPicShow('rearlight');
   for (const x of car.meshes) x.isl = x.parts.map(islandsOf);
   build3D(); refresh();

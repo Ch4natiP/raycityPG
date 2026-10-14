@@ -372,3 +372,9 @@ pictures was the cause; Escarabajo's picture with its lamp patches works.
 sides and the top view, colour 3 blue on the hood, boot lid and the two stripes beside the hood) put into
 pack 73's mask (black spots, film and plate cells kept). 74_your_canyon_73_your_colours.zip, and
 74_uv_colours_with_lines.png (2048², the mask with every paint triangle's UV lines in white over it).
+Videos 2026-10-14 11:04 / 11:05 (pack 74, and a yellow game car for comparison): the yellow car's tail lamps
+are red all the time and brighter when braking; ours show grey boxes when off (the lamp patch is a dim, mostly
+clear glow, so you look through it). 🔴 now adds a red backing 3 mm behind every lamp facing back (rearlight
+paint on Escarabajo's red lamp texel): red when off, the lamp lights in front of it when braking.
+75_your_canyon_74_red_tail_lamps.zip  pack 74 (your colours) + the red backing (153 triangles), Escarabajo's
+rearlight picture bytes kept.

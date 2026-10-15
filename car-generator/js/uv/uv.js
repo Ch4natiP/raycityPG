@@ -843,10 +843,22 @@ $('btn-tail-auto').addEventListener('click', () => {
   for (const k of ['tail', 'turn', 'trim']) if (by[k].length) colourTris(p, by[k], k, 'rearlight');
   // the lamps themselves: each lamp (connected bit) spread over Escarabajo's own brake / indicator patch, as
   // Escarabajo's lamps are (packs 73-76 lit red braking, white reversing; on solid red art they lit white)
-  // Escarabajo / gtv98 have two lamps over the same place: kind 3 (lit white reversing) and kind 4 (lit red
-  // braking). A car whose kind 4 is only a holder (canyon) gets a copy of its kind 3 lamps as kind 4.
+  // Two lights: kind 3 lights white reversing, kind 4 red braking. A car whose kind 4 is only a holder (canyon)
+  // gets its kind 3 lamps split: the innermost lamp each side stays kind 3 (reverse), the others and the side
+  // markers become kind 4 (brake). (Both over the same place: the one in front hides the other — pack 79
+  // braked red but lost the reverse light.)
   { const k3 = rl.parts.find((x) => x.flags[0] === 3 && x.positions.length / 3 > 8); const k4 = rl.parts.find((x) => x.flags[0] === 4);
-    if (k3 && k4 && k4.positions.length / 3 <= 8) { Object.assign(k4, { positions: Float32Array.from(k3.positions), normals: Float32Array.from(k3.normals), uvs: Float32Array.from(k3.uvs), indices: Uint32Array.from(k3.indices) }); k4._sg = 0; rl.dirty = true; } }
+    if (k3 && k4 && k4.positions.length / 3 <= 8) {
+      const P = k3.positions; const N = k3.normals; const I = k3.indices; const nv = P.length / 3; const sg = outwardSign(k3);
+      const par = new Int32Array(nv).map((_, i) => i); const find = (a2) => { while (par[a2] !== a2) { par[a2] = par[par[a2]]; a2 = par[a2]; } return a2; };
+      for (let t = 0; t < I.length; t += 3) { par[find(I[t])] = find(I[t + 1]); par[find(I[t + 2])] = find(I[t + 1]); }
+      const bits = new Map(); for (let i = 0; i < nv; i++) { const r = find(i); if (!bits.has(r)) bits.set(r, { cx: 0, ny: 0, n: 0 }); const e = bits.get(r); e.cx += P[i * 3]; e.ny += sg * N[i * 3 + 1]; e.n++; }
+      const rev = new Set(); for (const side of [1, -1]) { let best = null; for (const [r, e] of bits) if (e.ny / e.n > 0.5 && side * e.cx > 0 && (!best || Math.abs(e.cx) < Math.abs(best[1].cx))) best = [r, e]; if (best) rev.add(best[0]); }
+      const take = (want) => { const map = new Map(); const Pp = []; const Nn = []; const Uu = []; const Ii = [];
+        for (let t = 0; t < I.length; t += 3) { if (rev.has(find(I[t])) !== want) continue; for (let k = 0; k < 3; k++) { const i = I[t + k]; if (!map.has(i)) { map.set(i, map.size); Pp.push(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]); Nn.push(N[i * 3], N[i * 3 + 1], N[i * 3 + 2]); Uu.push(k3.uvs[i * 2], k3.uvs[i * 2 + 1]); } Ii.push(map.get(i)); } }
+        return { positions: Float32Array.from(Pp), normals: Float32Array.from(Nn), uvs: Float32Array.from(Uu), indices: Uint32Array.from(Ii), _sg: 0 }; };
+      if (rev.size && rev.size < bits.size) { Object.assign(k4, take(false)); Object.assign(k3, take(true)); rl.dirty = true; }
+    } }
   for (const l of rl.parts) {
     if (l.flags[0] !== 3 && l.flags[0] !== 4) continue; const R = l.flags[0] === 3 ? [0.272, 0.846, 0.373, 0.896] : [0.386, 0.858, 0.422, 0.894]; // Escarabajo's own lamp patches (in game: red when braking, white when reversing; lamps on solid red art lit white)
     const L = l.positions; const LI = l.indices; const nv = L.length / 3; const par = new Int32Array(nv).map((_, i) => i);

@@ -411,3 +411,7 @@ reversing, = kind 3). The earlier "brake red in pack 73" was a guess from one fr
 79_your_canyon_74_brake_lamps_kind4.zip  pack 74 (your colours, no backing) with kind 4 = a copy of the kind 3
 lamps, over Escarabajo's kind-4 patch (u 0.386-0.422, v 0.858-0.894). 🔴 does the same for a holder-only kind 4.
 Video 2026-10-15 19:29 (pack 79, driving forward): the tail lamps light red several times (braking). Reversing not in this clip.
+The owner (pack 79): reversing no longer lights. With kind 4 laid over the same place as kind 3, the one in
+front hides the other. 80_your_canyon_brake_outer_reverse_inner.zip: pack 74 with canyon's lamps split — the
+innermost lamp each side (x ±0.28-0.41) kind 3 (reverse, Escarabajo's kind-3 patch), the outer lamps
+(±0.42-0.54, ±0.58-0.67) and the side markers kind 4 (brake, its kind-4 patch). 🔴 does the same.

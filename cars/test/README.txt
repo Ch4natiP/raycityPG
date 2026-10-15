@@ -402,3 +402,5 @@ red lamp art read straight (u 0.14-0.235, v 0.497-0.534); panel / backing on its
 The owner (pack 78): the lamps still light white only. Lamps on Escarabajo's solid red art light white (77, 78);
 on Escarabajo's own brake patch they lit red when braking (videos of packs 73 and 76) and white when reversing
 (75). 🔴 goes back to Escarabajo's patches. Pack 75 / 76 are the ones to use.
+Video 2026-10-15 18:15 (pack 75): braking lights white. Packs 73 / 74 (no backing behind the lamps) lit red;
+the red backing of 75 makes them white. 🔴 no longer adds the backing; pack 74 is the one to use.

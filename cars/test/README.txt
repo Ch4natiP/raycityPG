@@ -385,3 +385,4 @@ must come from the colour layer (canyon_color, drawn over the car where opaque, 
 76_TEST_tail_lamps_red_via_colour_layer.zip  pack 75 with the lamp panel / backing on colour-layer texel
 (3, 27) painted red (200,10,10) and the housing on texel (7, 27) painted black, both opaque, in the free area
 left of the sheet (u 0.027 / 0.059, v 0.43). Red boxes in game = the colour layer reaches lamp parts.
+The owner: with pack 75 the tail lamps light when holding reverse. Pack 76 keeps the same lamps (only the panels moved to the colour layer).

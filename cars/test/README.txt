@@ -410,3 +410,4 @@ kind 4 — one per light. Canyon's kind 4 is only a holder squashed to a point, 
 reversing, = kind 3). The earlier "brake red in pack 73" was a guess from one frame; 73 has the same missing kind 4.
 79_your_canyon_74_brake_lamps_kind4.zip  pack 74 (your colours, no backing) with kind 4 = a copy of the kind 3
 lamps, over Escarabajo's kind-4 patch (u 0.386-0.422, v 0.858-0.894). 🔴 does the same for a holder-only kind 4.
+Video 2026-10-15 19:29 (pack 79, driving forward): the tail lamps light red several times (braking). Reversing not in this clip.

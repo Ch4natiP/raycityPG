@@ -378,3 +378,10 @@ clear glow, so you look through it). 🔴 now adds a red backing 3 mm behind eve
 paint on Escarabajo's red lamp texel): red when off, the lamp lights in front of it when braking.
 75_your_canyon_74_red_tail_lamps.zip  pack 74 (your colours) + the red backing (153 triangles), Escarabajo's
 rearlight picture bytes kept.
+Video 2026-10-15 16:36 (pack 75): lamp boxes still grey, the red backing not red. So rearlight's paint is not
+coloured by its folder picture (only the lamps kind 3 / 4 are — they light up from it); it takes the car's own
+colour from the mask at its UV (Escarabajo's red texel lies on red = colour 1 = white). The fixed red / black
+must come from the colour layer (canyon_color, drawn over the car where opaque, like the game block).
+76_TEST_tail_lamps_red_via_colour_layer.zip  pack 75 with the lamp panel / backing on colour-layer texel
+(3, 27) painted red (200,10,10) and the housing on texel (7, 27) painted black, both opaque, in the free area
+left of the sheet (u 0.027 / 0.059, v 0.43). Red boxes in game = the colour layer reaches lamp parts.

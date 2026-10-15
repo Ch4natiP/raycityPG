@@ -386,3 +386,9 @@ must come from the colour layer (canyon_color, drawn over the car where opaque, 
 (3, 27) painted red (200,10,10) and the housing on texel (7, 27) painted black, both opaque, in the free area
 left of the sheet (u 0.027 / 0.059, v 0.43). Red boxes in game = the colour layer reaches lamp parts.
 The owner: with pack 75 the tail lamps light when holding reverse. Pack 76 keeps the same lamps (only the panels moved to the colour layer).
+Video 2026-10-15 16:45 (pack 76): lamps red and lit when braking / reversing, grey when off; the colour-layer
+texels did not reach the lamp boxes either. What shows when off is the lamp (kind 3) itself, over Escarabajo's
+dim glow patch. 77_TEST_tail_lamps_left_vs_right.zip: pack 75 with each lamp spread over Escarabajo's solid red
+lamp art instead, the car's left lamps (+x, on the left seen from behind) with the picture read upside down
+(UV v 0.466-0.503), the right lamps read straight (v 0.497-0.534). The side that is red when off tells which
+way the game reads part pictures.

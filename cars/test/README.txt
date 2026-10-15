@@ -404,3 +404,9 @@ on Escarabajo's own brake patch they lit red when braking (videos of packs 73 an
 (75). 🔴 goes back to Escarabajo's patches. Pack 75 / 76 are the ones to use.
 Video 2026-10-15 18:15 (pack 75): braking lights white. Packs 73 / 74 (no backing behind the lamps) lit red;
 the red backing of 75 makes them white. 🔴 no longer adds the backing; pack 74 is the one to use.
+The owner: braking (moving forward, then brake) must light red, reversing white. Pack 75: only white works,
+never red. Found: Escarabajo (base and default) and gtv98 have TWO lamp pieces over the same place — kind 3 and
+kind 4 — one per light. Canyon's kind 4 is only a holder squashed to a point, so it had one light (white,
+reversing, = kind 3). The earlier "brake red in pack 73" was a guess from one frame; 73 has the same missing kind 4.
+79_your_canyon_74_brake_lamps_kind4.zip  pack 74 (your colours, no backing) with kind 4 = a copy of the kind 3
+lamps, over Escarabajo's kind-4 patch (u 0.386-0.422, v 0.858-0.894). 🔴 does the same for a holder-only kind 4.

@@ -843,6 +843,10 @@ $('btn-tail-auto').addEventListener('click', () => {
   for (const k of ['tail', 'turn', 'trim']) if (by[k].length) colourTris(p, by[k], k, 'rearlight');
   // the lamps themselves: each lamp (connected bit) spread over Escarabajo's own brake / indicator patch, as
   // Escarabajo's lamps are (packs 73-76 lit red braking, white reversing; on solid red art they lit white)
+  // Escarabajo / gtv98 have two lamps over the same place: kind 3 (lit white reversing) and kind 4 (lit red
+  // braking). A car whose kind 4 is only a holder (canyon) gets a copy of its kind 3 lamps as kind 4.
+  { const k3 = rl.parts.find((x) => x.flags[0] === 3 && x.positions.length / 3 > 8); const k4 = rl.parts.find((x) => x.flags[0] === 4);
+    if (k3 && k4 && k4.positions.length / 3 <= 8) { Object.assign(k4, { positions: Float32Array.from(k3.positions), normals: Float32Array.from(k3.normals), uvs: Float32Array.from(k3.uvs), indices: Uint32Array.from(k3.indices) }); k4._sg = 0; rl.dirty = true; } }
   for (const l of rl.parts) {
     if (l.flags[0] !== 3 && l.flags[0] !== 4) continue; const R = l.flags[0] === 3 ? [0.272, 0.846, 0.373, 0.896] : [0.386, 0.858, 0.422, 0.894]; // Escarabajo's own lamp patches (in game: red when braking, white when reversing; lamps on solid red art lit white)
     const L = l.positions; const LI = l.indices; const nv = L.length / 3; const par = new Int32Array(nv).map((_, i) => i);

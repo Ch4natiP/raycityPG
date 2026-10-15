@@ -415,3 +415,4 @@ The owner (pack 79): reversing no longer lights. With kind 4 laid over the same 
 front hides the other. 80_your_canyon_brake_outer_reverse_inner.zip: pack 74 with canyon's lamps split — the
 innermost lamp each side (x ±0.28-0.41) kind 3 (reverse, Escarabajo's kind-3 patch), the outer lamps
 (±0.42-0.54, ±0.58-0.67) and the side markers kind 4 (brake, its kind-4 patch). 🔴 does the same.
+Video 2026-10-15 19:42 (pack 80): the owner likes it ("สวยเลยอันนี้"), a little more to adjust.

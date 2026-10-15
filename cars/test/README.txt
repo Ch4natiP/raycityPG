@@ -399,3 +399,6 @@ lamps show grey whatever the picture (they only show the picture when lit).
 78_your_canyon_red_brake_lamps.zip  pack 77 with every lamp (each connected bit) spread over Escarabajo's solid
 red lamp art read straight (u 0.14-0.235, v 0.497-0.534); panel / backing on its red (0.191, 0.535) and black
 (0.113, 0.391). RayCity UV: no more flipping, 🔴 does the same.
+The owner (pack 78): the lamps still light white only. Lamps on Escarabajo's solid red art light white (77, 78);
+on Escarabajo's own brake patch they lit red when braking (videos of packs 73 and 76) and white when reversing
+(75). 🔴 goes back to Escarabajo's patches. Pack 75 / 76 are the ones to use.

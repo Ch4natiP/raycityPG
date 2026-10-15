@@ -841,10 +841,10 @@ $('btn-tail-auto').addEventListener('click', () => {
   }
   red = by.tail.length + by.turn.length; const nTris = I.length / 3;
   for (const k of ['tail', 'turn', 'trim']) if (by[k].length) colourTris(p, by[k], k, 'rearlight');
-  // the lamps themselves: each lamp (connected bit) spread over Escarabajo's solid red lamp art, so it lights
-  // up red (the game lights a lamp in the picture's colour under it)
+  // the lamps themselves: each lamp (connected bit) spread over Escarabajo's own brake / indicator patch, as
+  // Escarabajo's lamps are (packs 73-76 lit red braking, white reversing; on solid red art they lit white)
   for (const l of rl.parts) {
-    if (l.flags[0] !== 3 && l.flags[0] !== 4) continue; const R = q.esc ? ESC_RED_LAMP : [0.272, 0.846, 0.373, 0.896];
+    if (l.flags[0] !== 3 && l.flags[0] !== 4) continue; const R = l.flags[0] === 3 ? [0.272, 0.846, 0.373, 0.896] : [0.386, 0.858, 0.422, 0.894]; // Escarabajo's own lamp patches (in game: red when braking, white when reversing; lamps on solid red art lit white)
     const L = l.positions; const LI = l.indices; const nv = L.length / 3; const par = new Int32Array(nv).map((_, i) => i);
     const find = (a) => { while (par[a] !== a) { par[a] = par[par[a]]; a = par[a]; } return a; };
     for (let t = 0; t < LI.length; t += 3) { par[find(LI[t])] = find(LI[t + 1]); par[find(LI[t + 2])] = find(LI[t + 1]); }
@@ -852,7 +852,6 @@ $('btn-tail-auto').addEventListener('click', () => {
     const U = new Float32Array(l.uvs.length);
     for (let i = 0; i < nv; i++) { const e = bx.get(find(i)); U[i * 2] = R[0] + (R[2] - R[0]) * ((e[1] - L[i * 3]) / ((e[1] - e[0]) || 1)); U[i * 2 + 1] = R[1] + (R[3] - R[1]) * ((e[3] - L[i * 3 + 2]) / ((e[3] - e[2]) || 1)); }
     l.uvs = U; rl.dirty = true;
-    if (!q.esc) for (let y = Math.floor(R[1] * q.h); y < Math.ceil(R[3] * q.h); y++) for (let x = Math.floor(R[0] * q.w); x < Math.ceil(R[2] * q.w); x++) q.data.set(LAMP_PAINT.tail, (y * q.w + x) * 4);
   }
   // a red backing 3 mm behind each lamp facing back (paint on the red lamp texel): through the lamp's clear /
   // dim glow the lamp reads red when off, like a real tail lamp; braking lights the lamp in front of it

@@ -392,3 +392,10 @@ dim glow patch. 77_TEST_tail_lamps_left_vs_right.zip: pack 75 with each lamp spr
 lamp art instead, the car's left lamps (+x, on the left seen from behind) with the picture read upside down
 (UV v 0.466-0.503), the right lamps read straight (v 0.497-0.534). The side that is red when off tells which
 way the game reads part pictures.
+Video 2026-10-15 17:53 (pack 77) + the owner: the lamps light WHITE instead of red. That settles it: a lamp lights
+in the colour of the picture under its UVs, read straight (row = v · height) — Escarabajo's brake patch
+(u 0.272-0.373, v 0.846-0.896) is its white reverse-light art; the upside-down reading was wrong. Off, the
+lamps show grey whatever the picture (they only show the picture when lit).
+78_your_canyon_red_brake_lamps.zip  pack 77 with every lamp (each connected bit) spread over Escarabajo's solid
+red lamp art read straight (u 0.14-0.235, v 0.497-0.534); panel / backing on its red (0.191, 0.535) and black
+(0.113, 0.391). RayCity UV: no more flipping, 🔴 does the same.

@@ -697,12 +697,13 @@ const LAMP_PAINT = { head: [238, 238, 228, 255], tail: [205, 12, 12, 255], turn:
 // one 16 × 16 px cell per colour in the folder picture's top row (u k/8 … (k+1)/8, v 0 … 1/8): a lamp panel's
 // triangles point at the middle of their colour's cell, so every triangle is fully that colour at any size
 const LAMP_CELL = { head: 0, tail: 1, turn: 2, trim: 3 };
-// Part pictures are read upside down by the game (row = (1 − v) · height): Escarabajo's / gtv98's lamps and
-// panels point at v 0.75-1, their art sits in the top rows. The page keeps pictures in UV order (row = v) and
-// flips them when reading and writing the files.
-const flipRows = (q) => { const { w, h, data } = q; const o = new Uint8ClampedArray(data.length); for (let y = 0; y < h; y++) o.set(data.subarray(y * w * 4, (y + 1) * w * 4), (h - 1 - y) * w * 4); return { ...q, data: o }; };
+// Part pictures are read straight (row = v · height): a lamp lights up in the colour of the picture under its
+// UVs (on Escarabajo's brake patch it lit white — that patch is its reverse-light art).
+const flipRows = (q) => q; // (in-game test 2026-10-15: lamps lit white from Escarabajo's reverse-light art = pictures are read straight; kept as a no-op hook)
 // Escarabajo's rearlight picture (escarabajo_rearlight_base): solid red lamp and black housing texels (UV order)
-const ESC_CELL = { head: [0.191, 0.465], tail: [0.191, 0.465], turn: [0.191, 0.465], trim: [0.113, 0.609] };
+const ESC_CELL = { head: [0.191, 0.535], tail: [0.191, 0.535], turn: [0.191, 0.535], trim: [0.113, 0.391] };
+// Escarabajo's solid red lamp art: the lamps light up red there
+const ESC_RED_LAMP = [0.14, 0.497, 0.235, 0.534];
 const cellUV = (k, dir) => (dir && lamp.pics.get(dir) && lamp.pics.get(dir).esc ? ESC_CELL[k] : [(LAMP_CELL[k] + 0.5) / 8, 0.5 / 8]);
 function paintCells(q) { for (const [k, i] of Object.entries(LAMP_CELL)) for (let y = 0; y < Math.ceil(q.h / 8); y++) for (let x = Math.floor((i * q.w) / 8); x < Math.ceil(((i + 1) * q.w) / 8); x++) q.data.set(LAMP_PAINT[k], (y * q.w + x) * 4); }
 // triangles tris of p get colour k: own points (so neighbours of another colour keep theirs) on the cell
@@ -840,17 +841,18 @@ $('btn-tail-auto').addEventListener('click', () => {
   }
   red = by.tail.length + by.turn.length; const nTris = I.length / 3;
   for (const k of ['tail', 'turn', 'trim']) if (by[k].length) colourTris(p, by[k], k, 'rearlight');
-  // the lamps themselves like Escarabajo's: spread (seen from behind) over a clear patch of the picture
-  // (brake u 0.272-0.373, v 0.846-0.896; indicator 0.386-0.422, 0.858-0.894) — clear when off, the game
-  // lights them; a lamp on one opaque spot does not light up
+  // the lamps themselves: each lamp (connected bit) spread over Escarabajo's solid red lamp art, so it lights
+  // up red (the game lights a lamp in the picture's colour under it)
   for (const l of rl.parts) {
-    const R = l.flags[0] === 3 ? [0.272, 0.846, 0.373, 0.896] : l.flags[0] === 4 ? [0.386, 0.858, 0.422, 0.894] : null; if (!R) continue;
-    const L = l.positions; let x0 = Infinity; let x1 = -Infinity; let z0 = Infinity; let z1 = -Infinity;
-    for (let i = 0; i < L.length; i += 3) { x0 = Math.min(x0, L[i]); x1 = Math.max(x1, L[i]); z0 = Math.min(z0, L[i + 2]); z1 = Math.max(z1, L[i + 2]); }
+    if (l.flags[0] !== 3 && l.flags[0] !== 4) continue; const R = q.esc ? ESC_RED_LAMP : [0.272, 0.846, 0.373, 0.896];
+    const L = l.positions; const LI = l.indices; const nv = L.length / 3; const par = new Int32Array(nv).map((_, i) => i);
+    const find = (a) => { while (par[a] !== a) { par[a] = par[par[a]]; a = par[a]; } return a; };
+    for (let t = 0; t < LI.length; t += 3) { par[find(LI[t])] = find(LI[t + 1]); par[find(LI[t + 2])] = find(LI[t + 1]); }
+    const bx = new Map(); for (let i = 0; i < nv; i++) { const r = find(i); if (!bx.has(r)) bx.set(r, [Infinity, -Infinity, Infinity, -Infinity]); const e = bx.get(r); e[0] = Math.min(e[0], L[i * 3]); e[1] = Math.max(e[1], L[i * 3]); e[2] = Math.min(e[2], L[i * 3 + 2]); e[3] = Math.max(e[3], L[i * 3 + 2]); }
     const U = new Float32Array(l.uvs.length);
-    for (let i = 0; i < L.length / 3; i++) { U[i * 2] = R[0] + (R[2] - R[0]) * ((x1 - L[i * 3]) / ((x1 - x0) || 1)); U[i * 2 + 1] = R[1] + (R[3] - R[1]) * ((z1 - L[i * 3 + 2]) / ((z1 - z0) || 1)); }
+    for (let i = 0; i < nv; i++) { const e = bx.get(find(i)); U[i * 2] = R[0] + (R[2] - R[0]) * ((e[1] - L[i * 3]) / ((e[1] - e[0]) || 1)); U[i * 2 + 1] = R[1] + (R[3] - R[1]) * ((e[3] - L[i * 3 + 2]) / ((e[3] - e[2]) || 1)); }
     l.uvs = U; rl.dirty = true;
-    if (!q.esc) for (let y = Math.floor(R[1] * q.h); y < Math.ceil(R[3] * q.h); y++) for (let x = Math.floor(R[0] * q.w); x < Math.ceil(R[2] * q.w); x++) q.data.set([0, 0, 0, 0], (y * q.w + x) * 4); // (Escarabajo's picture keeps its lamp glow there)
+    if (!q.esc) for (let y = Math.floor(R[1] * q.h); y < Math.ceil(R[3] * q.h); y++) for (let x = Math.floor(R[0] * q.w); x < Math.ceil(R[2] * q.w); x++) q.data.set(LAMP_PAINT.tail, (y * q.w + x) * 4);
   }
   // a red backing 3 mm behind each lamp facing back (paint on the red lamp texel): through the lamp's clear /
   // dim glow the lamp reads red when off, like a real tail lamp; braking lights the lamp in front of it

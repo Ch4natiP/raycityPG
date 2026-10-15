@@ -416,3 +416,7 @@ front hides the other. 80_your_canyon_brake_outer_reverse_inner.zip: pack 74 wit
 innermost lamp each side (x ±0.28-0.41) kind 3 (reverse, Escarabajo's kind-3 patch), the outer lamps
 (±0.42-0.54, ±0.58-0.67) and the side markers kind 4 (brake, its kind-4 patch). 🔴 does the same.
 Video 2026-10-15 19:42 (pack 80): the owner likes it ("สวยเลยอันนี้"), a little more to adjust.
+The owner: make the tail lamps not look hollow. Off, the lamps show what is behind them — the lamp boxes, which
+take the car colour from the mask. 81_your_canyon_80_dark_lamp_insides.zip: pack 80 with the lamp boxes' paint
+(339 triangles near the lamps) on a black mask spot at (0.03, 0.45) (9×9 px, nothing else there), so the lamps
+read dark like tinted lamps when off and light red / white over it.

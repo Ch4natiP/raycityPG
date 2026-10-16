@@ -14,22 +14,28 @@ export class GeoBuilder {
   quad(a, b, c, d, color, uv = [0, 0, 1, 1]) {
     const n = new THREE.Vector3().subVectors(b, a).cross(new THREE.Vector3().subVectors(d, a)).normalize();
     const base = this.pos.length / 3;
-    const col = color instanceof THREE.Color ? color : new THREE.Color(color);
+    // color: one colour, or four (one per corner)
+    const cols = (Array.isArray(color) ? color : [color, color, color, color]).map((k) => (k instanceof THREE.Color ? k : new THREE.Color(k)));
     const uvs = [[uv[0], uv[1]], [uv[2], uv[1]], [uv[2], uv[3]], [uv[0], uv[3]]];
     [a, b, c, d].forEach((p, k) => {
       this.pos.push(p.x, p.y, p.z);
       this.nor.push(n.x, n.y, n.z);
       this.uv.push(uvs[k][0], uvs[k][1]);
-      this.col.push(col.r, col.g, col.b);
+      this.col.push(cols[k].r, cols[k].g, cols[k].b);
     });
     this.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
   }
 
   // Axis-aligned box. tile = [metres per u, metres per v] for walls; roof/bottom get a flat uv.
   // skip: set of faces to leave out ('top','bottom','n','s','e','w').
-  box(x0, y0, z0, x1, y1, z1, color, { tile = null, skip = null, topColor = null, vOffset = 0, uOffset = 0 } = {}) {
+  // ao: darken the bottom edge of the walls (contact shadow where they meet the ground), 0..1.
+  // topTile: metres per texture repeat on the top face (paving), else the top gets a flat uv.
+  box(x0, y0, z0, x1, y1, z1, color, { tile = null, skip = null, topColor = null, vOffset = 0, uOffset = 0, ao = 0, topTile = 0 } = {}) {
     const V = (x, y, z) => new THREE.Vector3(x, y, z);
     const s = skip || {};
+    const base = color instanceof THREE.Color ? color : new THREE.Color(color);
+    const dark = base.clone().multiplyScalar(1 - ao);
+    const wall = ao ? [dark, dark, base, base] : base;
     const u0 = tile ? uOffset : 0;
     const wu = (len) => (tile ? uOffset + len / tile[0] : 1);
     const wv0 = tile ? vOffset : 0;
@@ -37,14 +43,14 @@ export class GeoBuilder {
     const h = y1 - y0;
     const flat = [0.02, 0.02, 0.03, 0.03];
     // south (+z)
-    if (!s.s) this.quad(V(x0, y0, z1), V(x1, y0, z1), V(x1, y1, z1), V(x0, y1, z1), color, [u0, wv0, wu(x1 - x0), wv(h)]);
+    if (!s.s) this.quad(V(x0, y0, z1), V(x1, y0, z1), V(x1, y1, z1), V(x0, y1, z1), wall, [u0, wv0, wu(x1 - x0), wv(h)]);
     // north (-z)
-    if (!s.n) this.quad(V(x1, y0, z0), V(x0, y0, z0), V(x0, y1, z0), V(x1, y1, z0), color, [u0, wv0, wu(x1 - x0), wv(h)]);
+    if (!s.n) this.quad(V(x1, y0, z0), V(x0, y0, z0), V(x0, y1, z0), V(x1, y1, z0), wall, [u0, wv0, wu(x1 - x0), wv(h)]);
     // east (+x)
-    if (!s.e) this.quad(V(x1, y0, z1), V(x1, y0, z0), V(x1, y1, z0), V(x1, y1, z1), color, [u0, wv0, wu(z1 - z0), wv(h)]);
+    if (!s.e) this.quad(V(x1, y0, z1), V(x1, y0, z0), V(x1, y1, z0), V(x1, y1, z1), wall, [u0, wv0, wu(z1 - z0), wv(h)]);
     // west (-x)
-    if (!s.w) this.quad(V(x0, y0, z0), V(x0, y0, z1), V(x0, y1, z1), V(x0, y1, z0), color, [u0, wv0, wu(z1 - z0), wv(h)]);
-    if (!s.top) this.quad(V(x0, y1, z1), V(x1, y1, z1), V(x1, y1, z0), V(x0, y1, z0), topColor ?? color, tile ? flat : [0, 0, 1, 1]);
+    if (!s.w) this.quad(V(x0, y0, z0), V(x0, y0, z1), V(x0, y1, z1), V(x0, y1, z0), wall, [u0, wv0, wu(z1 - z0), wv(h)]);
+    if (!s.top) this.quad(V(x0, y1, z1), V(x1, y1, z1), V(x1, y1, z0), V(x0, y1, z0), topColor ?? color, topTile ? [x0 / topTile, -z1 / topTile, x1 / topTile, -z0 / topTile] : tile ? flat : [0, 0, 1, 1]);
     if (s.bottom === false) this.quad(V(x0, y0, z0), V(x1, y0, z0), V(x1, y0, z1), V(x0, y0, z1), color, flat);
   }
 

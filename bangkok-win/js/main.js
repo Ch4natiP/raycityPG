@@ -7,6 +7,11 @@ import { Hud } from './hud.js';
 import { Input } from './input.js';
 import { Sfx } from './audio.js';
 import { Bike } from './bike.js';
+import { Atmosphere } from './sky.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 const mobile = matchMedia('(pointer: coarse)').matches;
 document.body.classList.toggle('mobile', mobile);
@@ -26,20 +31,20 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.getElementById('app').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-const SKY = 0xc9d8df;
-scene.background = new THREE.Color(SKY);
-scene.fog = new THREE.Fog(SKY, 90, mobile ? 380 : 560);
 const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.3, 1200);
+// sky, sun / moon, haze and the clock; the game starts in the late afternoon so dusk comes soon
+const atmo = new Atmosphere(scene, renderer, { mobile, hour: 16.5 });
 
-scene.add(new THREE.HemisphereLight(0xe8f2ff, 0x77685a, 1.5));
-const sun = new THREE.DirectionalLight(0xfff0d8, 2.2);
-sun.castShadow = !mobile;
-sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -70, right: 70, top: 70, bottom: -70, near: 1, far: 400 });
-sun.shadow.bias = -0.0008;
-sun.shadow.normalBias = 0.4;
-scene.add(sun, sun.target);
-const SUN_DIR = new THREE.Vector3(-0.45, 1, 0.3).normalize();
+// Bloom makes lamps, signs and lit windows glow. Desktop only (too heavy for phones).
+let composer = null;
+let bloom = null;
+if (!mobile) {
+  composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+  bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth / 2, innerHeight / 2), 0.2, 0.55, 0.92);
+  composer.addPass(bloom);
+  composer.addPass(new OutputPass());
+}
 
 const city = buildCity(scene, { shadows: !mobile });
 const traffic = new Traffic(scene, mobile ? 45 : 75);
@@ -55,6 +60,13 @@ player.place(startStand.x, startStand.z, Math.PI / 2);
 const jobs = new Jobs(scene, city, hud, sfx, save);
 hud.stats(save);
 const world = { colliders: city.colliders, traffic, groundHeight: city.groundHeight };
+
+// The bike's own headlight: a real spotlight, on from dusk.
+const headlight = new THREE.SpotLight(0xfff1d6, 0, 60, 0.5, 0.55, 1.3);
+headlight.position.set(0, 1.0, 0.7);
+headlight.target.position.set(0, 0, 14);
+player.mesh.add(headlight, headlight.target);
+const focus = new THREE.Vector3();
 
 function respawn() {
   // nearest road, on the left lane, facing along it
@@ -105,6 +117,7 @@ function step(dt) {
   if (input.take('KeyH') || input.take('horn')) sfx.horn();
   if (input.take('KeyR') || input.take('reset')) respawn();
   if (input.take('KeyC') || input.take('cam')) camMode = (camMode + 1) % 3;
+  if (input.take('KeyT')) { atmo.skip(1); hud.toast(`เวลา ${atmo.clock} น.`, '🕐'); }
   if (input.take('KeyM')) { const m = sfx.toggle(); hud.toast(m ? 'ปิดเสียง' : 'เปิดเสียง', '🔊'); }
   const nearStand = city.stands.some((s) => Math.hypot(s.x - player.x, s.z - player.z) < 14) && Math.abs(player.speed) < 2 && !jobs.active;
   hud.showGarageHint(nearStand);
@@ -157,9 +170,6 @@ function updateCamera(dt) {
   if (camMode === 2) camera.rotateZ(player.lean * 0.6);
   const fov = 62 + Math.min(18, v * 0.45);
   if (Math.abs(camera.fov - fov) > 0.05) { camera.fov = fov; camera.updateProjectionMatrix(); }
-  // the shadow box follows the player
-  sun.position.set(player.x + SUN_DIR.x * 150, SUN_DIR.y * 150, player.z + SUN_DIR.z * 150);
-  sun.target.position.set(player.x, 0, player.z);
 }
 
 // ---- loop ----
@@ -176,12 +186,21 @@ function frame(dt) {
     hud.frame(dt, player, jobs, player.boost);
   }
   updateCamera(dt);
+  focus.set(player.x, 0, player.z);
+  atmo.update(running ? dt : 0, focus, camera);
+  const n = atmo.night;
+  city.setNight(n);
+  traffic.setNight(n);
+  traffic.updateLights();
+  headlight.intensity = Math.min(1, n * 1.6) * 90;
+  if (bloom) { bloom.strength = 0.15 + n * 0.5; bloom.threshold = 0.95 - n * 0.15; }
+  hud.clock(atmo.clock);
 }
 function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   frame(dt);
-  renderer.render(scene, camera);
+  if (composer) composer.render(); else renderer.render(scene, camera);
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
@@ -190,6 +209,7 @@ addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  if (composer) { composer.setSize(innerWidth, innerHeight); bloom.resolution.set(innerWidth / 2, innerHeight / 2); }
 });
 
 document.getElementById('start').onclick = () => {
@@ -200,4 +220,4 @@ document.getElementById('start').onclick = () => {
 };
 
 // for debugging in the console / automated tests
-window.__game = { player, jobs, traffic, city, save, camera, renderer, step, frame, input, bikes: BIKES };
+window.__game = { player, jobs, traffic, city, save, camera, renderer, step, frame, input, bikes: BIKES, atmo };

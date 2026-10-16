@@ -125,6 +125,8 @@ export class Hud {
     if (this.payTimer > 0) { this.payTimer -= dt; if (this.payTimer <= 0) $('payout').classList.remove('show'); }
   }
 
+  clock(t) { if (t !== this.lastClock) { $('clock').textContent = `🕐 ${t} น.`; this.lastClock = t; } }
+
   stats(save) {
     $('money').textContent = `฿${save.money.toLocaleString('th-TH')}`;
     $('trips').textContent = save.trips;

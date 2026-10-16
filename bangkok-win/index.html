@@ -6,7 +6,7 @@
   <title>วินมอไซค์ กทม.</title>
   <link rel="stylesheet" href="style.css">
   <script type="importmap">
-    { "imports": { "three": "./node_modules/three/build/three.module.js" } }
+    { "imports": { "three": "./node_modules/three/build/three.module.js", "three/addons/": "./node_modules/three/examples/jsm/" } }
   </script>
 </head>
 <body>
@@ -22,6 +22,7 @@
     <div id="where" class="panel">
       <div id="place">-</div>
       <div id="district" class="sub">-</div>
+      <div id="clock" class="sub">-</div>
     </div>
     <div id="speedo" class="panel">
       <div><span id="gear" class="gear">1</span><span id="speed">0</span><small>กม./ชม.</small></div>
@@ -70,6 +71,7 @@
         <tr><td>Shift</td><td>บิดสุด</td><td>H</td><td>บีบแตร</td></tr>
         <tr><td>C</td><td>มุมกล้อง</td><td>R</td><td>กลับขึ้นถนน</td></tr>
         <tr><td>M</td><td>ปิดเสียง</td><td>G</td><td>อู่วิน (ที่ซุ้ม)</td></tr>
+        <tr><td>T</td><td>เลื่อนเวลา +1 ชม.</td><td></td><td></td></tr>
       </table>
       <button id="start">เริ่มรับงาน ▶</button>
       <p class="note">ขับชิดซ้ายนะพี่ เมืองไทยขับซ้าย 🇹🇭</p>

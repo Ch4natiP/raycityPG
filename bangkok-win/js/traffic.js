@@ -1,5 +1,7 @@
 import { N, nodeX, isMain, roadW, laneOffsets, DIRS, rng } from './config.js';
+import * as THREE from 'three';
 import { makeVehicle } from './models.js';
+import { glowTexture, beamTexture } from './textures.js';
 
 // Cars drive on the left, follow lane lines between intersections and pick a turn at each one.
 const TYPES = [
@@ -21,6 +23,66 @@ export class Traffic {
       this.spawn(c);
       this.cars.push(c);
     }
+    this.night = 0;
+    this.makeLights(scene);
+  }
+
+  // Head and tail lights as glowing points (one draw call each) plus a beam of light on the road per car.
+  makeLights(scene) {
+    const n = this.cars.length;
+    const glow = glowTexture();
+    const pts = (color, size) => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 2 * 3), 3));
+      const m = new THREE.PointsMaterial({ map: glow, color, size, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
+      const p = new THREE.Points(g, m);
+      p.frustumCulled = false;
+      scene.add(p);
+      return p;
+    };
+    this.heads = pts(0xfff2d8, 1.1);
+    this.tails = pts(0xff2a1a, 0.7);
+    this.beamMat = new THREE.MeshBasicMaterial({ map: beamTexture(), color: 0xfff0d0, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
+    this.beams = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), this.beamMat, n);
+    this.beams.frustumCulled = false;
+    scene.add(this.beams);
+    this.m4 = new THREE.Matrix4();
+    this.q = new THREE.Quaternion();
+    this.v3 = new THREE.Vector3();
+    this.sc = new THREE.Vector3();
+  }
+
+  setNight(n) {
+    this.night = n;
+    const on = Math.min(1, n * 1.6);
+    this.heads.material.opacity = on;
+    this.tails.material.opacity = 0.25 + on * 0.75; // tail lights glow a little even by day
+    this.beamMat.opacity = on * 0.35;
+  }
+
+  updateLights() {
+    const hp = this.heads.geometry.attributes.position;
+    const tp = this.tails.geometry.attributes.position;
+    const Y = new THREE.Vector3(0, 1, 0);
+    this.cars.forEach((c, k) => {
+      const fx = Math.sin(c.h); const fz = Math.cos(c.h);
+      const half = c.len / 2;
+      const side = c.type === 'moto' ? 0 : c.wid * 0.36;
+      const hy = c.type === 'bus' ? 1.0 : c.type === 'moto' ? 0.95 : 0.7;
+      for (let s = 0; s < 2; s++) {
+        const o = (s ? 1 : -1) * side;
+        hp.setXYZ(k * 2 + s, c.x + fx * (half + 0.05) + fz * o, hy, c.z + fz * (half + 0.05) - fx * o);
+        tp.setXYZ(k * 2 + s, c.x - fx * (half + 0.05) + fz * o, hy + 0.05, c.z - fz * (half + 0.05) - fx * o);
+      }
+      const len = c.type === 'moto' ? 9 : 14;
+      this.q.setFromAxisAngle(Y, c.h + Math.PI);
+      this.v3.set(c.x + fx * (half + len / 2), 0.05, c.z + fz * (half + len / 2));
+      this.m4.compose(this.v3, this.q, this.sc.set(c.type === 'moto' ? 3.5 : 5.5, 1, len));
+      this.beams.setMatrixAt(k, this.m4);
+    });
+    hp.needsUpdate = true;
+    tp.needsUpdate = true;
+    this.beams.instanceMatrix.needsUpdate = true;
   }
 
   laneFor(c) {

@@ -5,7 +5,7 @@ import {
 } from './config.js';
 import { GeoBuilder } from './geo.js';
 import { Colliders } from './physics.js';
-import { windowTexture, shopTexture, glassTexture, signAtlas, soiAtlas, labelTexture, SIGN_TEXTS, CHINA_SIGNS } from './textures.js';
+import { windowTexture, shopTexture, glassTexture, asphaltTexture, paveTexture, poolTexture, signAtlas, soiAtlas, labelTexture, SIGN_TEXTS, CHINA_SIGNS } from './textures.js';
 import { makePerson, pose } from './models.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -27,12 +27,16 @@ export function buildCity(scene, { shadows = true } = {}) {
   const people = [];    // decorative people (animated a little)
 
   // ---- materials ----
+  const pairMat = ({ map, emissive }) => ({ map, emissiveMap: emissive, emissive: 0xffffff, emissiveIntensity: 0 });
+  const offs = () => Math.floor(R() * 4) * 0.25; // random 4x4-window block offset so neighbours differ
   const atlas = signAtlas();
   const soiTex = soiAtlas();
   const M = {
-    wall: new THREE.MeshLambertMaterial({ map: windowTexture(), vertexColors: true }),
-    shop: new THREE.MeshLambertMaterial({ map: shopTexture(), vertexColors: true }),
-    glass: new THREE.MeshLambertMaterial({ map: glassTexture(), vertexColors: true }),
+    // emissive maps light up windows, shops and offices at night (see setNight)
+    wall: new THREE.MeshLambertMaterial({ ...pairMat(windowTexture(R)), vertexColors: true }),
+    shop: new THREE.MeshLambertMaterial({ ...pairMat(shopTexture()), vertexColors: true }),
+    glass: new THREE.MeshStandardMaterial({ ...pairMat(glassTexture(R)), vertexColors: true, metalness: 0.55, roughness: 0.18, envMapIntensity: 1.2 }),
+    pave: new THREE.MeshLambertMaterial({ map: paveTexture(R), vertexColors: true }),
     plain: new THREE.MeshLambertMaterial({ vertexColors: true }),
     awning: new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }),
     sign: new THREE.MeshBasicMaterial({ map: atlas.texture, vertexColors: true }),
@@ -52,7 +56,9 @@ export function buildCity(scene, { shadows = true } = {}) {
 
   // ---- ground, river ----
   const groundSize = N * BLOCK + 900;
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(groundSize, groundSize), new THREE.MeshLambertMaterial({ color: 0x45474b }));
+  const asphalt = asphaltTexture(R);
+  asphalt.repeat.set(groundSize / 8, groundSize / 8);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(groundSize, groundSize), new THREE.MeshLambertMaterial({ map: asphalt, color: 0xd8d8d8 }));
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   scene.add(ground);
@@ -66,7 +72,7 @@ export function buildCity(scene, { shadows = true } = {}) {
 
   // ---- helpers ----
   const sidewalk = (x0, z0, x1, z1, type, color = '#b9b4aa') => {
-    B('plain', (x0 + x1) / 2, (z0 + z1) / 2).box(x0, 0, z0, x1, CURB, z1, C(color), { topColor: C(color) });
+    B('pave', (x0 + x1) / 2, (z0 + z1) / 2).box(x0, 0, z0, x1, CURB, z1, C(color).lerp(C('#ffffff'), 0.35), { topTile: 2.4, tile: [1, 1] });
     lots.push({ x0, z0, x1, z1, type });
   };
 
@@ -97,6 +103,7 @@ export function buildCity(scene, { shadows = true } = {}) {
 
   // Power poles + tangled wires along a sidewalk line.
   const poleSpots = [];
+  const medianLamps = []; // lamp posts down the middle of main roads, two arms each
   const wireRuns = [];
 
   // One row of shophouses (ตึกแถว) along an edge.
@@ -119,8 +126,8 @@ export function buildCity(scene, { shadows = true } = {}) {
         : [s < 0 ? f : f - depth, s < 0 ? f + depth : f, u, u1];
       const cx = (x0 + x1) / 2;
       const cz = (z0 + z1) / 2;
-      B('shop', chunkX, chunkZ).box(x0, CURB, z0, x1, 3.5, z1, C('#ffffff'), { tile: [8, 3.3], skip: { top: true }, uOffset: R() < 0.5 ? 0 : 0.5 });
-      B('wall', chunkX, chunkZ).box(x0, 3.5, z0, x1, h, z1, wall, { tile: [4, 3.4], topColor: roof });
+      B('shop', chunkX, chunkZ).box(x0, CURB, z0, x1, 3.5, z1, C('#ffffff'), { tile: [8, 3.3], skip: { top: true }, uOffset: R() < 0.5 ? 0 : 0.5, ao: 0.35 });
+      B('wall', chunkX, chunkZ).box(x0, 3.5, z0, x1, h, z1, wall, { tile: [16, 13.6], topColor: roof, uOffset: offs(), vOffset: offs() });
       if (R() < 0.35) { // water tank / rooftop shed
         const tx = cx + (R() - 0.5) * 2;
         const tz = cz + (R() - 0.5) * 2;
@@ -166,7 +173,7 @@ export function buildCity(scene, { shadows = true } = {}) {
     // s: direction from the road into the sidewalk
     const runs = [];
     for (let u = a + 6; u < b - 4; u += 22 + R() * 6) {
-      const p = axis === 'x' ? { x: u, z: curb + s * 0.5 } : { x: curb + s * 0.5, z: u };
+      const p = axis === 'x' ? { x: u, z: curb + s * 0.5, dx: 0, dz: -s } : { x: curb + s * 0.5, z: u, dx: -s, dz: 0 }; // (dx,dz) points at the road
       runs.push(p);
       poleSpots.push(p);
       col.add(p.x - 0.18, p.z - 0.18, p.x + 0.18, p.z + 0.18, 'pole');
@@ -235,7 +242,7 @@ export function buildCity(scene, { shadows = true } = {}) {
     if (fx1 - fx0 > 6 && fz1 - fz0 > 6) {
       const tall = (district === 'สยาม' || district === 'สุขุมวิท' || district === 'สีลม' || district === 'รัชดา') && R() < 0.55;
       const h = tall ? 35 + R() * 70 : 16 + R() * 10;
-      B(tall ? 'glass' : 'wall', cx, cz).box(fx0 + 1, CURB, fz0 + 1, fx1 - 1, h, fz1 - 1, C(tall ? pick(TOWER_TINTS) : pick(WALLS)), { tile: tall ? [3, 3.5] : [4, 3.4], topColor: C('#8a8a8a') });
+      B(tall ? 'glass' : 'wall', cx, cz).box(fx0 + 1, CURB, fz0 + 1, fx1 - 1, h, fz1 - 1, C(tall ? pick(TOWER_TINTS) : pick(WALLS)), { tile: tall ? [12, 14] : [16, 13.6], topColor: C('#8a8a8a'), uOffset: offs(), vOffset: offs(), ao: 0.3 });
       col.add(fx0 + 1, fz0 + 1, fx1 - 1, fz1 - 1);
     }
     // Street life on each sidewalk.
@@ -264,8 +271,8 @@ export function buildCity(scene, { shadows = true } = {}) {
       : [[r.x0 + m, r.z0 + m, r.x1 - m, r.z1 - m]];
     for (const [x0, z0, x1, z1] of parts) {
       const h = 50 + R() * 110;
-      B('shop', cx, cz).box(x0 - 2, CURB, z0 - 2, x1 + 2, 7, z1 + 2, C('#f0f0f0'), { tile: [8, 3.5] });
-      B('glass', cx, cz).box(x0, 7, z0, x1, h, z1, C(pick(TOWER_TINTS)), { tile: [3, 3.5], topColor: C('#7a7a7a') });
+      B('shop', cx, cz).box(x0 - 2, CURB, z0 - 2, x1 + 2, 7, z1 + 2, C('#f0f0f0'), { tile: [8, 3.5], ao: 0.35 });
+      B('glass', cx, cz).box(x0, 7, z0, x1, h, z1, C(pick(TOWER_TINTS)), { tile: [12, 14], topColor: C('#7a7a7a'), uOffset: offs(), vOffset: offs() });
       B('plain', cx, cz).box(x0 + 3, h, z0 + 3, x1 - 3, h + 3, z1 - 3, C('#9aa0a6'));
       col.add(x0 - 2, z0 - 2, x1 + 2, z1 + 2);
     }
@@ -477,7 +484,7 @@ export function buildCity(scene, { shadows = true } = {}) {
     tree(-E0 - 6, (a + b) / 2, -E0, (a + b) / 2, 1);
   }
   // corners and the river railing
-  for (const [x0, z0, x1, z1] of [[E0, -E1, E1, -E0], [E0, E0, E1, E1]]) { B('wall', x0, z0).box(x0, 0, z0, x1, 20, z1, C('#e8d5b0'), { tile: [4, 3.4] }); col.add(x0, z0, x1, z1); }
+  for (const [x0, z0, x1, z1] of [[E0, -E1, E1, -E0], [E0, E0, E1, E1]]) { B('wall', x0, z0).box(x0, 0, z0, x1, 20, z1, C('#e8d5b0'), { tile: [16, 13.6], ao: 0.3 }); col.add(x0, z0, x1, z1); }
   col.add(-E1 - 30, -E1, riverX0 + 4, E1, 'water');
   B('plain', riverX0 + 4, 0).box(riverX0 + 3.6, 0, -E1, riverX0 + 4, 1.1, E1, C('#d9d9d9'));
   col.add(-E1 - 30, -E1 - 40, E1 + 40, -E1 + 4);
@@ -514,6 +521,11 @@ export function buildCity(scene, { shadows = true } = {}) {
       const pb = B('plain', s.axis === 'z' ? s.at : (ca + cb) / 2, s.axis === 'z' ? (ca + cb) / 2 : s.at);
       if (s.axis === 'z') { pb.box(s.at - mw, 0, ca, s.at + mw, 0.3, cb, C('#c9c3b5'), { topColor: C('#5e8f3e') }); col.add(s.at - mw, ca, s.at + mw, cb, 'median'); }
       else { pb.box(ca, 0, s.at - mw, cb, 0.3, s.at + mw, C('#c9c3b5'), { topColor: C('#5e8f3e') }); col.add(ca, s.at - mw, cb, s.at + mw, 'median'); }
+      for (let u = ca + 14; u < cb - 6; u += 28) {
+        const p = s.axis === 'z' ? { x: s.at, z: u } : { x: u, z: s.at };
+        const [dx, dz] = s.axis === 'z' ? [1, 0] : [0, 1];
+        medianLamps.push({ ...p, dx, dz, post: true }, { ...p, dx: -dx, dz: -dz, post: false });
+      }
       if (bts) {
         for (let u = ca + 6; u < cb - 3; u += 24) {
           pb.box(u - 0.8, 0, s.at - 0.8, u + 0.8, BTS_Y, s.at + 0.8, C('#cfcfcf'));
@@ -574,6 +586,7 @@ export function buildCity(scene, { shadows = true } = {}) {
     }
   }
   const train = new THREE.Group();
+  const trainWin = new THREE.MeshLambertMaterial({ color: 0x2b3a4a, emissive: 0xe8f0ff, emissiveIntensity: 0 });
   {
     for (let k = 0; k < 4; k++) {
       const car = new THREE.Group();
@@ -581,7 +594,7 @@ export function buildCity(scene, { shadows = true } = {}) {
       const stripe = new THREE.Mesh(new THREE.BoxGeometry(19.6, 0.5, 3.05), new THREE.MeshLambertMaterial({ color: k % 2 ? 0x1b7a3e : 0x1f4fbf }));
       stripe.position.y = -0.8;
       car.add(stripe);
-      const win = new THREE.Mesh(new THREE.BoxGeometry(18, 1.1, 3.06), new THREE.MeshLambertMaterial({ color: 0x2b3a4a }));
+      const win = new THREE.Mesh(new THREE.BoxGeometry(18, 1.1, 3.06), trainWin);
       win.position.y = 0.6;
       car.add(win);
       car.position.x = k * 20;
@@ -641,6 +654,8 @@ export function buildCity(scene, { shadows = true } = {}) {
   }
 
   // ---- poles & wires ----
+  let lampMat = null;
+  let poolMat = null;
   {
     const g = new THREE.CylinderGeometry(0.12, 0.17, 9, 6);
     g.translate(0, 4.5, 0);
@@ -655,6 +670,36 @@ export function buildCity(scene, { shadows = true } = {}) {
     });
     im.castShadow = true;
     scene.add(im, arm);
+
+    // Street lamps hang off every other pole over the road; at night each throws a pool of light on the asphalt.
+    const lamps = [...poleSpots.filter((_, k) => k % 2 === 0), ...medianLamps];
+    const posts = medianLamps.filter((l) => l.post);
+    const postMesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.1, 0.14, 8.3, 6).translate(0, 4.15, 0), new THREE.MeshLambertMaterial({ color: 0x8a8a8a }), posts.length);
+    posts.forEach((p, k) => { m4.makeTranslation(p.x, 0.3, p.z); postMesh.setMatrixAt(k, m4); });
+    postMesh.castShadow = true;
+    scene.add(postMesh);
+    const armG = new THREE.BoxGeometry(0.08, 0.08, 2.2).translate(0, 0, 1.1);
+    const headG = new THREE.BoxGeometry(0.35, 0.14, 0.7);
+    const lampArm = new THREE.InstancedMesh(armG, new THREE.MeshLambertMaterial({ color: 0x6f6f6f }), lamps.length);
+    lampMat = new THREE.MeshLambertMaterial({ color: 0x9a9a9a, emissive: 0xffc27a, emissiveIntensity: 0 });
+    const lampHead = new THREE.InstancedMesh(headG, lampMat, lamps.length);
+    poolMat = new THREE.MeshBasicMaterial({ map: poolTexture(), color: 0xffffff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
+    const pool = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), poolMat, lamps.length);
+    const q = new THREE.Quaternion();
+    const sc = new THREE.Vector3(1, 1, 1);
+    const pos = new THREE.Vector3();
+    const col4 = new THREE.Color();
+    lamps.forEach((p, k) => {
+      const yaw = Math.atan2(p.dx, p.dz);
+      q.setFromAxisAngle(UP, yaw);
+      const top = p.post === undefined ? CURB + 8.0 : 8.4;
+      m4.compose(pos.set(p.x, top, p.z), q, sc.set(1, 1, 1)); lampArm.setMatrixAt(k, m4);
+      m4.compose(pos.set(p.x + p.dx * 2.2, top - 0.05, p.z + p.dz * 2.2), q, sc); lampHead.setMatrixAt(k, m4);
+      m4.compose(pos.set(p.x + p.dx * 3.5, 0.04, p.z + p.dz * 3.5), q, sc.set(15, 1, 15)); pool.setMatrixAt(k, m4);
+      // mostly old sodium lamps (orange), some new white LEDs
+      pool.setColorAt(k, p.post !== undefined ? col4.set(0xe9efff) : R() < 0.75 ? col4.set(0xffa860) : col4.set(0xdfe8ff)); // main roads have newer white lamps
+    });
+    scene.add(lampArm, lampHead, pool);
     const pts = [];
     for (const run of wireRuns) {
       for (let k = 0; k < run.length - 1; k++) {
@@ -683,7 +728,7 @@ export function buildCity(scene, { shadows = true } = {}) {
   // ---- finish meshes ----
   for (const { kind, b } of chunks.values()) {
     if (b.empty) continue;
-    const m = b.mesh(M[kind], { cast: shadows && kind !== 'mark' && kind !== 'sign' && kind !== 'soi', receive: true });
+    const m = b.mesh(M[kind], { cast: shadows && kind !== 'mark' && kind !== 'sign' && kind !== 'soi' && kind !== 'pave', receive: true });
     scene.add(m);
   }
   // Bake the standing / sitting extras into one mesh: hundreds of little people, one draw call.
@@ -739,5 +784,19 @@ export function buildCity(scene, { shadows = true } = {}) {
     return groundHeight(x, z) > 0 ? 'บนทางเท้า 😅' : 'ในซอย';
   }
 
-  return { colliders: col, lots, pois, stands, groundHeight, placeName, updateTrain, people };
+  // n: 0 = full day, 1 = deep night. Called by the sky every frame.
+  function setNight(n) {
+    const dusk = Math.min(1, n * 1.6); // lights come on before it is fully dark
+    M.wall.emissiveIntensity = dusk * 0.7;
+    M.shop.emissiveIntensity = dusk * 0.85;
+    M.glass.emissiveIntensity = dusk * 0.5;
+    lampMat.emissiveIntensity = dusk * 6;
+    poolMat.opacity = dusk * 0.55;
+    trainWin.emissiveIntensity = dusk * 1.4;
+    // signs are backlit at night: keep them bright; by day they dim a little to sit in the scene
+    M.sign.color.setScalar(0.82 + 0.25 * dusk);
+    M.soi.color.setScalar(0.85 + 0.15 * dusk);
+  }
+
+  return { colliders: col, lots, pois, stands, groundHeight, placeName, updateTrain, people, setNight };
 }

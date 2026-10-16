@@ -117,11 +117,13 @@ function step(dt) {
   const top = spec.top * (boosting ? 1.3 : 1) * (player.onSidewalk ? 0.7 : 1);
   const accel = spec.accel * (boosting ? 1.6 : 1);
   if (throttle && player.speed >= -0.5) player.speed += accel * dt * Math.max(0, 1 - Math.max(0, player.speed) / top) ** 0.6;
-  if (brake) {
+  const handbrake = input.handbrake;
+  if (handbrake) player.speed -= Math.sign(player.speed) * Math.min(Math.abs(player.speed), 20 * dt);
+  else if (brake) {
     if (player.speed > 0.5) player.speed = Math.max(0, player.speed - 20 * dt);
     else player.speed = Math.max(-5, player.speed - 6 * dt); // reverse / walk it back
   }
-  if (!throttle && !brake) player.speed -= Math.sign(player.speed) * Math.min(Math.abs(player.speed), (1.2 + Math.abs(player.speed) * 0.08) * dt);
+  if (!throttle && !brake && !handbrake) player.speed -= Math.sign(player.speed) * Math.min(Math.abs(player.speed), (1.2 + Math.abs(player.speed) * 0.08) * dt);
   if (player.speed > top) player.speed -= (player.speed - top) * 2 * dt;
 
   // steering: tighter at low speed, smooth at high speed

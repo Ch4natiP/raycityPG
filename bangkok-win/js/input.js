@@ -23,7 +23,9 @@ export class Input {
   }
 
   get throttle() { return this.keys.has('KeyW') || this.keys.has('ArrowUp') || this.touch.gas ? 1 : 0; }
-  get brake() { return this.keys.has('KeyS') || this.keys.has('ArrowDown') || this.keys.has('Space') || this.touch.brake ? 1 : 0; }
+  get brake() { return this.keys.has('KeyS') || this.keys.has('ArrowDown') || this.touch.brake ? 1 : 0; }
+  // Space: brake only, never reverses.
+  get handbrake() { return this.keys.has('Space') ? 1 : 0; }
   get steer() {
     let s = 0;
     if (this.keys.has('KeyA') || this.keys.has('ArrowLeft') || this.touch.left) s += 1;

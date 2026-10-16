@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>วินมอไซค์ กทม.</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": { "three": "./node_modules/three/build/three.module.js" } }
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div id="hud">
+    <div id="stats" class="panel">
+      <div class="money" id="money">฿0</div>
+      <div class="row"><span>🧍 เที่ยว <b id="trips">0</b></span><span>⭐ <b id="rating">5.0</b></span></div>
+    </div>
+    <div id="job" class="panel idle"></div>
+    <canvas id="minimap" width="200" height="200"></canvas>
+    <div id="where" class="panel">
+      <div id="place">-</div>
+      <div id="district" class="sub">-</div>
+    </div>
+    <div id="speedo" class="panel">
+      <div><span id="speed">0</span><small>กม./ชม.</small></div>
+      <div class="boost" title="บิดสุด (Shift)"><div id="boost-fill"></div></div>
+    </div>
+    <div id="toast"></div>
+    <div id="payout"></div>
+    <button id="garage-hint">🔧 อู่วิน: เปลี่ยน/ซื้อรถ (กด G)</button>
+  </div>
+
+  <div id="garage">
+    <div class="box">
+      <h2>🔧 อู่วิน</h2>
+      <div id="garage-list"></div>
+      <button id="garage-close">ปิด</button>
+    </div>
+  </div>
+
+  <div id="touch">
+    <div class="left">
+      <button data-touch="left">◀</button>
+      <button data-touch="right">▶</button>
+    </div>
+    <div class="right">
+      <button data-touch="horn" class="small">📯</button>
+      <button data-touch="cam" class="small">🎥</button>
+      <button data-touch="reset" class="small">↺</button>
+      <button data-touch="boost" class="small">🔥</button>
+      <button data-touch="brake">■</button>
+      <button data-touch="gas">▲</button>
+    </div>
+  </div>
+
+  <div id="intro">
+    <div class="card">
+      <h1>🛵 วินมอไซค์ กทม.</h1>
+      <p class="tag">Bangkok Win Rider — รับส่งผู้โดยสารทั่วกรุงเทพฯ</p>
+      <ol>
+        <li>ขับไปหาคนที่ยืนโบกมือ (<b style="color:#2ecc71">วงสีเขียว</b>) แล้วจอดใกล้ๆ</li>
+        <li>ตามเส้น<b style="color:#ffc400">สีเหลือง</b>บนแผนที่ไปส่งที่ลำแสงสีเหลือง</li>
+        <li>ส่งไวได้ทิป ชน/ขึ้นฟุตบาท โดนหักทิป เก็บเงินไปซื้อรถใหม่ที่ซุ้มวิน</li>
+      </ol>
+      <table class="keys">
+        <tr><td>W / ↑</td><td>บิด</td><td>S / ↓ / Space</td><td>เบรก / ถอย</td></tr>
+        <tr><td>A D / ← →</td><td>เลี้ยว</td><td>Shift</td><td>บิดสุด</td></tr>
+        <tr><td>H</td><td>บีบแตร</td><td>C</td><td>มุมกล้อง</td></tr>
+        <tr><td>R</td><td>กลับขึ้นถนน</td><td>M</td><td>ปิดเสียง</td></tr>
+      </table>
+      <button id="start">เริ่มรับงาน ▶</button>
+      <p class="note">ขับชิดซ้ายนะพี่ เมืองไทยขับซ้าย 🇹🇭</p>
+    </div>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

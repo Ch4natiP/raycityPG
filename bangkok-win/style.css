@@ -1,0 +1,74 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #c9d8df; font-family: "Noto Sans Thai", "Leelawadee UI", Tahoma, sans-serif; color: #fff; user-select: none; -webkit-user-select: none; touch-action: none; }
+#app canvas { display: block; }
+.panel { background: rgba(15, 18, 24, .72); border-radius: 12px; padding: 8px 12px; backdrop-filter: blur(4px); box-shadow: 0 2px 10px rgba(0, 0, 0, .25); }
+#hud { position: fixed; inset: 0; pointer-events: none; }
+#stats { position: absolute; top: 12px; left: 12px; min-width: 150px; }
+#stats .money { font-size: 28px; font-weight: 800; color: #ffd84a; line-height: 1.1; }
+#stats .row { display: flex; gap: 14px; font-size: 14px; margin-top: 2px; }
+#job { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); max-width: min(520px, calc(100vw - 420px)); text-align: center; font-size: 15px; line-height: 1.45; }
+#job.idle { font-size: 14px; opacity: .9; }
+#job .dist { color: #ffc400; font-weight: 700; }
+#job .warn { color: #ff9f43; font-weight: 700; }
+#job .late { color: #ff5252; font-weight: 700; }
+#minimap { position: absolute; top: 12px; right: 12px; width: 200px; height: 200px; border-radius: 50%; border: 3px solid rgba(255, 255, 255, .85); box-shadow: 0 2px 10px rgba(0, 0, 0, .35); }
+#where { position: absolute; left: 12px; bottom: 14px; font-size: 16px; font-weight: 700; }
+#where .sub { font-size: 13px; font-weight: 400; opacity: .8; }
+#speedo { position: absolute; right: 14px; bottom: 14px; text-align: right; min-width: 130px; }
+#speedo #speed { font-size: 44px; font-weight: 800; line-height: 1; }
+#speedo small { font-size: 13px; margin-left: 4px; opacity: .8; }
+.boost { height: 6px; background: rgba(255, 255, 255, .2); border-radius: 3px; margin-top: 6px; overflow: hidden; }
+#boost-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #ff7a00, #ffd200); }
+#toast { position: absolute; left: 50%; bottom: 120px; transform: translate(-50%, 20px); background: #fff; color: #222; padding: 10px 16px; border-radius: 16px; font-size: 17px; max-width: 80vw; opacity: 0; transition: .25s; box-shadow: 0 4px 14px rgba(0, 0, 0, .3); }
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+#toast .who { display: block; font-size: 12px; font-weight: 700; color: #ff7a00; }
+#payout { position: absolute; left: 50%; top: 30%; transform: translate(-50%, -50%) scale(.8); background: rgba(15, 18, 24, .85); padding: 16px 28px; border-radius: 16px; text-align: center; font-size: 18px; opacity: 0; transition: .25s; border: 2px solid #ffd84a; }
+#payout.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+#payout .ttl { font-size: 14px; opacity: .8; margin-bottom: 4px; }
+#payout b { color: #ffd84a; }
+#payout .stars { color: #ffd84a; font-size: 26px; letter-spacing: 2px; }
+#garage-hint { position: absolute; left: 50%; bottom: 60px; transform: translateX(-50%); pointer-events: auto; background: #ff7a00; color: #111; border: 0; border-radius: 20px; padding: 8px 16px; font: inherit; font-weight: 700; cursor: pointer; display: none; }
+#garage-hint.show { display: block; }
+#garage { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0, 0, 0, .4); }
+#garage.show { display: flex; }
+#garage .box { background: #1b1f27; border-radius: 16px; padding: 18px 20px; width: min(440px, 92vw); }
+#garage h2 { margin: 0 0 10px; }
+.bike-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(255, 255, 255, .08); }
+.bike-row .sw { width: 22px; height: 22px; border-radius: 6px; border: 2px solid #fff; flex: none; }
+.bike-row .nm { flex: 1; }
+.bike-row small { display: block; opacity: .7; font-size: 12px; }
+#garage button, #intro button { font: inherit; font-weight: 700; border: 0; border-radius: 10px; padding: 8px 14px; cursor: pointer; background: #ff7a00; color: #111; }
+#garage button:disabled { background: #444; color: #999; cursor: default; }
+#garage-close { margin-top: 12px; width: 100%; }
+#intro { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at 50% 30%, rgba(255, 122, 0, .35), rgba(10, 12, 18, .85)); transition: opacity .4s; overflow: auto; padding: 16px; }
+#intro.hide { opacity: 0; pointer-events: none; }
+#intro .card { background: rgba(20, 23, 30, .92); border-radius: 20px; padding: 24px 28px; max-width: 560px; width: 100%; border: 2px solid #ff7a00; }
+#intro h1 { margin: 0; font-size: 36px; color: #ffb000; }
+#intro .tag { margin: 2px 0 12px; opacity: .85; }
+#intro ol { padding-left: 20px; line-height: 1.6; }
+.keys { width: 100%; border-collapse: collapse; font-size: 14px; margin: 8px 0 16px; }
+.keys td { padding: 3px 4px; }
+.keys td:nth-child(odd) { font-weight: 700; color: #ffd84a; white-space: nowrap; }
+#start { width: 100%; font-size: 20px !important; padding: 12px !important; }
+#intro .note { text-align: center; opacity: .75; font-size: 13px; margin-bottom: 0; }
+#touch { display: none; }
+body.mobile #touch { display: flex; position: fixed; left: 0; right: 0; bottom: 0; justify-content: space-between; padding: 14px; pointer-events: none; }
+#touch .left, #touch .right { display: flex; gap: 12px; align-items: flex-end; pointer-events: auto; }
+#touch .right { flex-wrap: wrap; justify-content: flex-end; max-width: 60vw; }
+#touch button { width: 76px; height: 76px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .6); background: rgba(15, 18, 24, .45); color: #fff; font-size: 28px; touch-action: none; }
+#touch button.small { width: 52px; height: 52px; font-size: 20px; }
+#touch button.on { background: rgba(255, 122, 0, .7); }
+body.mobile #where, body.mobile #speedo { bottom: 110px; }
+body.mobile #toast { bottom: 190px; }
+body.mobile .keys { display: none; }
+@media (max-width: 760px) {
+  #job { top: auto; bottom: auto; left: 12px; right: 12px; transform: none; max-width: none; top: 140px; font-size: 13px; }
+  #minimap { width: 120px; height: 120px; }
+  #stats .money { font-size: 22px; }
+}
+@media (max-height: 500px) {
+  #minimap { width: 120px; height: 120px; }
+  #stats .money { font-size: 20px; }
+  #job { font-size: 13px; padding: 6px 10px; }
+  #speedo #speed { font-size: 32px; }
+}

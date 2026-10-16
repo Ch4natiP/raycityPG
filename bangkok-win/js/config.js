@@ -74,8 +74,8 @@ export const DIRS = [
 
 // Bikes the player can own. speed in m/s, accel in m/s^2.
 export const BIKES = [
-  { id: 'wave', name: 'รถครอบครัว 110cc', price: 0, top: 22, accel: 6.5, grip: 1.0, color: 0xc81e1e },
-  { id: 'scoot', name: 'สกู๊ตเตอร์ 160cc', price: 1500, top: 27, accel: 8, grip: 1.1, color: 0x1f4fbf },
-  { id: 'sport', name: 'สปอร์ต 250cc', price: 4500, top: 34, accel: 10, grip: 1.2, color: 0x16a34a },
-  { id: 'big', name: 'บิ๊กไบค์ 650cc', price: 12000, top: 42, accel: 12.5, grip: 1.3, color: 0x111111 },
+  { id: 'wave', name: 'รถครอบครัว 110cc', price: 0, level: 1, top: 22, accel: 6.5, grip: 1.0, color: 0xc81e1e },
+  { id: 'scoot', name: 'สกู๊ตเตอร์ 160cc', price: 1500, level: 3, top: 27, accel: 8, grip: 1.1, color: 0x1f4fbf },
+  { id: 'sport', name: 'สปอร์ต 250cc', price: 4500, level: 6, top: 34, accel: 10, grip: 1.2, color: 0x16a34a },
+  { id: 'big', name: 'บิ๊กไบค์ 650cc', price: 12000, level: 10, top: 42, accel: 12.5, grip: 1.3, color: 0x111111 },
 ];

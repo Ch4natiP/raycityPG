@@ -86,6 +86,7 @@ export class Sfx {
   horn() { this.tone(420, 0.35, 'square', 0.12); this.tone(520, 0.35, 'square', 0.1); }
   carHorn() { this.tone(330, 0.5, 'sawtooth', 0.08); this.tone(392, 0.5, 'sawtooth', 0.06); }
   ding() { this.tone(880, 0.25, 'sine', 0.25); this.tone(1320, 0.4, 'sine', 0.2, 0.12); }
+  levelUp() { [523, 659, 784, 1046, 1318].forEach((f, i) => this.tone(f, 0.28, 'triangle', 0.22, i * 0.09)); }
   cash() { [1046, 1318, 1568, 2093].forEach((f, i) => this.tone(f, 0.2, 'triangle', 0.2, i * 0.07)); }
 
   crash(power) {

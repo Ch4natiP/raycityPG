@@ -8,6 +8,8 @@ import { Input } from './input.js';
 import { Sfx } from './audio.js';
 import { Bike } from './bike.js';
 import { Atmosphere } from './sky.js';
+import { Phone } from './phone.js';
+import { migrate } from './progress.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -20,6 +22,7 @@ document.body.classList.toggle('mobile', mobile);
 const SAVE_KEY = 'bangkok-win-save-v1';
 const save = { money: 0, trips: 0, ratings: [], owned: ['wave'], bike: 'wave' };
 try { Object.assign(save, JSON.parse(localStorage.getItem(SAVE_KEY) || '{}')); } catch { /* fresh start */ }
+migrate(save);
 save.write = () => { try { const { write, ...data } = save; localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch { /* storage blocked */ } };
 
 // ---- renderer / scene ----
@@ -58,6 +61,8 @@ const player = new Bike(scene, bikeSpec());
 const startStand = city.stands[0];
 player.place(startStand.x, startStand.z, Math.PI / 2);
 const jobs = new Jobs(scene, city, hud, sfx, save);
+jobs.clock = () => atmo.clock;
+jobs.onLevelUp = (up) => { hud.levelUp(up); sfx.levelUp(); };
 hud.stats(save);
 const world = { colliders: city.colliders, traffic, groundHeight: city.groundHeight };
 
@@ -79,7 +84,7 @@ function respawn() {
 // ---- garage ----
 function pickBike(b) {
   if (!save.owned.includes(b.id)) {
-    if (save.money < b.price) return;
+    if (save.money < b.price || save.level < b.level) return;
     save.money -= b.price;
     save.owned.push(b.id);
     sfx.cash();
@@ -100,6 +105,7 @@ let shake = 0;
 function step(dt) {
   const controls = { throttle: input.throttle, brake: input.brake, handbrake: input.handbrake, steer: input.steer, boost: input.boost };
   crashCooldown -= dt;
+  save.distance += Math.abs(player.speed) * dt;
   for (const hit of player.update(dt, controls, world)) {
     if (hit.kind === 'honk') { sfx.carHorn(); hit.car.honk = 3; continue; }
     if (crashCooldown > 0) continue;
@@ -176,7 +182,7 @@ function updateCamera(dt) {
 let running = false;
 let last = performance.now();
 function frame(dt) {
-  if (running) {
+  if (running && !phone.isOpen) { // the phone pauses the game
     // fixed sub-steps keep collisions solid at high speed
     const n = Math.ceil(dt / (1 / 120));
     for (let k = 0; k < n; k++) step(dt / n);
@@ -187,20 +193,20 @@ function frame(dt) {
   }
   updateCamera(dt);
   focus.set(player.x, 0, player.z);
-  atmo.update(running ? dt : 0, focus, camera);
+  atmo.update(running && !phone.isOpen ? dt : 0, focus, camera);
   const n = atmo.night;
   city.setNight(n);
   traffic.setNight(n);
   traffic.updateLights();
   headlight.intensity = Math.min(1, n * 1.6) * 90;
-  if (bloom) { bloom.strength = 0.15 + n * 0.5; bloom.threshold = 0.95 - n * 0.15; }
+  if (bloom && bloomOn) { bloom.strength = 0.15 + n * 0.5; bloom.threshold = 0.95 - n * 0.15; }
   hud.clock(atmo.clock);
 }
 function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   frame(dt);
-  if (composer) composer.render(); else renderer.render(scene, camera);
+  if (composer && bloomOn) composer.render(); else renderer.render(scene, camera);
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
@@ -212,6 +218,27 @@ addEventListener('resize', () => {
   if (composer) { composer.setSize(innerWidth, innerHeight); bloom.resolution.set(innerWidth / 2, innerHeight / 2); }
 });
 
+// ---- graphics quality: high = shadows + bloom, low = neither ----
+let bloomOn = true;
+function applyQuality(q) {
+  save.settings.quality = q;
+  save.write();
+  bloomOn = q === 'high' && !!composer;
+  atmo.sun.castShadow = q === 'high' && !mobile;
+  renderer.setPixelRatio(Math.min(devicePixelRatio, q === 'high' && !mobile ? 1.75 : 1));
+  renderer.setSize(innerWidth, innerHeight);
+  if (composer) composer.setSize(innerWidth, innerHeight);
+}
+applyQuality(save.settings.quality);
+
+// ---- phone ----
+const phone = new Phone({
+  save, hud, city, jobs, player, atmo, sfx,
+  started: () => running,
+  onQuality: applyQuality,
+  onReset: () => { try { localStorage.removeItem(SAVE_KEY); } catch { /* blocked */ } location.reload(); },
+});
+
 document.getElementById('start').onclick = () => {
   document.getElementById('intro').classList.add('hide');
   sfx.start();
@@ -220,4 +247,4 @@ document.getElementById('start').onclick = () => {
 };
 
 // for debugging in the console / automated tests
-window.__game = { player, jobs, traffic, city, save, camera, renderer, step, frame, input, bikes: BIKES, atmo };
+window.__game = { player, jobs, traffic, city, save, camera, renderer, step, frame, input, bikes: BIKES, atmo, phone, hud };

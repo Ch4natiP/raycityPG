@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { HALF, BLOCK, N, nodeX } from './config.js';
 import { makePerson, pose } from './models.js';
+import { tripXp, addXp, fareMultiplier, passengerTypes } from './progress.js';
 
 const NAMES = ['ป้าสมศรี', 'น้องเมย์', 'พี่ต้น', 'ลุงชัย', 'น้องฟ้า', 'พี่แอน', 'เจ๊หมวย', 'น้องบอส', 'พี่โอ๊ต', 'ยายบุญมี', 'น้องเจน', 'พี่ก้อง', 'คุณวิชัย', 'น้องนุ่น', 'พี่เอก'];
 const TYPES = {
@@ -99,9 +100,11 @@ export class Jobs {
     } else {
       poi = this.pickPoi(null, player ? { x: player.x, z: player.z, min: 50, max: 600 } : null);
     }
-    let roll = Math.random() * 100;
+    // which kinds of passenger turn up depends on the player's level
+    const kinds = passengerTypes(this.save.level || 1);
+    let roll = Math.random() * kinds.reduce((sum, k) => sum + TYPES[k].w, 0);
     let type = 'normal';
-    for (const [k, t] of Object.entries(TYPES)) { roll -= t.w; if (roll <= 0) { type = k; break; } }
+    for (const k of kinds) { roll -= TYPES[k].w; if (roll <= 0) { type = k; break; } }
     const person = makePerson(Math.random, type === 'tourist' ? { shirt: 0xff9ff3 } : {});
     const [ix, iz] = poi.stand ? [0, 0] : this.inward(poi);
     person.position.set(poi.x + ix * 1.0, this.city.groundHeight(poi.x + ix, poi.z + iz), poi.z + iz * 1.0);
@@ -176,7 +179,7 @@ export class Jobs {
     const dest = this.pickPoi(w.poi, { x: player.x, z: player.z, min: 180, max: 1100 });
     const route = routeBetween(player.x, player.z, dest.x, dest.z);
     const T = TYPES[w.type];
-    const fare = Math.round((20 + route.len * 0.04) * T.fare / 5) * 5;
+    const fare = Math.round((20 + route.len * 0.04) * T.fare * fareMultiplier(this.save.level || 1) / 5) * 5;
     this.active = {
       ...w, dest, fare, left: route.len / T.speed + T.extra, total: route.len / T.speed + T.extra,
       crashes: 0, sidewalk: 0, route,
@@ -203,13 +206,20 @@ export class Jobs {
     stars = Math.max(1, Math.min(5, stars));
     this.save.money += paid;
     this.save.trips += 1;
+    this.save.earned += paid;
     this.save.ratings.push(stars);
+    const xp = tripXp({ fare: a.fare, stars, landmark: !!a.dest.landmark, late: a.left < 0 });
+    this.save.history.unshift({ name: a.name, from: a.poi.name, to: a.dest.name, fare: paid - tip, tip, stars, xp, clock: this.clock ? this.clock() : '' });
+    if (this.save.history.length > 30) this.save.history.length = 30;
+    const ups = addXp(this.save, xp);
     if (this.save.ratings.length > 20) this.save.ratings.shift();
     this.save.write();
     this.hud.stats(this.save);
     this.hud.payout({ fare: a.left > -20 ? a.fare : Math.round(a.fare * 0.6), tip, stars, dest: a.dest.name });
     this.hud.toast(say(stars >= 4 ? LINES.good : LINES.late), a.name);
     this.sfx.cash();
+    this.hud.xpGain(xp);
+    for (const up of ups) this.onLevelUp?.(up);
     // hop off and walk to the sidewalk
     player.seat.remove(a.person);
     a.person.position.set(player.x + Math.cos(player.h) * 0.8, this.city.groundHeight(player.x, player.z), player.z - Math.sin(player.h) * 0.8);

@@ -16,7 +16,11 @@
     <div id="stats" class="panel">
       <div class="money" id="money">฿0</div>
       <div class="row"><span>🧍 เที่ยว <b id="trips">0</b></span><span>⭐ <b id="rating">5.0</b></span></div>
+      <div class="lvl"><span id="lvl-badge">Lv.1</span><div class="xpbar"><div id="xp-fill"></div></div></div>
     </div>
+    <button id="phone-btn" title="โทรศัพท์ (P)">📱<span>มือถือ (P)</span></button>
+    <div id="xp-pop"></div>
+    <div id="levelup"></div>
     <div id="job" class="panel idle"></div>
     <canvas id="minimap" width="200" height="200"></canvas>
     <div id="where" class="panel">
@@ -31,6 +35,14 @@
     <div id="toast"></div>
     <div id="payout"></div>
     <button id="garage-hint">🔧 อู่วิน: เปลี่ยน/ซื้อรถ (กด G)</button>
+  </div>
+
+  <div id="phone" hidden>
+    <div class="device" role="dialog" aria-label="โทรศัพท์">
+      <div class="ph-status"><span id="ph-clock">--:--</span><span class="ph-notch"></span><span>📶 4G 🔋</span></div>
+      <div class="ph-screen" id="ph-screen"></div>
+      <div class="ph-nav"><button id="ph-back" aria-label="ย้อนกลับ">‹</button><button id="ph-home" aria-label="หน้าหลัก">○</button><button id="ph-close" aria-label="ปิด">✕</button></div>
+    </div>
   </div>
 
   <div id="garage">
@@ -71,7 +83,7 @@
         <tr><td>Shift</td><td>บิดสุด</td><td>H</td><td>บีบแตร</td></tr>
         <tr><td>C</td><td>มุมกล้อง</td><td>R</td><td>กลับขึ้นถนน</td></tr>
         <tr><td>M</td><td>ปิดเสียง</td><td>G</td><td>อู่วิน (ที่ซุ้ม)</td></tr>
-        <tr><td>T</td><td>เลื่อนเวลา +1 ชม.</td><td></td><td></td></tr>
+        <tr><td>T</td><td>เลื่อนเวลา +1 ชม.</td><td>P</td><td>มือถือ (โปรไฟล์ แผนที่ ฯลฯ)</td></tr>
       </table>
       <button id="start">เริ่มรับงาน ▶</button>
       <p class="note">ขับชิดซ้ายนะพี่ เมืองไทยขับซ้าย 🇹🇭</p>

@@ -1,4 +1,5 @@
 import { HALF, BIKES } from './config.js';
+import { xpToNext, MAX_LEVEL } from './progress.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -132,6 +133,27 @@ export class Hud {
     $('trips').textContent = save.trips;
     const r = save.ratings.length ? save.ratings.reduce((a, b) => a + b, 0) / save.ratings.length : 5;
     $('rating').textContent = r.toFixed(1);
+    $('lvl-badge').textContent = `Lv.${save.level}`;
+    $('xp-fill').style.width = save.level >= MAX_LEVEL ? '100%' : `${Math.round((save.xp / xpToNext(save.level)) * 100)}%`;
+  }
+
+  xpGain(xp) {
+    const el = $('xp-pop');
+    el.textContent = `+${xp} XP`;
+    el.classList.remove('show');
+    void el.offsetWidth; // restart the transition
+    el.classList.add('show');
+    clearTimeout(this.xpT);
+    this.xpT = setTimeout(() => el.classList.remove('show'), 1600);
+  }
+
+  levelUp({ level, bonus, unlocks }) {
+    const el = $('levelup');
+    el.innerHTML = `<div class="small">เลเวลอัป!</div><div class="big">Lv.${level}</div><div class="small">โบนัส ฿${bonus.toLocaleString('th-TH')}</div>` +
+      unlocks.map((u) => `<div class="small">${u.icon} ${u.text}${u.soon ? ' (เร็วๆ นี้)' : ''}</div>`).join('');
+    el.classList.add('show');
+    clearTimeout(this.lvT);
+    this.lvT = setTimeout(() => el.classList.remove('show'), 4000);
   }
 
   setJob(html) {
@@ -168,14 +190,15 @@ export class Hud {
     list.innerHTML = '';
     for (const b of BIKES) {
       const owned = save.owned.includes(b.id);
+      const lockedByLevel = !owned && (save.level || 1) < b.level;
       const cur = save.bike === b.id;
       const row = document.createElement('div');
       row.className = 'bike-row';
       row.innerHTML = `<span class="sw" style="background:#${b.color.toString(16).padStart(6, '0')}"></span>` +
         `<span class="nm">${b.name}<small>ความเร็วสูงสุด ${Math.round(b.top * 3.6)} กม./ชม.</small></span>`;
       const btn = document.createElement('button');
-      btn.textContent = cur ? 'ใช้อยู่' : owned ? 'ใช้คันนี้' : `ซื้อ ฿${b.price.toLocaleString('th-TH')}`;
-      btn.disabled = cur || (!owned && save.money < b.price);
+      btn.textContent = cur ? 'ใช้อยู่' : owned ? 'ใช้คันนี้' : lockedByLevel ? `🔒 Lv.${b.level}` : `ซื้อ ฿${b.price.toLocaleString('th-TH')}`;
+      btn.disabled = cur || lockedByLevel || (!owned && save.money < b.price);
       btn.onclick = () => { onPick(b); this.openGarage(save, onPick); };
       row.appendChild(btn);
       list.appendChild(row);

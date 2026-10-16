@@ -89,6 +89,7 @@ function step(dt) {
   const controls = { throttle: input.throttle, brake: input.brake, handbrake: input.handbrake, steer: input.steer, boost: input.boost };
   crashCooldown -= dt;
   for (const hit of player.update(dt, controls, world)) {
+    if (hit.kind === 'honk') { sfx.carHorn(); hit.car.honk = 3; continue; }
     if (crashCooldown > 0) continue;
     crashCooldown = 0.8;
     sfx.crash(hit.power);
@@ -119,78 +120,43 @@ function step(dt) {
 }
 
 // ---- camera ----
-// A spring-damped chase camera: trails the bike, swings out a little into turns,
-// leans with the bike, widens the view with speed and shakes on hits.
 let camMode = 0; // 0 chase, 1 far, 2 rider's eyes
 const camPos = new THREE.Vector3();
-const camVel = new THREE.Vector3();
 const camLook = new THREE.Vector3();
-const lookVel = new THREE.Vector3();
 const want = new THREE.Vector3();
-const wantLook = new THREE.Vector3();
-let camRoll = 0;
-let camYaw = 0;
 let camInit = false;
 
-function spring(pos, vel, target, k, dt) {
-  // critically damped: no wobble, no overshoot
-  const d = 2 * Math.sqrt(k);
-  vel.x += ((target.x - pos.x) * k - vel.x * d) * dt;
-  vel.y += ((target.y - pos.y) * k - vel.y * d) * dt;
-  vel.z += ((target.z - pos.z) * k - vel.z * d) * dt;
-  pos.addScaledVector(vel, dt);
-}
-
 function updateCamera(dt) {
+  const fx = Math.sin(player.h);
+  const fz = Math.cos(player.h);
   const v = Math.abs(player.speed);
-  const jumped = !camInit || Math.hypot(camPos.x - player.x, camPos.z - player.z) > 40; // first frame / teleport
-  if (jumped) camYaw = player.h;
-  // the camera heading lags the bike's, so turns show the bike's side a little
-  let dh = player.h - camYaw;
-  while (dh > Math.PI) dh -= Math.PI * 2;
-  while (dh < -Math.PI) dh += Math.PI * 2;
-  camYaw += dh * Math.min(1, dt * (camMode === 1 ? 3 : 4.5));
-  const fx = Math.sin(camYaw);
-  const fz = Math.cos(camYaw);
-  const bx = Math.sin(player.h);
-  const bz = Math.cos(player.h);
-  const dist = camMode === 1 ? 11 : 4.4 + v * 0.05;
-  const height = camMode === 1 ? 5.2 : 2.2 + v * 0.012;
+  const dist = camMode === 1 ? 11 : 5.2 + v * 0.06;
+  const height = camMode === 1 ? 5.5 : 2.7;
   want.set(player.x - fx * dist, player.y + height, player.z - fz * dist);
-  // look ahead of the bike, further at speed
-  const ahead = 4 + v * 0.25;
-  wantLook.set(player.x + bx * ahead, player.y + 1.2, player.z + bz * ahead);
-
   if (camMode === 2) {
-    camPos.set(player.x + bx * 0.15, player.y + 1.72, player.z + bz * 0.15);
-    camLook.set(player.x + bx * 10, player.y + 1.5, player.z + bz * 10);
+    want.set(player.x + fx * 0.1, player.y + 1.75, player.z + fz * 0.1);
+    camPos.copy(want);
   } else {
-    // pull in front of walls behind the bike (narrow sois)
-    for (let t = 0.4; t <= 1.0001; t += 0.1) {
-      if (city.colliders.inside(player.x - fx * dist * t, player.z - fz * dist * t)) {
-        want.x = player.x - fx * dist * Math.max(0.3, t - 0.15);
-        want.z = player.z - fz * dist * Math.max(0.3, t - 0.15);
-        break;
-      }
+    // pull the camera in front of walls behind the bike (narrow sois)
+    for (let t = 0.5; t <= 1.0001; t += 0.1) {
+      const x = player.x - fx * dist * t;
+      const z = player.z - fz * dist * t;
+      if (city.colliders.inside(x, z)) { want.x = player.x - fx * dist * (t - 0.15); want.z = player.z - fz * dist * (t - 0.15); break; }
     }
-    if (jumped) { camPos.copy(want); camLook.copy(wantLook); camVel.set(0, 0, 0); lookVel.set(0, 0, 0); camInit = true; }
-    spring(camPos, camVel, want, 60, dt);
-    spring(camLook, lookVel, wantLook, 140, dt);
+    if (!camInit || camPos.distanceTo(want) > 40) { camPos.copy(want); camInit = true; } // first frame / teleport
+    else camPos.lerp(want, 1 - Math.exp(-dt * 7));
   }
+  camLook.set(player.x + fx * 5, player.y + 1.5, player.z + fz * 5);
   camera.position.copy(camPos);
   if (shake > 0) {
     camera.position.x += (Math.random() - 0.5) * shake;
     camera.position.y += (Math.random() - 0.5) * shake;
     shake = Math.max(0, shake - dt * 1.5);
   }
-  // a faint road buzz at high speed
-  if (v > 20) camera.position.y += (Math.random() - 0.5) * 0.012 * (v - 20) / 10;
   camera.lookAt(camLook);
-  camRoll += ((camMode === 2 ? 0.7 : 0.22) * player.lean - camRoll) * Math.min(1, dt * 6);
-  camera.rotateZ(camRoll); // roll with the bike's lean
-  const fov = 60 + Math.min(16, v * 0.4) + (player.boosting ? 6 : 0);
-  camera.fov += (fov - camera.fov) * Math.min(1, dt * 4);
-  camera.updateProjectionMatrix();
+  if (camMode === 2) camera.rotateZ(player.lean * 0.6);
+  const fov = 62 + Math.min(18, v * 0.45);
+  if (Math.abs(camera.fov - fov) > 0.05) { camera.fov = fov; camera.updateProjectionMatrix(); }
   // the shadow box follows the player
   sun.position.set(player.x + SUN_DIR.x * 150, SUN_DIR.y * 150, player.z + SUN_DIR.z * 150);
   sun.target.position.set(player.x, 0, player.z);

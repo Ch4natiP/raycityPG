@@ -784,6 +784,22 @@ export function buildCity(scene, { shadows = true } = {}) {
     return groundHeight(x, z) > 0 ? 'บนทางเท้า 😅' : 'ในซอย';
   }
 
+  // Keep only destinations a rider can actually pull up to: some open road inside the city
+  // within a few metres. (Shops on the outer side of the border rows face nothing.)
+  {
+    const lim = HALF + roadW(0) / 2;
+    const reachable = (q) => {
+      for (let a = 0; a < 24; a++) for (const r of [2, 3.5, 5, 6.5]) {
+        const x = q.x + Math.cos((a / 24) * Math.PI * 2) * r;
+        const z = q.z + Math.sin((a / 24) * Math.PI * 2) * r;
+        if (Math.abs(x) > lim || Math.abs(z) > lim) continue;
+        if (!col.resolve({ x, z }, 0.6)) return true;
+      }
+      return false;
+    };
+    for (let k = pois.length - 1; k >= 0; k--) if (!reachable(pois[k])) pois.splice(k, 1);
+  }
+
   // n: 0 = full day, 1 = deep night. Called by the sky every frame.
   function setNight(n) {
     const dusk = Math.min(1, n * 1.6); // lights come on before it is fully dark

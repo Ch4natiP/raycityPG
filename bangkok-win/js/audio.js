@@ -31,17 +31,40 @@ export class Sfx {
     } catch { this.ctx = null; }
   }
 
-  engine(speedRatio, throttle) {
+  // Engine note follows the gearbox: rpm climbs through each gear and drops on the shift.
+  engine(bike) {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
-    // fake gears: pitch climbs and drops back as the bike speeds up
-    const gear = Math.min(3, Math.floor(speedRatio * 4));
-    const inGear = speedRatio * 4 - gear;
-    const f = 45 + gear * 8 + inGear * 70 + throttle * 12;
-    this.osc.frequency.setTargetAtTime(f, t, 0.05);
-    this.osc2.frequency.setTargetAtTime(f * 0.5, t, 0.05);
-    this.filter.frequency.setTargetAtTime(350 + throttle * 900 + speedRatio * 600, t, 0.08);
-    this.eng.gain.setTargetAtTime(this.muted ? 0 : 0.07 + throttle * 0.08, t, 0.1);
+    const rpm = bike.rpm;
+    const load = bike.throttle ? (bike.shift > 0 ? 0.3 : 1) : 0.15;
+    const f = 34 + rpm * 115 + bike.gear * 3;
+    this.osc.frequency.setTargetAtTime(f, t, 0.03);
+    this.osc2.frequency.setTargetAtTime(f * 0.5, t, 0.03);
+    this.filter.frequency.setTargetAtTime(280 + load * 900 + rpm * 900, t, 0.05);
+    this.eng.gain.setTargetAtTime(this.muted ? 0 : 0.05 + load * 0.07 + rpm * 0.03, t, 0.06);
+    if (!this.skidGain) this.makeSkid();
+    this.skidGain.gain.setTargetAtTime(this.muted ? 0 : bike.skid * 0.1, t, 0.05);
+  }
+
+  // Looping noise through a band-pass: tyre squeal under hard braking.
+  makeSkid() {
+    const ctx = this.ctx;
+    const buf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 2200;
+    bp.Q.value = 6;
+    this.skidGain = ctx.createGain();
+    this.skidGain.gain.value = 0;
+    src.connect(bp);
+    bp.connect(this.skidGain);
+    this.skidGain.connect(this.master);
+    src.start();
   }
 
   tone(freq, dur, type = 'sine', vol = 0.3, when = 0, slide = 0) {

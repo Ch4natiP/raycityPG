@@ -96,7 +96,8 @@ export class Traffic {
       let dh = want - c.h;
       while (dh > Math.PI) dh -= Math.PI * 2;
       while (dh < -Math.PI) dh += Math.PI * 2;
-      c.h += Math.max(-2.2 * dt, Math.min(2.2 * dt, dh));
+      // a parked car can't turn on the spot: steering scales with speed
+      c.h += Math.max(-2.2 * dt, Math.min(2.2 * dt, dh)) * Math.min(1, c.speed / 3);
 
       // speed: slow for turns and for anything in front
       let target = c.top;

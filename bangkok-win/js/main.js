@@ -6,7 +6,7 @@ import { Jobs } from './jobs.js';
 import { Hud } from './hud.js';
 import { Input } from './input.js';
 import { Sfx } from './audio.js';
-import { makeBike, makePerson, pose, setBikeColor } from './models.js';
+import { Bike } from './bike.js';
 
 const mobile = matchMedia('(pointer: coarse)').matches;
 document.body.classList.toggle('mobile', mobile);
@@ -49,40 +49,20 @@ const input = new Input();
 
 // ---- player ----
 const bikeSpec = () => BIKES.find((b) => b.id === save.bike) || BIKES[0];
-const bike = makeBike(bikeSpec().color);
-const rider = makePerson(() => 0.3, { vest: 99, helmet: 0xff7a00 });
-pose(rider, 'ride');
-rider.position.set(0, 0.82, -0.12);
-rider.rotation.x = 0.18;
-bike.userData.lean.add(rider);
-const seat = new THREE.Group();
-bike.userData.lean.add(seat);
-bike.traverse((o) => { if (o.isMesh) o.castShadow = true; });
-scene.add(bike);
-
+const player = new Bike(scene, bikeSpec());
 const startStand = city.stands[0];
-const player = {
-  x: startStand.x, z: startStand.z, h: Math.PI / 2, speed: 0, steer: 0, lean: 0, y: 0,
-  onSidewalk: false, seat, district: '', boost: 1,
-};
+player.place(startStand.x, startStand.z, Math.PI / 2);
 const jobs = new Jobs(scene, city, hud, sfx, save);
 hud.stats(save);
+const world = { colliders: city.colliders, traffic, groundHeight: city.groundHeight };
 
 function respawn() {
-  // nearest intersection, on the left lane, facing along the road
+  // nearest road, on the left lane, facing along it
   const i = Math.max(0, Math.min(N, Math.round((player.x + HALF) / BLOCK)));
   const j = Math.max(0, Math.min(N - 1, Math.floor((player.z + HALF) / BLOCK)));
-  player.x = nodeX(i) + 4;
-  player.z = nodeX(j) + BLOCK / 2;
-  player.h = 0;
-  player.speed = 0;
+  player.place(nodeX(i) + 4, nodeX(j) + BLOCK / 2, 0);
   jobs.cancel(player);
 }
-
-// ---- camera ----
-let camMode = 0; // 0 chase, 1 far, 2 first person
-const camPos = new THREE.Vector3(player.x - 6, 3, player.z);
-const camLook = new THREE.Vector3();
 
 // ---- garage ----
 function pickBike(b) {
@@ -93,7 +73,7 @@ function pickBike(b) {
     sfx.cash();
   }
   save.bike = b.id;
-  setBikeColor(bike, b.color);
+  player.setSpec(b);
   save.write();
   hud.stats(save);
 }
@@ -101,86 +81,31 @@ document.getElementById('garage-close').onclick = () => hud.closeGarage();
 document.getElementById('garage-hint').onclick = () => hud.openGarage(save, pickBike);
 
 // ---- step ----
-const tmp = { x: 0, z: 0 };
 let crashCooldown = 0;
 let placeTimer = 0;
+let shake = 0;
 
 function step(dt) {
-  const spec = bikeSpec();
-  const throttle = input.throttle;
-  const brake = input.brake;
-  const steerIn = input.steer;
-  const boosting = input.boost && player.boost > 0.02 && throttle > 0;
-  player.boost = Math.max(0, Math.min(1, player.boost + (boosting ? -0.35 : 0.08) * dt));
-
-  // longitudinal
-  const top = spec.top * (boosting ? 1.3 : 1) * (player.onSidewalk ? 0.7 : 1);
-  const accel = spec.accel * (boosting ? 1.6 : 1);
-  if (throttle && player.speed >= -0.5) player.speed += accel * dt * Math.max(0, 1 - Math.max(0, player.speed) / top) ** 0.6;
-  const handbrake = input.handbrake;
-  if (handbrake) player.speed -= Math.sign(player.speed) * Math.min(Math.abs(player.speed), 20 * dt);
-  else if (brake) {
-    if (player.speed > 0.5) player.speed = Math.max(0, player.speed - 20 * dt);
-    else player.speed = Math.max(-5, player.speed - 6 * dt); // reverse / walk it back
-  }
-  if (!throttle && !brake && !handbrake) player.speed -= Math.sign(player.speed) * Math.min(Math.abs(player.speed), (1.2 + Math.abs(player.speed) * 0.08) * dt);
-  if (player.speed > top) player.speed -= (player.speed - top) * 2 * dt;
-
-  // steering: tighter at low speed, smooth at high speed
-  player.steer += (steerIn - player.steer) * Math.min(1, dt * 8);
-  const v = player.speed;
-  const angle = (0.62 / (1 + Math.abs(v) * 0.11)) * spec.grip;
-  const yaw = Math.max(-2.4, Math.min(2.4, (v / 1.35) * Math.tan(angle * player.steer)));
-  player.h += yaw * dt;
-  const leanTarget = -player.steer * Math.min(1, Math.abs(v) / 10) * 0.55 * Math.sign(v || 1);
-  player.lean += (leanTarget - player.lean) * Math.min(1, dt * 6);
-
-  // move + collide
-  const fx = Math.sin(player.h);
-  const fz = Math.cos(player.h);
-  tmp.x = player.x + fx * v * dt;
-  tmp.z = player.z + fz * v * dt;
-  const hit = city.colliders.resolve(tmp, 0.55);
+  const controls = { throttle: input.throttle, brake: input.brake, handbrake: input.handbrake, steer: input.steer, boost: input.boost };
   crashCooldown -= dt;
-  if (hit) {
-    const into = -(fx * hit.nx + fz * hit.nz) * v; // speed straight into the wall
-    if (into > 0) {
-      player.speed -= Math.sign(v) * Math.min(Math.abs(v), into * 0.9 + 0.5);
-      if (into > 4 && crashCooldown <= 0) { sfx.crash(into); jobs.crash(into); crashCooldown = 0.8; shake = Math.min(0.6, into * 0.04); }
-    }
+  for (const hit of player.update(dt, controls, world)) {
+    if (crashCooldown > 0) continue;
+    crashCooldown = 0.8;
+    sfx.crash(hit.power);
+    jobs.crash(hit.power + (hit.kind === 'car' ? 2 : 0));
+    shake = Math.min(0.7, hit.power * 0.05);
+    if (hit.car && hit.car.honk <= 0) { sfx.carHorn(); hit.car.honk = 3; }
   }
-  const car = traffic.collide(tmp, 0.65);
-  if (car) {
-    const rel = Math.abs(v - car.speed * Math.cos(car.h - player.h));
-    if (rel > 3 && crashCooldown <= 0) { sfx.crash(rel); jobs.crash(rel + 2); crashCooldown = 0.8; shake = Math.min(0.7, rel * 0.05); }
-    player.speed *= 0.5;
-    if (car.honk <= 0) { sfx.carHorn(); car.honk = 3; }
-  }
-  player.x = tmp.x;
-  player.z = tmp.z;
-  const gy = city.groundHeight(player.x, player.z);
-  player.onSidewalk = gy > 0;
-  player.y += (gy - player.y) * Math.min(1, dt * 15);
 
-  // honk at people blocking you: cars stopped for the player honk back sometimes
+  // cars stopped behind the player honk now and then
   for (const c of traffic.cars) if (c.blockedByPlayer && c.honk <= 0 && Math.random() < dt * 0.3) { sfx.carHorn(); c.honk = 5; }
-
-  bike.position.set(player.x, player.y, player.z);
-  bike.rotation.y = player.h;
-  bike.userData.lean.rotation.z = player.lean;
-  const spin = (v / 0.3) * dt;
-  bike.userData.front.rotation.x += spin;
-  bike.userData.rear.rotation.x += spin;
-  bike.userData.fork.rotation.y = player.steer * 0.35 * Math.max(0.15, 1 - Math.abs(v) / 15);
-
-  sfx.engine(Math.min(1, Math.abs(v) / spec.top), throttle);
 
   // one-shot keys
   if (input.take('KeyH') || input.take('horn')) sfx.horn();
   if (input.take('KeyR') || input.take('reset')) respawn();
   if (input.take('KeyC') || input.take('cam')) camMode = (camMode + 1) % 3;
   if (input.take('KeyM')) { const m = sfx.toggle(); hud.toast(m ? 'ปิดเสียง' : 'เปิดเสียง', '🔊'); }
-  const nearStand = city.stands.some((s) => Math.hypot(s.x - player.x, s.z - player.z) < 14) && Math.abs(v) < 2 && !jobs.active;
+  const nearStand = city.stands.some((s) => Math.hypot(s.x - player.x, s.z - player.z) < 14) && Math.abs(player.speed) < 2 && !jobs.active;
   hud.showGarageHint(nearStand);
   if (nearStand && input.take('KeyG')) { if (hud.garageOpen) hud.closeGarage(); else hud.openGarage(save, pickBike); }
   if (!nearStand && hud.garageOpen) hud.closeGarage();
@@ -193,38 +118,79 @@ function step(dt) {
   if (placeTimer <= 0) { player.district = districtOf(player.x, player.z); placeTimer = 0.5; }
 }
 
-let shake = 0;
+// ---- camera ----
+// A spring-damped chase camera: trails the bike, swings out a little into turns,
+// leans with the bike, widens the view with speed and shakes on hits.
+let camMode = 0; // 0 chase, 1 far, 2 rider's eyes
+const camPos = new THREE.Vector3();
+const camVel = new THREE.Vector3();
+const camLook = new THREE.Vector3();
+const lookVel = new THREE.Vector3();
+const want = new THREE.Vector3();
+const wantLook = new THREE.Vector3();
+let camRoll = 0;
+let camYaw = 0;
+let camInit = false;
+
+function spring(pos, vel, target, k, dt) {
+  // critically damped: no wobble, no overshoot
+  const d = 2 * Math.sqrt(k);
+  vel.x += ((target.x - pos.x) * k - vel.x * d) * dt;
+  vel.y += ((target.y - pos.y) * k - vel.y * d) * dt;
+  vel.z += ((target.z - pos.z) * k - vel.z * d) * dt;
+  pos.addScaledVector(vel, dt);
+}
+
 function updateCamera(dt) {
-  const fx = Math.sin(player.h);
-  const fz = Math.cos(player.h);
   const v = Math.abs(player.speed);
-  const dist = camMode === 1 ? 11 : 5.2 + v * 0.06;
-  const height = camMode === 1 ? 5.5 : 2.7;
-  const want = new THREE.Vector3(player.x - fx * dist, player.y + height, player.z - fz * dist);
+  const jumped = !camInit || Math.hypot(camPos.x - player.x, camPos.z - player.z) > 40; // first frame / teleport
+  if (jumped) camYaw = player.h;
+  // the camera heading lags the bike's, so turns show the bike's side a little
+  let dh = player.h - camYaw;
+  while (dh > Math.PI) dh -= Math.PI * 2;
+  while (dh < -Math.PI) dh += Math.PI * 2;
+  camYaw += dh * Math.min(1, dt * (camMode === 1 ? 3 : 4.5));
+  const fx = Math.sin(camYaw);
+  const fz = Math.cos(camYaw);
+  const bx = Math.sin(player.h);
+  const bz = Math.cos(player.h);
+  const dist = camMode === 1 ? 11 : 4.4 + v * 0.05;
+  const height = camMode === 1 ? 5.2 : 2.2 + v * 0.012;
+  want.set(player.x - fx * dist, player.y + height, player.z - fz * dist);
+  // look ahead of the bike, further at speed
+  const ahead = 4 + v * 0.25;
+  wantLook.set(player.x + bx * ahead, player.y + 1.2, player.z + bz * ahead);
+
   if (camMode === 2) {
-    want.set(player.x + fx * 0.1, player.y + 1.75, player.z + fz * 0.1);
-    camPos.copy(want);
+    camPos.set(player.x + bx * 0.15, player.y + 1.72, player.z + bz * 0.15);
+    camLook.set(player.x + bx * 10, player.y + 1.5, player.z + bz * 10);
   } else {
-    // pull the camera in front of walls behind the bike (narrow sois)
-    for (let t = 0.5; t <= 1.0001; t += 0.1) {
-      const x = player.x - fx * dist * t;
-      const z = player.z - fz * dist * t;
-      if (city.colliders.inside(x, z)) { want.x = player.x - fx * dist * (t - 0.15); want.z = player.z - fz * dist * (t - 0.15); break; }
+    // pull in front of walls behind the bike (narrow sois)
+    for (let t = 0.4; t <= 1.0001; t += 0.1) {
+      if (city.colliders.inside(player.x - fx * dist * t, player.z - fz * dist * t)) {
+        want.x = player.x - fx * dist * Math.max(0.3, t - 0.15);
+        want.z = player.z - fz * dist * Math.max(0.3, t - 0.15);
+        break;
+      }
     }
-    if (camPos.distanceTo(want) > 40) camPos.copy(want); // teleported / respawned
-    else camPos.lerp(want, 1 - Math.exp(-dt * 7));
+    if (jumped) { camPos.copy(want); camLook.copy(wantLook); camVel.set(0, 0, 0); lookVel.set(0, 0, 0); camInit = true; }
+    spring(camPos, camVel, want, 60, dt);
+    spring(camLook, lookVel, wantLook, 140, dt);
   }
-  camLook.set(player.x + fx * 5, player.y + 1.5, player.z + fz * 5);
   camera.position.copy(camPos);
   if (shake > 0) {
     camera.position.x += (Math.random() - 0.5) * shake;
     camera.position.y += (Math.random() - 0.5) * shake;
     shake = Math.max(0, shake - dt * 1.5);
   }
+  // a faint road buzz at high speed
+  if (v > 20) camera.position.y += (Math.random() - 0.5) * 0.012 * (v - 20) / 10;
   camera.lookAt(camLook);
-  if (camMode === 2) camera.rotateZ(-player.lean * 0.6);
-  const fov = 62 + Math.min(18, v * 0.45);
-  if (Math.abs(camera.fov - fov) > 0.05) { camera.fov = fov; camera.updateProjectionMatrix(); }
+  camRoll += ((camMode === 2 ? 0.7 : 0.22) * player.lean - camRoll) * Math.min(1, dt * 6);
+  camera.rotateZ(camRoll); // roll with the bike's lean
+  const fov = 60 + Math.min(16, v * 0.4) + (player.boosting ? 6 : 0);
+  camera.fov += (fov - camera.fov) * Math.min(1, dt * 4);
+  camera.updateProjectionMatrix();
   // the shadow box follows the player
   sun.position.set(player.x + SUN_DIR.x * 150, SUN_DIR.y * 150, player.z + SUN_DIR.z * 150);
   sun.target.position.set(player.x, 0, player.z);
@@ -233,17 +199,22 @@ function updateCamera(dt) {
 // ---- loop ----
 let running = false;
 let last = performance.now();
-function loop(now) {
-  const dt = Math.min(0.05, (now - last) / 1000);
-  last = now;
+function frame(dt) {
   if (running) {
     // fixed sub-steps keep collisions solid at high speed
     const n = Math.ceil(dt / (1 / 120));
     for (let k = 0; k < n; k++) step(dt / n);
+    player.sync(dt);
+    sfx.engine(player);
     input.endFrame();
     hud.frame(dt, player, jobs, player.boost);
   }
   updateCamera(dt);
+}
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  frame(dt);
   renderer.render(scene, camera);
   requestAnimationFrame(loop);
 }
@@ -263,4 +234,4 @@ document.getElementById('start').onclick = () => {
 };
 
 // for debugging in the console / automated tests
-window.__game = { player, jobs, traffic, city, save, camera, renderer, step, input };
+window.__game = { player, jobs, traffic, city, save, camera, renderer, step, frame, input, bikes: BIKES };

@@ -115,6 +115,7 @@ export class Hud {
 
   frame(dt, player, jobs, boost) {
     $('speed').textContent = Math.round(Math.abs(player.speed) * 3.6);
+    $('gear').textContent = player.speed < -0.3 ? 'R' : player.gear;
     $('boost-fill').style.width = `${Math.round(boost * 100)}%`;
     const place = this.city.placeName(player.x, player.z);
     if (place !== this.lastPlace) { $('place').textContent = place; this.lastPlace = place; }

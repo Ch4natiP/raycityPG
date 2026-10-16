@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { makeBike, makePerson, pose } from './models.js';
+import { seatRider } from './vehicles.js';
 import { labelTexture } from './textures.js';
 import { routeBetween } from './jobs.js';
 
@@ -7,11 +8,11 @@ import { routeBetween } from './jobs.js';
 // RayCity style: whoever is behind loses gauge every second (more the further behind),
 // first to the finish or the last one with gauge left wins.
 export const RIVALS = [
-  { id: 'pu', name: 'เสี่ยปู้', level: 2, vest: 0x2e86de, bike: 0xf1c40f, line: 'มาดิ ลองของหน่อย' },
-  { id: 'dang', name: 'แดง สิงห์รถซิ่ง', level: 4, vest: 0xc0392b, bike: 0x111111, line: 'แพ้แล้วอย่าร้องนะ' },
-  { id: 'boy', name: 'บอย เด็กแว้นบางนา', level: 6, vest: 0x27ae60, bike: 0xff4fa3, line: 'บิดไม่ถึงอย่ามาท้า' },
-  { id: 'kai', name: 'ไก่ ราชาซอย', level: 9, vest: 0x8e44ad, bike: 0x16a34a, line: 'ซอยนี้ข้ารู้ทุกซอก' },
-  { id: 'max', name: 'แม็กซ์ สายฟ้าสุขุมวิท', level: 13, vest: 0x111111, bike: 0xf5f5f5, line: 'ยังเร็วไม่พอหรอก' },
+  { id: 'pu', kind: 'wave', name: 'เสี่ยปู้', level: 2, vest: 0x2e86de, bike: 0xf1c40f, line: 'มาดิ ลองของหน่อย' },
+  { id: 'dang', kind: 'scoot', name: 'แดง สิงห์รถซิ่ง', level: 4, vest: 0xc0392b, bike: 0x111111, line: 'แพ้แล้วอย่าร้องนะ' },
+  { id: 'boy', kind: 'wave', name: 'บอย เด็กแว้นบางนา', level: 6, vest: 0x27ae60, bike: 0xff4fa3, line: 'บิดไม่ถึงอย่ามาท้า' },
+  { id: 'kai', kind: 'sport', name: 'ไก่ ราชาซอย', level: 9, vest: 0x8e44ad, bike: 0x16a34a, line: 'ซอยนี้ข้ารู้ทุกซอก' },
+  { id: 'max', kind: 'big', name: 'แม็กซ์ สายฟ้าสุขุมวิท', level: 13, vest: 0x111111, bike: 0xf5f5f5, line: 'ยังเร็วไม่พอหรอก' },
 ];
 export const battleReward = (r, first) => ({ money: (120 + 70 * r.level) * (first ? 2 : 1), xp: (30 + 12 * r.level) * (first ? 2 : 1) });
 
@@ -39,12 +40,10 @@ export class Battles {
   }
 
   makeRival(r, k) {
-    const mesh = makeBike(r.bike);
-    const rider = makePerson(() => 0.6, { vest: r.level, helmet: r.vest, shirt: r.vest });
-    pose(rider, 'ride');
-    rider.position.set(0, 0.82, -0.12);
-    rider.rotation.x = 0.2;
-    mesh.userData.lean.add(rider);
+    const mesh = makeBike(r.bike, r.kind);
+    const hex = `#${r.vest.toString(16).padStart(6, '0')}`;
+    const rider = makePerson(() => 0.6, { vest: r.level, vestColor: hex, helmet: r.vest, shirt: r.vest });
+    seatRider(rider, r.kind, mesh.userData.lean);
     const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: labelTexture(`⚔️ ${r.name} Lv.${r.level}`, { bg: '#1b1d22', fg: '#ffd84a', w: 512, h: 96, font: 46, border: '#ff7a00' }), depthTest: false }));
     tag.scale.set(4.2, 0.79, 1);
     tag.position.y = 2.6;
@@ -86,6 +85,7 @@ export class Battles {
     r.wps = route.pts.slice(1);
     r.wpMain = route.main.slice(1);
     r.wp = 0;
+    r.from = [r.x, r.z]; // where the race started (the first leg's direction must not turn with the rival)
     r.gauge = 100;
     r.speed = 0;
     this.active = { r, fin, me: 100, countdown: 3.4, t: 0, result: null };
@@ -193,7 +193,7 @@ export class Battles {
   race(r, dt) {
     if (this.active.countdown > 0 || !r.wps) { r.speed = Math.max(0, r.speed - 10 * dt); return; }
     const wp = r.wps[r.wp];
-    const prev = r.wp === 0 ? [r.x, r.z] : r.wps[r.wp - 1];
+    const prev = r.wp === 0 ? (r.from || [r.x, r.z]) : r.wps[r.wp - 1];
     const sx = wp[0] - prev[0]; const sz = wp[1] - prev[1];
     const sl = Math.hypot(sx, sz) || 1;
     const fx = sx / sl; const fz = sz / sl;

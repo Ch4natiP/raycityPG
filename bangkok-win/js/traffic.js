@@ -1,6 +1,7 @@
 import { rng } from './config.js';
 import * as THREE from 'three';
 import { makeVehicle } from './models.js';
+import { setLodFar } from './vehicles.js';
 import { glowTexture, beamTexture } from './textures.js';
 
 // Cars drive on the left, follow lane lines between intersections and pick a turn at each one.
@@ -26,6 +27,7 @@ export class Traffic {
     }
     this.night = 0;
     this.lights = null;  // TrafficLights, set by the game
+    this.blockers = [];  // other things cars stop for: { on, x, z, len, wid } (the rider on foot)
     this.active = count; // how many cars are on the road right now (rush hour = all of them)
     this.makeLights(scene);
   }
@@ -166,6 +168,7 @@ export class Traffic {
     const net = this.net;
     for (const c of this.cars) {
       if (!c.group.visible) continue;
+      if (player) setLodFar(c, (c.x - player.x) ** 2 + (c.z - player.z) ** 2 > (c.type === 'bus' ? 90 : 60) ** 2);
       const e = c.e;
       const node = net.nodes[c.fwd ? e.b : e.a];
       const stop = node.stop.get(e.id) ?? 2;
@@ -215,6 +218,7 @@ export class Traffic {
       };
       c.blockedByPlayer = false;
       if (player && blocked(player.x, player.z, 2, 0.8)) { target = 0; c.blockedByPlayer = true; }
+      for (const o of this.blockers) if (o.on && blocked(o.x, o.z, o.len, o.wid)) target = 0; // people on foot
       else {
         for (const o of this.cars) {
           if (o === c || !o.group.visible) continue;

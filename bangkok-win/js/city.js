@@ -8,6 +8,10 @@ import { RoadNet } from './roadnet.js';
 import { Colliders } from './physics.js';
 import { windowTexture, shopTexture, glassTexture, asphaltTexture, paveTexture, poolTexture, signAtlas, soiAtlas, labelTexture, SIGN_TEXTS, CHINA_SIGNS } from './textures.js';
 import { makePerson, pose } from './models.js';
+import { crowdMeshes, CROWD_KINDS } from './character.js';
+
+// a stand-in for an extra: where they stand and which ready-made person they are
+const extra = (R, pose) => { const g = new THREE.Group(); g.userData.crowd = { arch: Math.floor(R() * CROWD_KINDS), pose }; return g; };
 
 const UP = new THREE.Vector3(0, 1, 0);
 const WALLS = ['#f2e3c6', '#e8d5b0', '#d9e4dd', '#f5c6a5', '#c9d6df', '#f7f1e3', '#e3c1a8', '#bfd8b8', '#f4d06f', '#e8a87c', '#d4e7f2', '#ffffff', '#f6b8b8', '#b8d8f6'];
@@ -26,6 +30,7 @@ export function buildCity(scene, { shadows = true } = {}) {
   const stands = [];    // win stands {x, z, name}
   const labels = [];    // floating names over landmarks
   const people = [];    // decorative people (animated a little)
+  const npcs = [];      // people you can talk to on foot: { kind: 'win'|'vendor'|'local', x, z, ... }
 
   // ---- materials ----
   const pairMat = ({ map, emissive }) => ({ map, emissiveMap: emissive, emissive: 0xffffff, emissiveIntensity: 0 });
@@ -194,12 +199,26 @@ export function buildCity(scene, { shadows = true } = {}) {
       B('plain', cx, cz).addGeometry(umb, C(pick(['#e74c3c', '#27ae60', '#f1c40f', '#2e86de', '#ff6b81'])));
       col.add(x - w[0] / 2, z - w[1] / 2, x + w[0] / 2, z + w[1] / 2, 'cart');
       if (R() < 0.7) {
-        const v = makePerson(R);
-        pose(v, 'stand');
+        const v = extra(R, 'stand');
         v.position.set(x + (axis === 'x' ? 0 : s * 1.0), CURB, z + (axis === 'x' ? s * 1.0 : 0));
+        npcs.push({ kind: 'vendor', v: Math.floor(R() * 8), x: v.position.x, z: v.position.z });
         v.rotation.y = axis === 'x' ? (s > 0 ? Math.PI : 0) : (s > 0 ? -Math.PI / 2 : Math.PI / 2);
         people.push(v);
       }
+    }
+    // people on the pavement: waiting, chatting, looking at their phones
+    for (let u = a + 9; u < b - 9; u += 14 + R() * 18) {
+      if (R() > 0.45) continue;
+      const off = 1.1 + R() * 1.6;
+      const x = axis === 'x' ? u : curb + s * off;
+      const z = axis === 'x' ? curb + s * off : u;
+      if (col.inside(x, z)) continue;
+      const v = extra(R, R() < 0.3 ? 'talk' : 'stand');
+      v.position.set(x, CURB, z);
+      v.rotation.y = R() * Math.PI * 2;
+      people.push(v);
+      npcs.push({ kind: 'local', x, z });
+      col.add(x - 0.25, z - 0.25, x + 0.25, z + 0.25, 'person');
     }
     const green = district === 'สีลม' || district === 'สุขุมวิท' || district === 'รัชดา';
     if (green) {
@@ -381,9 +400,9 @@ export function buildCity(scene, { shadows = true } = {}) {
         aw.quad(V(x - 0.3, 2.6, z + 4.2), V(x + 4.9, 2.6, z + 4.2), V(x + 4.9, 3.2, z - 0.3), V(x - 0.3, 3.2, z - 0.3), t);
         col.add(x, z, x + 4.6, z + 3.5, 'stall');
         if (R() < 0.4) {
-          const v = makePerson(R);
-          pose(v, 'stand');
+          const v = extra(R, R() < 0.3 ? 'talk' : 'stand');
           v.position.set(x + 2.3, CURB, z + 4.2);
+          npcs.push({ kind: 'vendor', v: Math.floor(R() * 8), x: v.position.x, z: v.position.z });
           people.push(v);
         }
       }
@@ -643,11 +662,13 @@ export function buildCity(scene, { shadows = true } = {}) {
     col.add(x - 2.3, z - 1.2, x + 2.3, z + 1.2, 'stand');
     board(labelTexture('วินมอเตอร์ไซค์รับจ้าง', { bg: '#ff7a00', fg: '#111', w: 768, h: 116, font: 60 }), 4.6, 0.7, x, CURB + 3.2, z, 0);
     for (let k = 0; k < 2; k++) {
-      const v = makePerson(R, { vest: vestNo++ });
+      const number = vestNo++;
+      const v = makePerson(R, { vest: number });
       pose(v, 'sit');
       v.position.set(x - 1.2 + k * 2.2, CURB, z - 0.3 * inward);
       v.rotation.y = inward < 0 ? 0 : Math.PI;
       people.push(v);
+      npcs.push({ kind: 'win', number, x: v.position.x, z: v.position.z + 0.5 * inward, person: v });
     }
     stands.push({ name: s.name, x, z: zEdge - inward * 2.5, sx: x, sz: z });
     labels.push({ text: `🛵 ${s.name}`, x, y: 9, z, bg: '#ff7a00', fg: '#111', small: true });
@@ -732,23 +753,14 @@ export function buildCity(scene, { shadows = true } = {}) {
     const m = b.mesh(M[kind], { cast: shadows && kind !== 'mark' && kind !== 'sign' && kind !== 'soi' && kind !== 'pave', receive: true });
     scene.add(m);
   }
-  // Bake the standing / sitting extras into one mesh: hundreds of little people, one draw call.
+  // The extras: one instanced mesh per ready-made person, so hundreds of people cost a few draw calls.
   {
-    const pb = new GeoBuilder();
-    const live = [];
+    const entries = [];
     for (const p of people) {
-      let textured = false;
-      p.traverse((o) => { if (o.isMesh && o.material.map) textured = true; });
-      if (textured) { live.push(p); continue; } // vest numbers need their texture
-      p.updateMatrixWorld(true);
-      p.traverse((o) => {
-        if (!o.isMesh) return;
-        const g = o.geometry.clone().applyMatrix4(o.matrixWorld);
-        pb.addGeometry(g, o.material.color);
-      });
+      if (!p.userData.crowd) { scene.add(p); continue; } // win riders with their vest numbers
+      entries.push({ ...p.userData.crowd, x: p.position.x, y: p.position.y, z: p.position.z, rot: p.rotation.y });
     }
-    if (!pb.empty) scene.add(pb.mesh(M.plain, { cast: shadows, receive: false }));
-    for (const p of live) scene.add(p);
+    for (const m of crowdMeshes(entries, shadows)) scene.add(m);
   }
   for (const l of labels) {
     const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: labelTexture(l.text, { bg: l.bg || '#222', fg: l.fg || '#fff', w: 512, h: 112, font: 54 }), depthWrite: false, fog: false }));
@@ -830,5 +842,5 @@ export function buildCity(scene, { shadows = true } = {}) {
 
   const mapPolys = [{ color: '#4c7f95', pts: [{ x: bounds.x0, z: bounds.z0 }, { x: -HALF - 70, z: bounds.z0 }, { x: -HALF - 70, z: bounds.z1 }, { x: bounds.x0, z: bounds.z1 }] }];
 
-  return { style: 'grid', colliders: col, lots, pois, stands, groundHeight, placeName, updateTrain, people, setNight, net, districtLabels, bounds, districtOf, mapPolys };
+  return { style: 'grid', colliders: col, lots, pois, stands, groundHeight, placeName, updateTrain, people, npcs, setNight, net, districtLabels, bounds, districtOf, mapPolys };
 }

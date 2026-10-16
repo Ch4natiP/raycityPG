@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { glowTexture } from './textures.js';
-import { makeBike, makePerson, pose, setBikeColor } from './models.js';
+import { makeMoto, paintMoto, seatOf, seatRider } from './vehicles.js';
+import { makeCharacter, poseCharacter, randomOutfit } from './character.js';
 
 // Every number that shapes how the bike feels lives here. Per-bike values (top, accel, grip) are in config.BIKES.
 // These are the original (first-version) handling numbers: direct, arcade steering and strong brakes.
@@ -28,18 +29,12 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const approach = (v, target, rate) => (v < target ? Math.min(target, v + rate) : Math.max(target, v - rate));
 
 export class Bike {
-  constructor(scene, spec) {
+  constructor(scene, spec, outfit = null) {
     this.spec = spec;
-    this.mesh = makeBike(spec.color);
-    const lean = this.mesh.userData.lean;
-    this.rider = makePerson(() => 0.3, { vest: 99, helmet: 0xff7a00 });
-    pose(this.rider, 'ride');
-    this.rider.position.set(0, 0.82, -0.12);
-    this.rider.rotation.x = 0.18;
-    lean.add(this.rider);
-    this.seat = new THREE.Group(); // passengers sit here
-    lean.add(this.seat);
-    this.mesh.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+    this.mesh = new THREE.Group();   // moves with the physics; the bike model inside can be swapped
+    this.seat = new THREE.Group();   // passengers sit here
+    this.setRider(outfit || randomOutfit(() => 0.3, { vest: 99, helmet: 0xff7a00 }));
+    this.setModel(spec.id || 'wave');
     // neon under-glow (a garage extra)
     this.neon = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 2.6).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: glowTexture(), color: 0xffffff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
     this.neon.position.y = 0.04;
@@ -64,10 +59,50 @@ export class Bike {
     this.district = '';
   }
 
+  // The model of the bike (each bike in the garage looks like itself).
+  setModel(kind) {
+    if (this.model && this.kind === kind) return;
+    if (this.model) this.mesh.remove(this.model);
+    this.kind = kind;
+    this.model = makeMoto(kind, { paint: '#' + new THREE.Color(this.spec.color ?? 0xc81e1e).getHexString(), plate: '1กท 2547', yellow: true });
+    this.model.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+    this.mesh.add(this.model);
+    Object.assign(this.mesh.userData, this.model.userData);
+    const s = seatOf(kind);
+    this.seatInfo = s;
+    if (this.rider.parent === null || this.mounted !== false) this.mount();
+    this.seat.position.set(0, s.py - 0.86, s.pz + 0.52); // passengers are placed at (0, 0.86, -0.52) on the seat
+    this.model.userData.lean.add(this.seat);
+  }
+
+  // The player's character (outfit from the wardrobe).
+  setRider(outfit) {
+    const old = this.rider;
+    this.outfit = outfit;
+    this.rider = makeCharacter(outfit);
+    poseCharacter(this.rider, this.mounted === false ? 'idle' : 'ride');
+    if (old) {
+      const parent = old.parent;
+      parent?.remove(old);
+      if (this.mounted !== false && this.model) this.mount(); // hands back on the grips
+      else if (parent) { parent.add(this.rider); this.rider.position.copy(old.position); this.rider.rotation.copy(old.rotation); }
+      old.userData.mesh.geometry.dispose();
+    }
+  }
+
+  // put the rider back on the seat
+  mount() {
+    this.mounted = true;
+    const s = this.seatInfo;
+    if (!s || !this.model) return;
+    seatRider(this.rider, this.kind, this.model.userData.lean);
+  }
+
   // spec: the bike's numbers after parts and upgrades (see garage.effective); also carries paint.
   setSpec(spec) {
     this.spec = spec;
-    setBikeColor(this.mesh, spec.color, spec.rim ?? null);
+    if (spec.id && spec.id !== this.kind) this.setModel(spec.id);
+    paintMoto(this.mesh, spec.color, spec.rim ?? null);
     this.neon.visible = spec.neon != null;
     if (spec.neon != null) this.neon.material.color.set(spec.neon);
   }

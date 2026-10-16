@@ -5,6 +5,7 @@ import { RoadNet } from './roadnet.js';
 import { BTS_Y, rng } from './config.js';
 import { windowTexture, shopTexture, glassTexture, asphaltTexture, paveTexture, poolTexture, signAtlas, labelTexture, SIGN_TEXTS } from './textures.js';
 import { makePerson, pose } from './models.js';
+import { crowdMeshes, CROWD_KINDS } from './character.js';
 
 // Real streets: builds the city from the file made by tools/osm-import.mjs (OpenStreetMap data).
 // Returns the same interface as buildCity() in city.js, so the rest of the game does not care which it is.
@@ -24,6 +25,8 @@ export function buildOSMCity(scene, data, { shadows = true } = {}) {
   const stands = [];
   const labels = [];
   const people = [];
+  const npcs = []; // people you can talk to on foot
+  const extras = []; // street crowd (instanced)
 
   // ---- road graph ----
   const net = new RoadNet();
@@ -269,6 +272,15 @@ export function buildOSMCity(scene, data, { shadows = true } = {}) {
           const aw = C(pick(['#e74c3c', '#2e86de', '#27ae60', '#f39c12', '#8e44ad', '#16a085', '#d35400']));
           B('awning', cx, cz).quad(V(s0.x + nx * 1.6, 2.95, s0.z + nz * 1.6), V(s1.x + nx * 1.6, 2.95, s1.z + nz * 1.6), V(s1.x, 3.45, s1.z), V(s0.x, 3.45, s0.z), aw);
           if (R() < 0.08) pois.push({ name: `ร้าน${SIGN_TEXTS[r].replace(/^ร้าน/, '')}`, x: near.x, z: near.z, landmark: false, shop: true });
+          // people in front of the shops: customers, passers-by, a vendor now and then
+          if (R() < 0.14) {
+            const ex = midx + nx * (0.9 + R() * 0.8); const ez = midz + nz * (0.9 + R() * 0.8);
+            if (!col.inside(ex, ez)) {
+              const vendor = R() < 0.2;
+              extras.push({ arch: Math.floor(R() * CROWD_KINDS), pose: R() < 0.3 ? 'talk' : 'stand', x: ex, y: 0, z: ez, rot: Math.atan2(nx, nz) + (R() - 0.5) * 2 });
+              npcs.push(vendor ? { kind: 'vendor', v: Math.floor(R() * 8), x: ex, z: ez } : { kind: 'local', x: ex, z: ez });
+            }
+          }
         }
       }
     }
@@ -467,11 +479,13 @@ export function buildOSMCity(scene, data, { shadows = true } = {}) {
     col.add(x - 1.4, z - 1.4, x + 1.4, z + 1.4, 'stand');
     const nameStand = `วิน${sp.name ? sp.name.replace(/^(BTS|MRT|สถานี)\s*/, '') : (near.e.name || 'ปากซอย').replace(/^ถ(นน|\.)\s*/, '')}`;
     for (let k = 0; k < 2; k++) {
-      const v = makePerson(R, { vest: stands.length * 2 + k + 1 });
+      const number = stands.length * 2 + k + 1;
+      const v = makePerson(R, { vest: number });
       pose(v, 'sit');
       v.position.set(x + p.tx * (k - 0.5) * 2, 0, z + p.tz * (k - 0.5) * 2);
       v.rotation.y = ang - Math.PI / 2;
       scene.add(v);
+      npcs.push({ kind: 'win', number, x: v.position.x, z: v.position.z, person: v });
     }
     const sx = p.x + p.tz * (near.e.width / 2 - 1.5); const sz = p.z - p.tx * (near.e.width / 2 - 1.5);
     stands.push({ name: nameStand, x: sx, z: sz, sx: x, sz: z });
@@ -480,6 +494,7 @@ export function buildOSMCity(scene, data, { shadows = true } = {}) {
   }
 
   // ---- finish meshes and labels ----
+  for (const m of crowdMeshes(extras, shadows)) scene.add(m);
   for (const { kind, b } of chunks.values()) {
     if (b.empty) continue;
     scene.add(b.mesh(M[kind], { cast: shadows && (kind === 'wall' || kind === 'glass' || kind === 'shop' || kind === 'plain'), receive: true }));
@@ -513,7 +528,7 @@ export function buildOSMCity(scene, data, { shadows = true } = {}) {
 
   console.info(`real city: ${net.nodes.length} junctions, ${net.edges.length} roads, ${built} buildings, ${pois.length} destinations, ${stands.length} win stands`);
   return {
-    style: 'osm', colliders: col, lots: [], pois, stands, people,
+    style: 'osm', colliders: col, lots: [], pois, stands, people, npcs,
     groundHeight: (x, z) => (onRoad(x, z) ? 0 : 0.001), // pavement: flat, but counts as "on the sidewalk"
     placeName: (x, z) => net.placeName(x, z) || 'ทางเท้า',
     updateTrain, setNight, net, districtLabels: places, bounds, districtOf, mapPolys,

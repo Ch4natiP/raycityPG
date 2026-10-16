@@ -1,8 +1,10 @@
 // Bundles the game (three.js included) into one HTML file that opens with a double-click.
 import { build } from 'esbuild';
 import fs from 'fs';
+import path from 'path';
 
-const r = await build({ entryPoints: ['js/main.js'], bundle: true, minify: true, format: 'iife', write: false, legalComments: 'none' });
+// nodePaths: the shared car builder in ../car-generator imports three from here, too
+const r = await build({ entryPoints: ['js/main.js'], bundle: true, nodePaths: [path.resolve('node_modules')], minify: true, format: 'iife', write: false, legalComments: 'none' });
 const js = r.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
 const css = fs.readFileSync('style.css', 'utf8');
 // Real-street maps made by tools/osm-import.mjs ride along inside the page.

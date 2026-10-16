@@ -24,6 +24,8 @@ const LINES = {
   late: ['ช้ามากพี่...', 'สายแล้วอ่ะพี่', 'เกือบไม่ทันเลย'],
   good: ['ขอบคุณค่ะพี่ 🙏', 'ขอบคุณครับ ทอนไม่ต้องครับ', 'Thank you! Kop khun krub!', 'เร็วดีพี่ ชอบๆ', 'ขอบใจจ้ะลูก'],
 };
+// the same random numbers for the same name (a regular keeps their face and clothes)
+const seeded = (id) => { let h = 2166136261; for (const ch of id) h = Math.imul(h ^ ch.charCodeAt(0), 16777619); return () => { h = Math.imul(h ^ (h >>> 15), 2246822507) ^ Math.imul(h ^ (h >>> 13), 3266489909); h ^= h >>> 16; return (h >>> 0) / 4294967296; }; };
 const say = (arr, d = '') => arr[Math.floor(Math.random() * arr.length)].replace('{d}', d);
 
 // Driving route along the road graph (guidance for the minimap / arrow / fares).
@@ -98,11 +100,13 @@ export class Jobs {
   }
 
   // forced: a regular customer who phoned in (waits near their home district)
-  spawnWaiting(player = null, forced = null) {
+  spawnWaiting(player = null, forced = null, at = null) {
     let poi;
     const customer = forced || (this.book ? this.book.pick(this.save.level || 1, this.busyCustomers()) : null);
     const atStand = !customer && Math.random() < 0.3;
-    if (customer) {
+    if (at) {
+      poi = at;
+    } else if (customer) {
       const home = this.city.pois.filter((p) => !p.stand && this.city.districtOf(p.x, p.z) === customer.home && (!player || Math.hypot(p.x - player.x, p.z - player.z) > 40));
       poi = home.length ? home[Math.floor(Math.random() * home.length)] : this.pickPoi();
     } else if (atStand) {
@@ -117,7 +121,8 @@ export class Jobs {
     let type = 'normal';
     for (const k of kinds) { roll -= TYPES[k].w; if (roll <= 0) { type = k; break; } }
     if (customer) type = customer.type;
-    const person = makePerson(Math.random, type === 'tourist' ? { shirt: 0xff9ff3 } : {});
+    // regulars always look like themselves
+    const person = customer ? makePerson(seeded(customer.id), type === 'tourist' ? { shirt: 0xff9ff3 } : {}) : makePerson(Math.random, type === 'tourist' ? { shirt: 0xff9ff3 } : {});
     const [ix, iz] = poi.stand ? [0, 0] : this.inward(poi);
     person.position.set(poi.x + ix * 1.0, this.city.groundHeight(poi.x + ix, poi.z + iz), poi.z + iz * 1.0);
     person.rotation.y = Math.atan2(-ix, -iz);
@@ -193,11 +198,10 @@ export class Jobs {
     this.waiting = this.waiting.filter((x) => x !== w);
     this.scene.remove(w.ring);
     w.person.remove(w.icon);
-    const dest = this.pickPoi(w.poi, { x: player.x, z: player.z, min: 180, max: 1100 });
-    const route = routeBetween(player.x, player.z, dest.x, dest.z);
+    const { dest, route, fare } = w.quote || this.quote(w, player);
     const T = TYPES[w.type];
-    const bond = w.customer && this.book ? this.book.fareBonus(w.customer) : 0;
-    const fare = Math.round((20 + route.len * 0.04) * T.fare * fareMultiplier(this.save.level || 1) * this.demand.fareMul * (1 + bond) / 5) * 5;
+    const buff = this.save.buff;
+    if (buff && buff.trips > 0) { buff.trips--; if (!buff.trips) this.save.buff = null; }
     this.active = {
       ...w, dest, fare, left: route.len / T.speed + T.extra, total: route.len / T.speed + T.extra,
       crashes: 0, sidewalk: 0, redlights: 0, route,
@@ -210,6 +214,26 @@ export class Jobs {
     this.beacon.visible = true;
     this.hud.toast(say(LINES.board[w.type], dest.name), w.name);
     this.sfx.ding();
+  }
+
+  // Where a waiting passenger wants to go and what the ride pays (agreed when you talk, or at boarding).
+  quote(w, player) {
+    const dest = this.pickPoi(w.poi, { x: player.x, z: player.z, min: 180, max: 1100 });
+    const route = routeBetween(player.x, player.z, dest.x, dest.z);
+    const T = TYPES[w.type];
+    const bond = w.customer && this.book ? this.book.fareBonus(w.customer) : 0;
+    const buff = this.save.buff?.trips > 0 ? this.save.buff.mul : 0;
+    const fare = Math.round((20 + route.len * 0.04) * T.fare * fareMultiplier(this.save.level || 1) * this.demand.fareMul * (1 + bond) * (1 + buff) * (w.fareMul || 1) / 5) * 5;
+    return { dest, route, fare };
+  }
+
+  // A passenger walks off (said no to the price).
+  dismiss(w) {
+    this.waiting = this.waiting.filter((x) => x !== w);
+    this.scene.remove(w.ring);
+    w.person.remove(w.icon);
+    const [ix, iz] = this.inward(w.poi);
+    this.leaving.push({ p: w.person, t: 6, dx: ix || 1, dz: iz });
   }
 
   dropOff(player) {

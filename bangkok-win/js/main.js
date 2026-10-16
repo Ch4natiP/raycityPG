@@ -18,6 +18,9 @@ import { CustomerBook } from './customers.js';
 import { Battles } from './battle.js';
 import { Shop } from './shop.js';
 import { effective, wear, damage, warnings } from './garage.js';
+import { migrateLook, outfitOf } from './wardrobe.js';
+import { Walker } from './walk.js';
+import { Talk } from './talk.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -31,6 +34,7 @@ const SAVE_KEY = 'bangkok-win-save-v1';
 const save = { money: 0, trips: 0, ratings: [], owned: ['wave'], bike: 'wave' };
 try { Object.assign(save, JSON.parse(localStorage.getItem(SAVE_KEY) || '{}')); } catch { /* fresh start */ }
 migrate(save);
+migrateLook(save);
 save.write = () => { try { const { write, ...data } = save; localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch { /* storage blocked */ } };
 
 // ---- renderer / scene ----
@@ -73,7 +77,7 @@ const input = new Input();
 // ---- player ----
 // the bike's numbers come from its parts, upgrades and the weather (garage.js)
 const bikeSpec = () => effective(save, save.bike, weather.rain);
-const player = new Bike(scene, bikeSpec());
+const player = new Bike(scene, bikeSpec(), outfitOf(save.look));
 player.setSpec(bikeSpec());
 const startStand = city.stands[0];
 player.place(startStand.x, startStand.z, Math.PI / 2);
@@ -95,9 +99,12 @@ const missions = new Missions(save, (m) => {
 jobs.emit = (type, data) => missions.event(type, data);
 const battles = new Battles(scene, city, traffic, save);
 hud.battles = battles;
-const shop = new Shop({ save, sfx, onChange: () => { player.setSpec(bikeSpec()); hud.stats(save); } });
+const shop = new Shop({ save, sfx, onChange: () => { player.setSpec(bikeSpec()); hud.stats(save); }, onLook: () => { player.setRider(outfitOf(save.look)); hud.stats(save); } });
 hud.stats(save);
 const world = { colliders: city.colliders, traffic, groundHeight: city.groundHeight };
+// on foot: get off the bike, walk around, talk to people
+const walker = new Walker(scene, player, world);
+const talk = new Talk({ hud, save, sfx, jobs, city, battles, walker });
 
 // The bike's own headlight: a real spotlight, on from dusk.
 const headlight = new THREE.SpotLight(0xfff1d6, 0, 60, 0.5, 0.55, 1.3);
@@ -105,6 +112,7 @@ headlight.position.set(0, 1.0, 0.7);
 headlight.target.position.set(0, 0, 14);
 player.mesh.add(headlight, headlight.target);
 const focus = new THREE.Vector3();
+const hudWalk = document.getElementById('walk-hint');
 
 function respawn() {
   // nearest road, in the left lane, facing along it (the way traffic flows on a one-way street)
@@ -132,6 +140,7 @@ let shake = 0;
 function step(dt) {
   let controls = { throttle: input.throttle, brake: input.brake, handbrake: input.handbrake, steer: input.steer, boost: input.boost };
   if (battles.active && battles.active.countdown > 0) controls = { throttle: 0, brake: 0, handbrake: 1, steer: 0, boost: false }; // wait for GO
+  if (walker.active) controls = { throttle: 0, brake: 0, handbrake: 1, steer: 0, boost: false }; // parked
   crashCooldown -= dt;
   const metres = Math.abs(player.speed) * dt;
   save.distance += metres;
@@ -156,11 +165,14 @@ function step(dt) {
 
   // one-shot keys
   if (input.take('KeyH') || input.take('horn')) sfx.horn();
-  if (input.take('KeyR') || input.take('reset')) respawn();
+  if (input.take('KeyR') || input.take('reset')) { if (walker.active) getOn(); respawn(); }
+  if (input.take('KeyF')) toggleFoot();
+  if (walker.active && !talk.isOpen && input.take('KeyE')) { const npc = talk.nearest(walker.x, walker.z); if (npc) talk.open(npc); }
   if (input.take('KeyC') || input.take('cam')) camMode = (camMode + 1) % 3;
   if (input.take('KeyT')) { atmo.skip(1); hud.toast(`เวลา ${atmo.clock} น.`, '🕐'); }
   if (input.take('KeyM')) { const m = sfx.toggle(); hud.toast(m ? 'ปิดเสียง' : 'เปิดเสียง', '🔊'); }
-  const nearStand = city.stands.some((s) => Math.hypot(s.x - player.x, s.z - player.z) < 14) && Math.abs(player.speed) < 2 && !jobs.active;
+  const me = walker.active ? walker : player;
+  const nearStand = city.stands.some((s) => Math.hypot(s.x - me.x, s.z - me.z) < 14) && Math.abs(player.speed) < 2 && !jobs.active;
   hud.showGarageHint(nearStand);
   if (nearStand && input.take('KeyG')) { if (shop.isOpen) shop.close(); else shop.open(); }
   if (!nearStand && shop.isOpen) shop.close();
@@ -180,7 +192,7 @@ function step(dt) {
   }
 
   // battles: challenge a rival nearby with B
-  const rival = !jobs.active && !battles.active ? battles.nearby(player) : null;
+  const rival = !jobs.active && !battles.active && !walker.active ? battles.nearby(player) : null;
   hud.battleHint(!!rival);
   if (rival && input.take('KeyB')) {
     battles.start(rival, player);
@@ -192,6 +204,22 @@ function step(dt) {
 
   placeTimer -= dt;
   if (placeTimer <= 0) { player.district = city.districtOf(player.x, player.z); placeTimer = 0.5; }
+}
+
+// F: get off the bike / back on
+function toggleFoot() {
+  if (walker.active) { if (walker.nearBike()) getOn(); else hud.toast('เดินกลับไปที่รถก่อน (ไอคอน 🛵)', '🚶'); return; }
+  if (battles.active) return hud.toast('กำลังแข่งอยู่ ลงไม่ได้!', '⚔️');
+  if (jobs.active) return hud.toast('มีผู้โดยสารนั่งอยู่ ไปส่งก่อน', '🛵');
+  if (Math.abs(player.speed) > 1.5) return hud.toast('จอดรถก่อนแล้วค่อยลง', '🛵');
+  walker.dismount();
+  jobs.locked = true; // nobody climbs onto a parked bike
+  sfx.blip?.();
+}
+function getOn() {
+  talk.close();
+  walker.mount();
+  jobs.locked = !!battles.active;
 }
 
 function ranRed() {
@@ -225,6 +253,8 @@ function battleOver({ end, reward, rival, first }) {
 
 // The rest of the city moves once per frame (the bike itself runs in fine sub-steps).
 function worldStep(dt) {
+  if (walker.active) walker.update(dt, { forward: input.throttle - input.brake, turn: input.steer, run: input.boost });
+  walker.hint(talk, hudWalk);
   traffic.update(dt, player);
   jobs.update(dt, player);
   city.updateTrain(dt);
@@ -269,26 +299,46 @@ const want = new THREE.Vector3();
 let camInit = false;
 
 function updateCamera(dt) {
-  const fx = Math.sin(player.h);
-  const fz = Math.cos(player.h);
-  const v = Math.abs(player.speed);
-  const dist = camMode === 1 ? 11 : 5.2 + v * 0.06;
-  const height = camMode === 1 ? 5.5 : 2.7;
-  want.set(player.x - fx * dist, player.y + height, player.z - fz * dist);
+  const foot = walker.active;
+  const me = foot ? walker : player;
+  const fx = Math.sin(me.h);
+  const fz = Math.cos(me.h);
+  const v = Math.abs(me.speed);
+  const dist = foot ? (camMode === 1 ? 6 : 3.3) : camMode === 1 ? 11 : 5.2 + v * 0.06;
+  const height = foot ? (camMode === 1 ? 3.2 : 1.85) : camMode === 1 ? 5.5 : 2.7;
+  want.set(me.x - fx * dist, me.y + height, me.z - fz * dist);
+  const other = talk.isOpen ? talk.where() : null;
+  if (other) {
+    // a conversation: look at both faces from the side
+    const mx = (me.x + other.x) / 2; const mz = (me.z + other.z) / 2;
+    let px = other.z - me.z; let pz = -(other.x - me.x);
+    const l = Math.hypot(px, pz) || 1; px /= l; pz /= l;
+    // the side with open space (no wall between us and the camera); else over the rider's shoulder
+    const clear = (sx, sz) => { for (let t = 0.6; t <= 3.1; t += 0.5) if (city.colliders.inside(mx + sx * t, mz + sz * t)) return false; return true; };
+    if (!clear(px, pz)) { px = -px; pz = -pz; }
+    if (clear(px, pz)) want.set(mx + px * 3.1, me.y + 1.7, mz + pz * 3.1);
+    else want.set(me.x - (other.x - me.x) * 0.9 + px * 0.5, me.y + 1.75, me.z - (other.z - me.z) * 0.9 + pz * 0.5);
+    camPos.lerp(want, 1 - Math.exp(-dt * 5));
+    camera.position.copy(camPos);
+    camera.lookAt(mx, me.y + 1.35, mz);
+    if (Math.abs(camera.fov - 50) > 0.05) { camera.fov = 50; camera.updateProjectionMatrix(); }
+    return;
+  }
   if (camMode === 2) {
-    want.set(player.x + fx * 0.1, player.y + 1.75, player.z + fz * 0.1);
+    want.set(me.x + fx * 0.15, me.y + (foot ? 1.62 : 1.75), me.z + fz * 0.15);
     camPos.copy(want);
   } else {
     // pull the camera in front of walls behind the bike (narrow sois)
     for (let t = 0.5; t <= 1.0001; t += 0.1) {
-      const x = player.x - fx * dist * t;
-      const z = player.z - fz * dist * t;
-      if (city.colliders.inside(x, z)) { want.x = player.x - fx * dist * (t - 0.15); want.z = player.z - fz * dist * (t - 0.15); break; }
+      const x = me.x - fx * dist * t;
+      const z = me.z - fz * dist * t;
+      if (city.colliders.inside(x, z)) { want.x = me.x - fx * dist * (t - 0.15); want.z = me.z - fz * dist * (t - 0.15); break; }
     }
     if (!camInit || camPos.distanceTo(want) > 40) { camPos.copy(want); camInit = true; } // first frame / teleport
     else camPos.lerp(want, 1 - Math.exp(-dt * 7));
   }
-  camLook.set(player.x + fx * 5, player.y + 1.5, player.z + fz * 5);
+  if (foot) camLook.set(me.x + fx * 2.5, me.y + 1.35, me.z + fz * 2.5);
+  else camLook.set(player.x + fx * 5, player.y + 1.5, player.z + fz * 5);
   camera.position.copy(camPos);
   if (shake > 0) {
     camera.position.x += (Math.random() - 0.5) * shake;
@@ -296,8 +346,8 @@ function updateCamera(dt) {
     shake = Math.max(0, shake - dt * 1.5);
   }
   camera.lookAt(camLook);
-  if (camMode === 2) camera.rotateZ(player.lean * 0.6);
-  const fov = 62 + Math.min(18, v * 0.45);
+  if (camMode === 2 && !foot) camera.rotateZ(player.lean * 0.6);
+  const fov = foot ? 60 : 62 + Math.min(18, v * 0.45);
   if (Math.abs(camera.fov - fov) > 0.05) { camera.fov = fov; camera.updateProjectionMatrix(); }
 }
 
@@ -321,7 +371,7 @@ function frame(dt) {
     weather.update(dt, camera);
   }
   updateCamera(dt);
-  focus.set(player.x, 0, player.z);
+  focus.set(walker.active ? walker.x : player.x, 0, walker.active ? walker.z : player.z);
   atmo.rain = weather.rain;
   sfx.rain(running && !paused ? weather.rain : 0);
   atmo.update(running && !paused ? dt : 0, focus, camera);
@@ -381,4 +431,4 @@ document.getElementById('start').onclick = () => {
 };
 
 // for debugging in the console / automated tests
-window.__game = { player, jobs, traffic, city, save, camera, renderer, step, frame, input, bikes: BIKES, atmo, phone, hud, lights, net, weather, missions, book, battles, shop };
+window.__game = { player, walker, talk, jobs, traffic, city, save, camera, renderer, step, frame, input, bikes: BIKES, atmo, phone, hud, lights, net, weather, missions, book, battles, shop };

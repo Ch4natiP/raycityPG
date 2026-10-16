@@ -1,16 +1,20 @@
+import * as THREE from 'three';
 import { BIKES } from './config.js';
+import { WARDROBE, itemPrice, itemId, outfitOf } from './wardrobe.js';
+import { makeCharacter, poseCharacter } from './character.js';
 import { PARTS, MODS, PAINTS, RIMS, NEONS, COSMETIC_PRICE, bikeState, effective, partPrice, modPrice } from './garage.js';
 
 // The workshop at a win stand: buy bikes, repair each part, fit upgrades, paint.
 const $ = (id) => document.getElementById(id);
 const baht = (n) => `฿${Math.round(n).toLocaleString('th-TH')}`;
 const hex = (c) => `#${c.toString(16).padStart(6, '0')}`;
-const TABS = [['bikes', '🛵 รถ'], ['repair', '🔧 ซ่อม'], ['tune', '⚙️ แต่ง'], ['paint', '🎨 สี'], ['spec', '📊 สเปค']];
+const TABS = [['bikes', '🛵 รถ'], ['repair', '🔧 ซ่อม'], ['tune', '⚙️ แต่ง'], ['paint', '🎨 สี'], ['look', '👕 แต่งตัว'], ['spec', '📊 สเปค']];
 
 export class Shop {
-  constructor({ save, onChange, sfx }) {
+  constructor({ save, onChange, onLook, sfx }) {
     this.save = save;
     this.onChange = onChange; // after anything that changes the bike
+    this.onLook = onLook;     // after the rider changes clothes
     this.sfx = sfx;
     this.tab = 'repair';
     this.el = $('garage');
@@ -21,7 +25,7 @@ export class Shop {
 
   get isOpen() { return this.el.classList.contains('show'); }
   open(tab) { if (tab) this.tab = tab; this.el.classList.add('show'); this.render(); $('garage-close').focus(); }
-  close() { this.el.classList.remove('show'); }
+  close() { this.el.classList.remove('show'); this.preview?.stop(); }
 
   pay(cost) {
     if (this.save.money < cost) { this.flash('เงินไม่พอ'); return false; }
@@ -48,6 +52,7 @@ export class Shop {
     const body = $('garage-list');
     body.innerHTML = this[`tab_${this.tab}`](bike);
     body.querySelectorAll('[data-act]').forEach((b) => { b.onclick = () => this.act(b.dataset.act, b.dataset.arg, bike); });
+    if (this.tab === 'look') { (this.preview ??= new Preview()).show(body.querySelector('.look-preview'), outfitOf(save.look)); } else this.preview?.stop();
   }
 
   act(kind, arg, bike) {
@@ -81,6 +86,22 @@ export class Shop {
       }
       st.mods[slot] = +idx;
       return this.done(`ใส่${o.name}แล้ว`);
+    }
+    if (kind === 'wear') {
+      const [key, raw] = arg.split('=');
+      const cat = WARDROBE.find((c) => c.key === key);
+      const value = raw === 'true' ? true : raw === 'false' ? false : raw === 'null' ? null : cat.numbers ? +raw : raw;
+      const { price, level } = itemPrice(cat, value);
+      const id = itemId(key, value);
+      if (price && !save.closet.includes(id)) {
+        if (save.level < level) return this.flash(`ต้อง Lv.${level}`);
+        if (!this.pay(price)) return;
+        save.closet.push(id);
+      }
+      save.look[key] = value;
+      this.save.write();
+      this.onLook?.();
+      return this.render();
     }
     if (kind === 'paint' || kind === 'rim' || kind === 'neon') {
       const v = arg === 'null' ? null : +arg;
@@ -141,6 +162,35 @@ export class Shop {
       <div class="shop-group">ไฟใต้ท้อง (นีออน) · ${baht(COSMETIC_PRICE.neon)}</div><div class="swatches">${sw('neon', NEONS)}</div>`;
   }
 
+  tab_look() {
+    const save = this.save;
+    const look = save.look;
+    const rows = WARDROBE.map((cat) => {
+      let items;
+      if (cat.numbers) {
+        const n = look[cat.key];
+        items = `<button data-act="wear" data-arg="${cat.key}=${Math.max(1, n - 1)}">−</button><b class="vest-no">${n}</b><button data-act="wear" data-arg="${cat.key}=${Math.min(99, n + 1)}">+</button>`;
+      } else if (cat.colors) {
+        items = `<div class="swatches">${cat.colors.map((c) => {
+          const { price } = itemPrice(cat, c);
+          const owned = !price || save.closet.includes(itemId(cat.key, c));
+          return `<button class="swatch${look[cat.key] === c ? ' on' : ''}" data-act="wear" data-arg="${cat.key}=${c}" title="${owned ? '' : baht(price)}" style="background:${c}">${owned ? '' : '฿'}</button>`;
+        }).join('')}</div>`;
+      } else {
+        items = `<div class="chips">${cat.options.map(([v, name, price, level]) => {
+          const on = look[cat.key] === v;
+          const owned = !price || save.closet.includes(itemId(cat.key, v));
+          const locked = !owned && level && save.level < level;
+          const tag = on ? '' : owned ? '' : locked ? ` 🔒Lv.${level}` : ` ${baht(price)}`;
+          return `<button class="chip${on ? ' on' : ''}" data-act="wear" data-arg="${cat.key}=${v}" ${locked ? 'disabled' : ''}>${name}${tag}</button>`;
+        }).join('')}</div>`;
+      }
+      return `<div class="look-row"><span class="look-name">${cat.name}</span>${items}</div>`;
+    }).join('');
+    return `<div class="look"><div class="look-preview"></div><div class="look-list">
+      <p class="shop-note">ใส่เสื้ออะไรก็ได้ แต่วินต้องใส่เสื้อวินทับเสมอ และต้องสวมหมวกกันน็อกทุกครั้ง</p>${rows}</div></div>`;
+  }
+
   tab_spec(bike) {
     const now = effective(this.save, bike.id);
     const max = { top: 50, accel: 16, grip: 1.7, brake: 1.4 };
@@ -154,4 +204,34 @@ export class Shop {
       <div class="spec-row"><span>${n}</span><span class="spec-bar"><i class="base" style="width:${Math.min(100, base * 100)}%"></i><i class="now" style="width:${Math.min(100, v * 100)}%"></i></span><b>${t}</b></div>`).join('') +
       (now.broken ? '<p class="shop-note bad">⚠️ เครื่องพัง/น้ำมันเครื่องหมด วิ่งได้แค่ช้าๆ รีบซ่อม!</p>' : '');
   }
+}
+
+// A turning 3D preview of the rider in the wardrobe (its own small renderer, made on first use).
+class Preview {
+  constructor() {
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    this.renderer.setSize(220, 300);
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.scene = new THREE.Scene();
+    const sun = new THREE.DirectionalLight(0xffffff, 2.4); sun.position.set(2, 3, 3);
+    this.scene.add(sun, new THREE.HemisphereLight(0xdfeeff, 0x6b5a48, 1.1));
+    this.camera = new THREE.PerspectiveCamera(30, 220 / 300, 0.1, 20);
+    this.camera.position.set(0, 1.1, 4.2);
+    this.camera.lookAt(0, 0.92, 0);
+    this.person = null; this.key = ''; this.raf = 0; this.t = 0;
+  }
+  show(el, outfit) {
+    if (!el) return;
+    el.appendChild(this.renderer.domElement);
+    const key = JSON.stringify(outfit);
+    if (key !== this.key) {
+      this.key = key;
+      if (this.person) { this.scene.remove(this.person); this.person.userData.mesh.geometry.dispose(); }
+      this.person = makeCharacter(outfit);
+      this.scene.add(this.person);
+    }
+    if (!this.raf) { const loop = () => { this.t += 1 / 60; this.person.rotation.y = Math.sin(this.t * 0.6) * 0.9; poseCharacter(this.person, 'idle', this.t); this.renderer.render(this.scene, this.camera); this.raf = requestAnimationFrame(loop); }; loop(); }
+  }
+  stop() { cancelAnimationFrame(this.raf); this.raf = 0; }
 }

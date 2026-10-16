@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HALF, BLOCK, N, nodeX, districtOf } from './config.js';
+
 import { makePerson, pose } from './models.js';
 import { tripXp, addXp, fareMultiplier, passengerTypes } from './progress.js';
 
@@ -26,19 +26,13 @@ const LINES = {
 };
 const say = (arr, d = '') => arr[Math.floor(Math.random() * arr.length)].replace('{d}', d);
 
-// Manhattan route on the road grid (guidance for the minimap / arrow).
+// Driving route along the road graph (guidance for the minimap / arrow / fares).
+let NET = null;
+export function setRoadNet(net) { NET = net; }
 export function routeBetween(ax, az, bx, bz) {
-  const ni = (v) => Math.max(0, Math.min(N, Math.round((v + HALF) / BLOCK)));
-  const ai = ni(ax); const aj = ni(az);
-  const bi = ni(bx); const bj = ni(bz);
-  const pts = [[ax, az], [nodeX(ai), nodeX(aj)]];
-  // go along the longer axis first
-  if (Math.abs(bi - ai) >= Math.abs(bj - aj)) pts.push([nodeX(bi), nodeX(aj)]);
-  else pts.push([nodeX(ai), nodeX(bj)]);
-  pts.push([nodeX(bi), nodeX(bj)], [bx, bz]);
-  let len = 0;
-  for (let k = 1; k < pts.length; k++) len += Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]);
-  return { pts, len };
+  if (NET) return NET.route(ax, az, bx, bz);
+  const len = Math.hypot(bx - ax, bz - az);
+  return { pts: [[ax, az], [bx, bz]], len, main: [false] };
 }
 
 export class Jobs {
@@ -109,7 +103,7 @@ export class Jobs {
     const customer = forced || (this.book ? this.book.pick(this.save.level || 1, this.busyCustomers()) : null);
     const atStand = !customer && Math.random() < 0.3;
     if (customer) {
-      const home = this.city.pois.filter((p) => !p.stand && districtOf(p.x, p.z) === customer.home && (!player || Math.hypot(p.x - player.x, p.z - player.z) > 40));
+      const home = this.city.pois.filter((p) => !p.stand && this.city.districtOf(p.x, p.z) === customer.home && (!player || Math.hypot(p.x - player.x, p.z - player.z) > 40));
       poi = home.length ? home[Math.floor(Math.random() * home.length)] : this.pickPoi();
     } else if (atStand) {
       const s = this.city.stands[Math.floor(Math.random() * this.city.stands.length)];

@@ -1,4 +1,4 @@
-import { BIKES, HALF } from './config.js';
+import { BIKES } from './config.js';
 import { xpToNext, MAX_LEVEL, UNLOCKS } from './progress.js';
 import { CUSTOMERS, RARITY, bondOf } from './customers.js';
 import { RIVALS, battleReward } from './battle.js';
@@ -105,25 +105,22 @@ export class Phone {
     this.screen.innerHTML = `<div class="ph-title">แผนที่กรุงเทพฯ</div><canvas class="ph-map" id="ph-map" width="640" height="640"></canvas>
       <div class="ph-legend"><span><i style="background:#ff3b30"></i>เรา</span><span><i style="background:#2ecc71"></i>คนรอเรียกรถ</span>
         <span><i style="background:#ffc400"></i>จุดส่ง</span><span><i style="background:#ff7a00"></i>ซุ้มวิน</span>
-        <span><i style="background:#ff4fa3"></i>ลูกค้าในสมุด</span><span><i style="background:#9b59b6"></i>คู่แข่ง Battle</span></div>`;
+        <span><i style="background:#ff4fa3"></i>ลูกค้าในสมุด</span><span><i style="background:#9b59b6"></i>คู่แข่ง Battle</span></div>
+      ${city.attribution ? `<p style="font-size:11px;color:#6b6f78;margin-top:6px">แผนที่ ${city.attribution}</p>` : ''}`;
     const c = $('ph-map');
     const g = c.getContext('2d');
     const W = c.width;
-    const ext = hud.mapExt;
-    const k = W / (ext * 2);
-    const tx = (x) => (x + ext) * k;
-    const tz = (z) => (z + ext) * k;
+    const k = W / hud.mapSpan;
+    const tx = (x) => (x - hud.mapX0) * k;
+    const tz = (z) => (z - hud.mapZ0) * k;
     g.drawImage(hud.mapImg, 0, 0, W, W);
     // district names
     g.font = 'bold 30px "Noto Sans Thai", Tahoma, sans-serif';
     g.textAlign = 'center';
-    const third = (HALF * 2) / 3;
-    ['จตุจักร', 'อนุสาวรีย์ชัยฯ', 'รัชดา', 'ข้าวสาร', 'สยาม', 'สุขุมวิท', 'เยาวราช', 'สีลม', 'คลองเตย'].forEach((n, i) => {
-      const x = -HALF + third * ((i % 3) + 0.5);
-      const z = -HALF + third * (Math.floor(i / 3) + 0.5);
+    for (const d of city.districtLabels) {
       g.fillStyle = 'rgba(20,20,25,0.28)';
-      g.fillText(n, tx(x), tz(z));
-    });
+      g.fillText(d.name, tx(d.x), tz(d.z));
+    }
     // landmarks
     g.font = 'bold 19px "Noto Sans Thai", Tahoma, sans-serif';
     for (const p of city.pois.filter((q) => q.landmark && !q.name.startsWith('วิน'))) {
@@ -238,10 +235,12 @@ export class Phone {
       <div class="ph-row"><div class="grow"><div class="t">เสียง</div></div><div class="ph-seg"><button data-snd="on" class="${sfx.muted ? '' : 'on'}">เปิด</button><button data-snd="off" class="${sfx.muted ? 'on' : ''}">ปิด</button></div></div>
       <div class="ph-row"><div class="grow"><div class="t">คุณภาพภาพ</div><div class="d">ต่ำ = ปิดเงาและแสงเรือง ลื่นขึ้น</div></div><div class="ph-seg"><button data-q="high" class="${q === 'high' ? 'on' : ''}">สูง</button><button data-q="low" class="${q === 'low' ? 'on' : ''}">ต่ำ</button></div></div>
       <div class="ph-row"><div class="grow"><div class="t">สภาพอากาศ</div><div class="d">${this.g.weather.label}</div></div><div class="ph-seg"><button data-wx="auto" class="${this.g.weather.mode === 'auto' ? 'on' : ''}">อัตโนมัติ</button><button data-wx="clear" class="${this.g.weather.mode === 'clear' ? 'on' : ''}">แดด</button><button data-wx="rain" class="${this.g.weather.mode === 'rain' ? 'on' : ''}">ฝน</button></div></div>
+      ${this.g.maps ? `<div class="ph-row"><div class="grow"><div class="t">แผนที่</div><div class="d">เปลี่ยนแล้วเกมจะโหลดใหม่ (เงิน/เลเวลอยู่ครบ)</div></div><div class="ph-seg"><button data-map="real" class="${save.settings.map !== 'grid' ? 'on' : ''}">กทม. จริง</button><button data-map="grid" class="${save.settings.map === 'grid' ? 'on' : ''}">เมืองจำลอง</button></div></div>` : ''}
       <div class="ph-row"><div class="grow"><div class="t">เวลา ${this.g.atmo.clock} น.</div><div class="d">เลื่อนเวลาไป 1 ชั่วโมง (เหมือนกด T)</div></div><button class="ph-btn ghost" id="ph-skip">+1 ชม.</button></div>
       <div class="ph-row"><div class="grow"><div class="t">เริ่มเกมใหม่</div><div class="d" id="ph-reset-d">ลบเงิน เลเวล และรถทั้งหมด</div></div><button class="ph-btn danger" id="ph-reset">ลบ</button></div>
     </div>`;
     this.screen.querySelectorAll('[data-snd]').forEach((b) => { b.onclick = () => { if ((b.dataset.snd === 'off') !== sfx.muted) sfx.toggle(); this.app_settings(); }; });
+    this.screen.querySelectorAll('[data-map]').forEach((b) => { b.onclick = () => { if ((b.dataset.map === 'grid') !== (save.settings.map === 'grid')) this.g.onMap(b.dataset.map); }; });
     this.screen.querySelectorAll('[data-wx]').forEach((b) => { b.onclick = () => { this.g.weather.setMode(b.dataset.wx); this.app_settings(); }; });
     this.screen.querySelectorAll('[data-q]').forEach((b) => { b.onclick = () => { this.g.onQuality(b.dataset.q); this.app_settings(); }; });
     $('ph-skip').onclick = () => { this.g.atmo.skip(1); $('ph-clock').textContent = this.g.atmo.clock; this.app_settings(); };

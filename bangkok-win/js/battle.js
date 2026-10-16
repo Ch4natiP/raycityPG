@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { N, BLOCK, HALF, nodeX, isMain, DIRS } from './config.js';
 import { makeBike, makePerson, pose } from './models.js';
 import { labelTexture } from './textures.js';
 import { routeBetween } from './jobs.js';
@@ -19,13 +18,15 @@ export const battleReward = (r, first) => ({ money: (120 + 70 * r.level) * (firs
 const GAUGE_LOSS = 0.09;  // gauge per metre behind, per second
 const CRASH_LOSS = 7;
 
-const laneOff = (main) => (main ? 9.6 : 5.2);
+// rivals keep to the kerb side of the road, where bikes ride
+const laneOff = (e) => Math.max(...e.lanes) + (e.main ? 0.4 : 1.8);
 
 export class Battles {
   constructor(scene, city, traffic, save) {
     this.scene = scene;
     this.city = city;
     this.traffic = traffic;
+    this.net = city.net;
     this.save = save;
     save.battle ??= { wins: 0, losses: 0, rivals: {} };
     this.active = null;
@@ -50,10 +51,12 @@ export class Battles {
     tag.renderOrder = 6;
     mesh.add(tag);
     this.scene.add(mesh);
-    const i = (k * 3 + 1) % (N + 1);
-    const j = (k * 2 + 3) % (N + 1);
-    const ri = { ...r, mesh, tag, i, j, dir: 1, x: nodeX(i), z: nodeX(j), h: Math.PI / 2, speed: 8, lat: 0, next: -1, cool: 0, wps: null, wp: 0, gauge: 100 };
-    if (i + 1 > N) ri.dir = 3;
+    const ri = { ...r, mesh, tag, x: 0, z: 0, h: 0, speed: 8, lat: 0, cool: 0, wps: null, wp: 0, gauge: 100 };
+    const long = this.net.edges.filter((e) => e.len > 60);
+    const e = long[(k * 37 + 11) % long.length];
+    const p = this.net.at(e, true, e.len / 2);
+    ri.x = p.x; ri.z = p.z;
+    this.snapToRoad(ri);
     return ri;
   }
 
@@ -79,7 +82,9 @@ export class Battles {
       if (d > 350 && d < 850) fin = p;
     }
     fin ??= pois[0];
-    r.wps = routeBetween(r.x, r.z, fin.x, fin.z).pts.slice(1);
+    const route = routeBetween(r.x, r.z, fin.x, fin.z);
+    r.wps = route.pts.slice(1);
+    r.wpMain = route.main.slice(1);
     r.wp = 0;
     r.gauge = 100;
     r.speed = 0;
@@ -142,12 +147,11 @@ export class Battles {
     this.finishBeam.visible = false;
     r.cool = 60;
     r.wps = null;
-    r.next = -1;
-    this.snapToGrid(r);
+    this.snapToRoad(r);
     return { end: result, reward, rival: r, first };
   }
 
-  cancel() { if (this.active) { this.active.r.cool = 20; this.active.r.wps = null; this.snapToGrid(this.active.r); this.active = null; this.finishBeam.visible = false; } }
+  cancel() { if (this.active) { this.active.r.cool = 20; this.active.r.wps = null; this.snapToRoad(this.active.r); this.active = null; this.finishBeam.visible = false; } }
 
   remaining(r) {
     if (!r.wps) return 0;
@@ -156,28 +160,34 @@ export class Battles {
     return len;
   }
 
-  snapToGrid(r) {
-    r.i = Math.max(0, Math.min(N, Math.round((r.x + HALF) / BLOCK)));
-    r.j = Math.max(0, Math.min(N, Math.round((r.z + HALF) / BLOCK)));
-    const opts = [0, 1, 2, 3].filter((d) => { const ni = r.i + DIRS[d][0]; const nj = r.j + DIRS[d][1]; return ni >= 0 && ni <= N && nj >= 0 && nj <= N; });
-    r.dir = opts[Math.floor(Math.random() * opts.length)];
-    r.x = nodeX(r.i); r.z = nodeX(r.j);
+  // Join the nearest road, heading whichever way it allows.
+  snapToRoad(r) {
+    const near = this.net.nearest(r.x, r.z);
+    r.e = near.e;
+    r.fwd = near.e.oneway ? true : Math.cos(r.h) * near.tz + Math.sin(r.h) * near.tx >= 0;
+    r.s = r.fwd ? near.t : near.e.len - near.t;
+    r.next = null;
   }
 
-  // Cruise around like a win between jobs: follow the moto lane, turn at random at junctions.
+  // Cruise around like a win between jobs: keep to the kerb, turn at random at junctions.
   roam(r, dt) {
-    const [dx, dz] = DIRS[r.dir];
-    const nx = nodeX(r.i); const nz = nodeX(r.j);
-    const s = (r.x - nx) * dx + (r.z - nz) * dz;
-    if (s > BLOCK - 2) {
-      r.i += dx; r.j += dz;
-      const back = (r.dir + 2) % 4;
-      const opts = [0, 1, 2, 3].filter((d) => d !== back && r.i + DIRS[d][0] >= 0 && r.i + DIRS[d][0] <= N && r.j + DIRS[d][1] >= 0 && r.j + DIRS[d][1] <= N);
-      r.dir = opts.length ? opts[Math.floor(Math.random() * opts.length)] : back;
+    const net = this.net;
+    const node = net.nodes[r.fwd ? r.e.b : r.e.a];
+    const remain = r.e.len - r.s;
+    if (remain < (node.stop.get(r.e.id) ?? 2)) {
+      const opts = node.edges.map((id) => net.edges[id]).filter((e) => e !== r.e && net.canTravel(e, node.id));
+      const e = opts.length ? opts[Math.floor(Math.random() * opts.length)] : r.e;
+      const fwd = opts.length ? e.a === node.id : !r.fwd;
+      const p0 = net.at(e, fwd, 0);
+      r.e = e; r.fwd = fwd;
+      r.s = (r.x - p0.x) * p0.tx + (r.z - p0.z) * p0.tz;
       return;
     }
-    const off = laneOff(dx !== 0 ? isMain(r.j) : isMain(r.i));
-    this.steer(r, nx + dx * (s + 6) + dz * off, nz + dz * (s + 6) - dx * off, 9, dt);
+    const off = laneOff(r.e);
+    const look = net.at(r.e, r.fwd, r.s + 6);
+    this.steer(r, look.x + look.tz * off, look.z - look.tx * off, 9, dt);
+    const tan = net.at(r.e, r.fwd, r.s);
+    r.s += r.speed * dt * (Math.sin(r.h) * tan.tx + Math.cos(r.h) * tan.tz);
   }
 
   race(r, dt) {
@@ -188,8 +198,8 @@ export class Battles {
     const sl = Math.hypot(sx, sz) || 1;
     const fx = sx / sl; const fz = sz / sl;
     const last = r.wp === r.wps.length - 1;
-    const main = Math.abs(fx) > Math.abs(fz) ? isMain(Math.round((wp[1] + HALF) / BLOCK)) : isMain(Math.round((wp[0] + HALF) / BLOCK));
-    const off = last ? 0 : laneOff(main) - 2 + r.lat;
+    const main = r.wpMain ? r.wpMain[r.wp] : false;
+    const off = last ? 0 : (main ? 8 : 3.2) + r.lat;
     const tx = wp[0] + fz * off; const tz = wp[1] - fx * off;
     const d = Math.hypot(tx - r.x, tz - r.z);
     if (d < 7 && !last) { r.wp++; return; }

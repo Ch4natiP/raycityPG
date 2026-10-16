@@ -1,4 +1,3 @@
-import { HALF, BIKES } from './config.js';
 import { xpToNext, MAX_LEVEL } from './progress.js';
 
 const $ = (id) => document.getElementById(id);
@@ -15,27 +14,52 @@ export class Hud {
   }
 
   // The whole city drawn once; the minimap shows a window of it around the player.
+  // The whole city drawn once; the minimap shows a window of it around the player.
+  // Works for the grid city (lots on a road-coloured ground) and for imported real streets.
   buildMapImage() {
     const S = 0.6;
-    const ext = HALF + 160;
-    const size = Math.ceil(ext * 2 * S);
+    const bd = this.city.bounds;
+    const span = Math.max(bd.x1 - bd.x0, bd.z1 - bd.z0);
+    const size = Math.ceil(span * S);
     const c = document.createElement('canvas');
     c.width = c.height = size;
     const g = c.getContext('2d');
-    g.fillStyle = '#56595e';
+    const X = (x) => (x - bd.x0) * S;
+    const Z = (z) => (z - bd.z0) * S;
+    const grid = this.city.style === 'grid';
+    g.fillStyle = grid ? '#56595e' : '#e4ddd0';
     g.fillRect(0, 0, size, size);
-    g.fillStyle = '#4c7f95';
-    g.fillRect(0, 0, (-HALF - 70 + ext) * S, size);
+    for (const poly of this.city.mapPolys || []) {
+      g.fillStyle = poly.color;
+      g.beginPath();
+      poly.pts.forEach((p, k) => (k ? g.lineTo(X(p.x), Z(p.z)) : g.moveTo(X(p.x), Z(p.z))));
+      g.closePath();
+      g.fill();
+    }
+    if (!grid) {
+      g.strokeStyle = '#6b6e74';
+      g.lineCap = 'round';
+      g.lineJoin = 'round';
+      for (const e of [...this.city.net.edges].sort((a, b) => a.width - b.width)) {
+        g.lineWidth = Math.max(2, e.width * S);
+        g.strokeStyle = e.main ? '#5d6066' : '#7a7d83';
+        g.beginPath();
+        e.pts.forEach((p, k) => (k ? g.lineTo(X(p.x), Z(p.z)) : g.moveTo(X(p.x), Z(p.z))));
+        g.stroke();
+      }
+    }
     const colors = { shop: '#d8d0c0', edge: '#cfc7b6', tower: '#b9c4cf', temple: '#e8a24a', park: '#7cb65f', market: '#e07a5f', plaza: '#d6cdb5', river: '#c9bea6' };
     for (const l of this.city.lots) {
       g.fillStyle = colors[l.type] || '#d8d0c0';
-      g.fillRect((l.x0 + ext) * S, (l.z0 + ext) * S, (l.x1 - l.x0) * S, (l.z1 - l.z0) * S);
+      g.fillRect(X(l.x0), Z(l.z0), (l.x1 - l.x0) * S, (l.z1 - l.z0) * S);
     }
     g.fillStyle = '#ff7a00';
-    for (const s of this.city.stands) g.fillRect((s.sx + ext) * S - 4, (s.sz + ext) * S - 4, 8, 8);
+    for (const s of this.city.stands) g.fillRect(X(s.sx) - 4, Z(s.sz) - 4, 8, 8);
     this.mapImg = c;
     this.mapS = S;
-    this.mapExt = ext;
+    this.mapX0 = bd.x0;
+    this.mapZ0 = bd.z0;
+    this.mapSpan = span;
   }
 
   drawMinimap(player, jobs) {
@@ -44,7 +68,6 @@ export class Hud {
     const view = 300; // metres across
     const k = W / view;
     const S = this.mapS;
-    const ext = this.mapExt;
     g.save();
     g.clearRect(0, 0, W, W);
     g.beginPath();
@@ -52,7 +75,7 @@ export class Hud {
     g.clip();
     g.fillStyle = '#56595e';
     g.fillRect(0, 0, W, W);
-    g.drawImage(this.mapImg, (player.x - view / 2 + ext) * S, (player.z - view / 2 + ext) * S, view * S, view * S, 0, 0, W, W);
+    g.drawImage(this.mapImg, (player.x - view / 2 - this.mapX0) * S, (player.z - view / 2 - this.mapZ0) * S, view * S, view * S, 0, 0, W, W);
     const tx = (x) => (x - player.x) * k + W / 2;
     const tz = (z) => (z - player.z) * k + W / 2;
     if (jobs.active) {

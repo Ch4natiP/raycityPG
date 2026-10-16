@@ -1,35 +1,42 @@
 import * as THREE from 'three';
-import { N, nodeX, roadW, CURB, rng } from './config.js';
+import { CURB, rng } from './config.js';
 
-// Traffic signals at every intersection. North-south and east-west get green in turn;
-// each junction starts at its own point in the cycle so the whole city does not switch at once.
+// Traffic signals at every signalised junction of the road graph. Roads into a junction are split
+// into two phases by direction (the "north-south" and the "east-west" of that junction) that get
+// green in turn; each junction starts at its own point in the cycle.
 export const CYCLE = { green: 11, yellow: 3, allRed: 1.5 };
 const PERIOD = 2 * (CYCLE.green + CYCLE.yellow + CYCLE.allRed);
 
 export class TrafficLights {
-  constructor(scene, colliders = null) {
+  constructor(scene, net, colliders = null, { kerb = CURB } = {}) {
     const R = rng(4242);
+    this.net = net;
     this.t = 0;
-    this.offset = [];
-    for (let i = 0; i <= N; i++) { this.offset.push([]); for (let j = 0; j <= N; j++) this.offset[i].push(R() * PERIOD); }
-
-    // One signal per approach, on the left kerb just before the junction (Thailand drives on the left),
-    // facing the traffic that is coming.
     this.heads = [];
-    for (let i = 0; i <= N; i++) for (let j = 0; j <= N; j++) {
-      const x = nodeX(i); const z = nodeX(j);
-      const hx = roadW(i) / 2; const hz = roadW(j) / 2;
-      if (j > 0) this.heads.push({ i, j, axis: 'ns', x: x + hx + 0.6, z: z - hz - 1.2, rot: Math.PI });   // coming from the north, heading south
-      if (j < N) this.heads.push({ i, j, axis: 'ns', x: x - hx - 0.6, z: z + hz + 1.2, rot: 0 });         // from the south, heading north
-      if (i < N) this.heads.push({ i, j, axis: 'ew', x: x + hx + 1.2, z: z + hz + 0.6, rot: Math.PI / 2 }); // from the east, heading west
-      if (i > 0) this.heads.push({ i, j, axis: 'ew', x: x - hx - 1.2, z: z - hz - 0.6, rot: -Math.PI / 2 }); // from the west, heading east
+    for (const n of net.nodes) {
+      if (!n.signal || n.edges.length < 3) { n.signal = false; continue; }
+      n.offset = R() * PERIOD;
+      n.phase = new Map();
+      const axis = net.awayDir(n, net.edges[n.edges[0]]);
+      for (const id of n.edges) {
+        const e = net.edges[id];
+        const d = net.awayDir(n, e);
+        n.phase.set(id, Math.abs(d.x * axis.x + d.z * axis.z) > 0.707 ? 0 : 1);
+        // Only roads that bring traffic into the junction get a signal: on the left kerb
+        // (Thailand drives on the left) just before the stop line, facing the oncoming traffic.
+        if (e.oneway && e.a === n.id) continue;
+        const stop = n.stop.get(id);
+        const lx = -d.z; const lz = d.x; // left of a car arriving along -d
+        this.heads.push({ node: n, edge: id, x: n.x + d.x * (stop + 1.2) + lx * (e.width / 2 + 0.6), z: n.z + d.z * (stop + 1.2) + lz * (e.width / 2 + 0.6), rot: Math.atan2(d.x, d.z) });
+      }
     }
-    const n = this.heads.length;
-    const post = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.08, 0.1, 4.2, 6).translate(0, 2.1, 0), new THREE.MeshLambertMaterial({ color: 0x555b60 }), n);
-    const box = new THREE.InstancedMesh(new THREE.BoxGeometry(0.4, 1.15, 0.3).translate(0, 4.3, 0), new THREE.MeshLambertMaterial({ color: 0x1d1f22 }), n);
+
+    const count = Math.max(1, this.heads.length);
+    const post = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.08, 0.1, 4.2, 6).translate(0, 2.1, 0), new THREE.MeshLambertMaterial({ color: 0x555b60 }), count);
+    const box = new THREE.InstancedMesh(new THREE.BoxGeometry(0.4, 1.15, 0.3).translate(0, 4.3, 0), new THREE.MeshLambertMaterial({ color: 0x1d1f22 }), count);
     const lens = new THREE.SphereGeometry(0.13, 10, 8);
     this.lamps = ['r', 'y', 'g'].map((c, k) => {
-      const m = new THREE.InstancedMesh(lens, new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }), n);
+      const m = new THREE.InstancedMesh(lens, new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }), count);
       m.userData.dy = 4.68 - k * 0.37;
       return m;
     });
@@ -40,10 +47,10 @@ export class TrafficLights {
     const p = new THREE.Vector3();
     this.heads.forEach((h, k) => {
       q.setFromAxisAngle(up, h.rot);
-      m4.compose(p.set(h.x, CURB, h.z), q, one); post.setMatrixAt(k, m4); box.setMatrixAt(k, m4);
+      m4.compose(p.set(h.x, kerb, h.z), q, one); post.setMatrixAt(k, m4); box.setMatrixAt(k, m4);
       for (const l of this.lamps) {
         // lens sits on the face of the box that looks at oncoming traffic
-        m4.compose(p.set(h.x + Math.sin(h.rot) * 0.16, CURB + l.userData.dy, h.z + Math.cos(h.rot) * 0.16), q, one);
+        m4.compose(p.set(h.x + Math.sin(h.rot) * 0.16, kerb + l.userData.dy, h.z + Math.cos(h.rot) * 0.16), q, one);
         l.setMatrixAt(k, m4);
       }
     });
@@ -55,16 +62,18 @@ export class TrafficLights {
     this.refresh();
   }
 
-  // 'g' | 'y' | 'r' for traffic moving along `axis` ('ns' or 'ew') through junction (i, j)
-  state(i, j, axis) {
-    if (i < 0 || j < 0 || i > N || j > N) return 'g';
-    const t = (this.t + this.offset[i][j]) % PERIOD;
-    const half = PERIOD / 2;
-    const local = axis === 'ns' ? t : (t + half) % PERIOD;
+  // 'g' | 'y' | 'r' for phase 0 / 1 of a junction
+  state(node, phase) {
+    if (!node.signal) return 'g';
+    const t = (this.t + node.offset) % PERIOD;
+    const local = phase === 0 ? t : (t + PERIOD / 2) % PERIOD;
     if (local < CYCLE.green) return 'g';
     if (local < CYCLE.green + CYCLE.yellow) return 'y';
     return 'r';
   }
+
+  // for traffic arriving at `node` along edge `edgeId`
+  stateFor(node, edgeId) { return node.signal ? this.state(node, node.phase.get(edgeId)) : 'g'; }
 
   update(dt) {
     this.t += dt;
@@ -75,11 +84,11 @@ export class TrafficLights {
   refresh() {
     const [r, y, g] = this.lamps;
     this.heads.forEach((h, k) => {
-      const s = this.state(h.i, h.j, h.axis);
+      const s = this.stateFor(h.node, h.edge);
       r.setColorAt(k, this.colors.r[s === 'r' ? 1 : 0]);
       y.setColorAt(k, this.colors.y[s === 'y' ? 1 : 0]);
       g.setColorAt(k, this.colors.g[s === 'g' ? 1 : 0]);
     });
-    for (const l of this.lamps) l.instanceColor.needsUpdate = true;
+    for (const l of this.lamps) if (l.instanceColor) l.instanceColor.needsUpdate = true;
   }
 }

@@ -1,8 +1,9 @@
 import * as THREE from 'three';
-import { BIKES, districtOf, nodeX, N, HALF, BLOCK, roadW } from './config.js';
+import { BIKES } from './config.js';
 import { buildCity } from './city.js';
+import { buildOSMCity } from './cityosm.js';
 import { Traffic } from './traffic.js';
-import { Jobs } from './jobs.js';
+import { Jobs, setRoadNet } from './jobs.js';
 import { Hud } from './hud.js';
 import { Input } from './input.js';
 import { Sfx } from './audio.js';
@@ -56,11 +57,15 @@ if (!mobile) {
   composer.addPass(new OutputPass());
 }
 
-const city = buildCity(scene, { shadows: !mobile });
-const traffic = new Traffic(scene, mobile ? 60 : 120);
-const lights = new TrafficLights(scene, city.colliders);
+// Real Bangkok streets (OpenStreetMap) when a map file is bundled; the generated grid city otherwise.
+const realMap = typeof window.CITY_DATA === 'object' && save.settings.map !== 'grid';
+const city = realMap ? buildOSMCity(scene, window.CITY_DATA, { shadows: !mobile }) : buildCity(scene, { shadows: !mobile });
+const net = city.net; // the road graph: traffic, signals, routes and rivals all drive on it
+setRoadNet(net);
+const traffic = new Traffic(scene, net, mobile ? 60 : 120);
+const lights = new TrafficLights(scene, net, city.colliders);
 traffic.lights = lights;
-const weather = new Weather(scene);
+const weather = new Weather(scene, city.bounds, city.style === 'osm' ? 0.075 : 0.015);
 const hud = new Hud(city);
 const sfx = new Sfx();
 const input = new Input();
@@ -102,10 +107,14 @@ player.mesh.add(headlight, headlight.target);
 const focus = new THREE.Vector3();
 
 function respawn() {
-  // nearest road, on the left lane, facing along it
-  const i = Math.max(0, Math.min(N, Math.round((player.x + HALF) / BLOCK)));
-  const j = Math.max(0, Math.min(N - 1, Math.floor((player.z + HALF) / BLOCK)));
-  player.place(nodeX(i) + 4, nodeX(j) + BLOCK / 2, 0);
+  // nearest road, in the left lane, facing along it (the way traffic flows on a one-way street)
+  const near = net.nearest(player.x, player.z);
+  const e = near.e;
+  const fwd = e.oneway ? true : Math.sin(player.h) * near.tx + Math.cos(player.h) * near.tz >= 0;
+  const t = Math.max(8, Math.min(e.len - 8, near.t));
+  const p = net.at(e, fwd, fwd ? t : e.len - t);
+  const off = e.lanes[0];
+  player.place(p.x + p.tz * off, p.z - p.tx * off, Math.atan2(p.tx, p.tz));
   jobs.cancel(player);
   if (battles.active) { battles.cancel(); jobs.locked = false; hud.toast('ยกเลิก Battle', '⚔️'); }
 }
@@ -158,12 +167,14 @@ function step(dt) {
 
   // red lights: entering a junction while our direction has red
   {
-    const i = Math.round((player.x + HALF) / BLOCK);
-    const j = Math.round((player.z + HALF) / BLOCK);
-    const inside = i >= 0 && i <= N && j >= 0 && j <= N && Math.abs(player.x - nodeX(i)) < roadW(i) / 2 && Math.abs(player.z - nodeX(j)) < roadW(j) / 2;
+    const node = net.nodeAt(player.x, player.z);
+    const inside = !!(node && node.signal);
     if (inside && !inJunction && Math.abs(player.speed) > 4) {
-      const axis = Math.abs(Math.sin(player.h)) > Math.abs(Math.cos(player.h)) ? 'ew' : 'ns';
-      if (lights.state(i, j, axis) === 'r') ranRed();
+      // the road we came in on: the one pointing back the way we are heading from
+      const hx = Math.sin(player.h); const hz = Math.cos(player.h);
+      let from = null; let best = -2;
+      for (const id of node.edges) { const d = net.awayDir(node, net.edges[id]); const v = -(d.x * hx + d.z * hz); if (v > best) { best = v; from = id; } }
+      if (from !== null && lights.stateFor(node, from) === 'r') ranRed();
     }
     inJunction = inside;
   }
@@ -180,7 +191,7 @@ function step(dt) {
 
 
   placeTimer -= dt;
-  if (placeTimer <= 0) { player.district = districtOf(player.x, player.z); placeTimer = 0.5; }
+  if (placeTimer <= 0) { player.district = city.districtOf(player.x, player.z); placeTimer = 0.5; }
 }
 
 function ranRed() {
@@ -189,7 +200,7 @@ function ranRed() {
     const fine = Math.min(save.money, 200);
     save.money -= fine;
     hud.stats(save);
-    hud.toast(`ฝ่าไฟแดง! ตำรวจจราจรปรับ ฿${fine}`, '🚨 ตำรวจ');
+    hud.toast(fine > 0 ? `ฝ่าไฟแดง! ตำรวจจราจรปรับ ฿${fine}` : 'ฝ่าไฟแดง! ตำรวจตักเตือน คราวหน้าโดนปรับนะ', '🚨 ตำรวจ');
   } else if (!jobs.active) hud.toast('ฝ่าไฟแดง! ระวังตำรวจนะพี่', '🚦');
 }
 
@@ -354,6 +365,8 @@ applyQuality(save.settings.quality);
 
 // ---- phone ----
 const phone = new Phone({
+  maps: typeof window.CITY_DATA === 'object',
+  onMap: (m) => { save.settings.map = m; save.write(); location.reload(); },
   save, hud, city, jobs, player, atmo, sfx, missions, battles, weather, rush: isRush,
   started: () => running,
   onQuality: applyQuality,
@@ -368,4 +381,4 @@ document.getElementById('start').onclick = () => {
 };
 
 // for debugging in the console / automated tests
-window.__game = { player, jobs, traffic, city, save, camera, renderer, step, frame, input, bikes: BIKES, atmo, phone, hud, lights, weather, missions, book, battles, shop };
+window.__game = { player, jobs, traffic, city, save, camera, renderer, step, frame, input, bikes: BIKES, atmo, phone, hud, lights, net, weather, missions, book, battles, shop };

@@ -1,4 +1,4 @@
-import { N, nodeX, isMain, roadW, laneOffsets, DIRS, rng } from './config.js';
+import { rng } from './config.js';
 import * as THREE from 'three';
 import { makeVehicle } from './models.js';
 import { glowTexture, beamTexture } from './textures.js';
@@ -9,8 +9,9 @@ const TYPES = [
 ];
 
 export class Traffic {
-  constructor(scene, count = 70) {
+  constructor(scene, net, count = 70) {
     this.R = rng(777);
+    this.net = net;
     this.cars = [];
     const total = TYPES.reduce((s, t) => s + t[1], 0);
     for (let k = 0; k < count; k++) {
@@ -110,76 +111,80 @@ export class Traffic {
   }
 
   laneFor(c) {
-    const along = DIRS[c.dir][0] !== 0;
-    const road = along ? c.j : c.i;
-    const lanes = laneOffsets(road);
+    const lanes = c.e.lanes;
     const big = c.type === 'bus' || c.type === 'moto' || c.type === 'tuktuk' || c.type === 'songthaew';
     if (lanes.length === 1) return lanes[0];
-    return big ? lanes[2] : lanes[Math.min(c.lane, 1)];
+    return big ? lanes[lanes.length - 1] : lanes[Math.min(c.lane, lanes.length - 2)];
   }
 
   spawn(c, player = null) {
     const R = this.R;
-    for (let tries = 0; tries < 50; tries++) {
-      c.i = Math.floor(R() * (N + 1));
-      c.j = Math.floor(R() * (N + 1));
-      c.dir = Math.floor(R() * 4);
-      const [dx, dz] = DIRS[c.dir];
-      if (c.i + dx < 0 || c.i + dx > N || c.j + dz < 0 || c.j + dz > N) continue;
+    const net = this.net;
+    for (let tries = 0; tries < 60; tries++) {
+      const e = net.edges[Math.floor(R() * net.edges.length)];
+      if (e.len < 50) continue;
+      c.e = e;
+      c.fwd = e.oneway ? true : R() < 0.5;
       c.lane = Math.floor(R() * 2);
+      // never appear past a stop line
+      const end = net.nodes[c.fwd ? e.b : e.a];
+      const room = e.len - (end.stop.get(e.id) ?? 2) - 8 - 15;
+      if (room < 5) continue;
+      c.s = 15 + R() * room;
+      const p = net.at(e, c.fwd, c.s);
       const off = this.laneFor(c);
-      const t = 20 + R() * 60;
-      c.x = nodeX(c.i) + dx * t + dz * off;
-      c.z = nodeX(c.j) + dz * t - dx * off;
+      c.x = p.x + p.tz * off;
+      c.z = p.z - p.tx * off;
       if (this.cars.some((o) => o !== c && Math.hypot(o.x - c.x, o.z - c.z) < 12)) continue;
-      if (player && tries < 40 && Math.hypot(player.x - c.x, player.z - c.z) < 90) continue; // pop in out of sight
-      c.h = Math.atan2(dx, dz);
+      if (player && tries < 45 && Math.hypot(player.x - c.x, player.z - c.z) < 90) continue; // pop in out of sight
+      c.h = Math.atan2(p.tx, p.tz);
       c.top = (c.type === 'bus' ? 9 : c.type === 'tuktuk' ? 10 : c.type === 'moto' ? 13 : 12) + R() * 3;
       c.speed = c.top * 0.6;
-      c.next = -1;
+      c.next = null;
       break;
     }
   }
 
-  pickTurn(c, ti, tj) {
-    const R = this.R;
-    const back = (c.dir + 2) % 4;
+  // Which road to take at the junction ahead: often straight on, never back the way we came unless it is a dead end.
+  pickNext(c, node) {
+    const net = this.net;
+    const inDir = net.awayDir(node, c.e); // pointing back where we came from
     const opts = [];
-    for (let d = 0; d < 4; d++) {
-      if (d === back) continue;
-      const ni = ti + DIRS[d][0];
-      const nj = tj + DIRS[d][1];
-      if (ni < 0 || ni > N || nj < 0 || nj > N) continue;
-      opts.push(d);
+    for (const id of node.edges) {
+      const e = net.edges[id];
+      if (e === c.e || !net.canTravel(e, node.id) || e.len < 1) continue;
+      const d = net.awayDir(node, e);
+      opts.push({ e, fwd: e.a === node.id, straight: -(d.x * inDir.x + d.z * inDir.z) > 0.8 });
     }
-    if (!opts.length) return back;
-    if (opts.includes(c.dir) && R() < 0.55) return c.dir;
-    return opts[Math.floor(R() * opts.length)];
+    if (!opts.length) return { e: c.e, fwd: !c.fwd, straight: false, uturn: true };
+    const st = opts.find((o) => o.straight);
+    if (st && this.R() < 0.55) return st;
+    return opts[Math.floor(this.R() * opts.length)];
   }
 
   update(dt, player) {
+    const net = this.net;
     for (const c of this.cars) {
       if (!c.group.visible) continue;
-      const [dx, dz] = DIRS[c.dir];
-      const nx = nodeX(c.i);
-      const nz = nodeX(c.j);
-      const s = (c.x - nx) * dx + (c.z - nz) * dz;
-      const ti = c.i + dx;
-      const tj = c.j + dz;
-      const crossW = dx !== 0 ? roadW(ti) : roadW(tj);
-      const remain = 100 - s;
-      if (c.next < 0 && remain < 40) c.next = this.pickTurn(c, ti, tj);
-      if (remain < crossW / 2 + (c.next === c.dir ? 0 : 3)) {
-        c.i = ti; c.j = tj;
-        c.dir = c.next;
-        c.next = -1;
+      const e = c.e;
+      const node = net.nodes[c.fwd ? e.b : e.a];
+      const stop = node.stop.get(e.id) ?? 2;
+      const remain = e.len - c.s;
+      if (!c.next && remain < 40) c.next = this.pickNext(c, node);
+      if (remain < stop + (c.next && !c.next.straight ? 3 : 0)) {
+        // into the next road: measure where we are along it
+        const n = c.next;
+        const p0 = net.at(n.e, n.fwd, 0);
+        c.e = n.e; c.fwd = n.fwd;
+        c.s = (c.x - p0.x) * p0.tx + (c.z - p0.z) * p0.tz;
+        c.next = null;
         continue;
       }
       // steer toward a point ahead on the lane line
       const off = this.laneFor(c);
-      const look = s + 6 + c.speed * 0.4;
-      const tx = nx + dx * look + dz * off;
-      const tz = nz + dz * look - dx * off;
+      const look = net.at(e, c.fwd, c.s + 6 + c.speed * 0.4);
+      const tx = look.x + look.tz * off;
+      const tz = look.z - look.tx * off;
       const want = Math.atan2(tx - c.x, tz - c.z);
       let dh = want - c.h;
       while (dh > Math.PI) dh -= Math.PI * 2;
@@ -189,12 +194,12 @@ export class Traffic {
 
       // speed: slow for turns and for anything in front
       let target = c.top;
-      if (c.next >= 0 && c.next !== c.dir && remain < 30) target = Math.min(target, 6);
+      if (c.next && !c.next.straight && remain < 30) target = Math.min(target, 6);
       if (Math.abs(dh) > 0.3) target = Math.min(target, 5);
       // traffic lights: stop at the line on red, and on yellow unless already too close to stop
-      if (this.lights) {
-        const st = this.lights.state(ti, tj, dx !== 0 ? 'ew' : 'ns');
-        const toLine = remain - crossW / 2 - 3.6;
+      if (this.lights && node.signal) {
+        const st = this.lights.stateFor(node, e.id);
+        const toLine = remain - stop - (c.next && !c.next.straight ? 4.4 : 3.6); // turning cars commit a little earlier
         if (st !== 'g' && toLine > -0.5 && toLine < 40 && !(st === 'y' && toLine < c.speed * 0.9)) {
           target = Math.min(target, Math.max(0, toLine) * 0.7);
         }
@@ -222,6 +227,8 @@ export class Traffic {
       if (c.speed < 0) c.speed = 0;
       c.x += fx * c.speed * dt;
       c.z += fz * c.speed * dt;
+      const tan = net.at(e, c.fwd, c.s);
+      c.s += c.speed * dt * (fx * tan.tx + fz * tan.tz); // progress along the road
       c.group.position.set(c.x, 0, c.z);
       c.group.rotation.y = c.h;
       if (c.type === 'moto') c.group.userData.lean.rotation.z = -Math.max(-0.4, Math.min(0.4, dh * 1.2));
@@ -267,4 +274,3 @@ export class Traffic {
   }
 }
 
-export { isMain };

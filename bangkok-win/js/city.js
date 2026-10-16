@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import {
   N, BLOCK, HALF, SIDEWALK, CURB, nodeX, isMain, roadW, MEDIAN, BTS_ROW, BTS_Y, BTS_STATIONS,
-  districtOf, NS_ROADS, EW_ROADS, blockRect, rng,
+  districtOf, NS_ROADS, EW_ROADS, blockRect, rng, laneOffsets, DISTRICTS,
 } from './config.js';
 import { GeoBuilder } from './geo.js';
+import { RoadNet } from './roadnet.js';
 import { Colliders } from './physics.js';
 import { windowTexture, shopTexture, glassTexture, asphaltTexture, paveTexture, poolTexture, signAtlas, soiAtlas, labelTexture, SIGN_TEXTS, CHINA_SIGNS } from './textures.js';
 import { makePerson, pose } from './models.js';
@@ -814,5 +815,20 @@ export function buildCity(scene, { shadows = true } = {}) {
     M.soi.color.setScalar(0.85 + 0.15 * dusk);
   }
 
-  return { colliders: col, lots, pois, stands, groundHeight, placeName, updateTrain, people, setNight };
+  // ---- the road graph (every system that drives or routes uses this) ----
+  const net = new RoadNet();
+  const grid = [];
+  for (let i = 0; i <= N; i++) { grid.push([]); for (let j = 0; j <= N; j++) grid[i].push(net.addNode(nodeX(i), nodeX(j), { signal: true })); }
+  for (let i = 0; i <= N; i++) for (let j = 0; j <= N; j++) {
+    if (i < N) { const a = grid[i][j]; const b = grid[i + 1][j]; net.addEdge(a, b, [{ x: a.x, z: a.z }, { x: b.x, z: b.z }], { width: roadW(j), lanes: laneOffsets(j), main: isMain(j), name: EW_ROADS[j], median: isMain(j) ? MEDIAN : 0 }); }
+    if (j < N) { const a = grid[i][j]; const b = grid[i][j + 1]; net.addEdge(a, b, [{ x: a.x, z: a.z }, { x: b.x, z: b.z }], { width: roadW(i), lanes: laneOffsets(i), main: isMain(i), name: NS_ROADS[i], median: isMain(i) ? MEDIAN : 0 }); }
+  }
+  net.finalize();
+  const third = (N * BLOCK) / 3;
+  const districtLabels = DISTRICTS.flatMap((row, b) => row.map((name, a) => ({ name, x: -HALF + third * (a + 0.5), z: -HALF + third * (b + 0.5) })));
+  const bounds = { x0: -HALF - 160, z0: -HALF - 160, x1: HALF + 160, z1: HALF + 160 };
+
+  const mapPolys = [{ color: '#4c7f95', pts: [{ x: bounds.x0, z: bounds.z0 }, { x: -HALF - 70, z: bounds.z0 }, { x: -HALF - 70, z: bounds.z1 }, { x: bounds.x0, z: bounds.z1 }] }];
+
+  return { style: 'grid', colliders: col, lots, pois, stands, groundHeight, placeName, updateTrain, people, setNight, net, districtLabels, bounds, districtOf, mapPolys };
 }

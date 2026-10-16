@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { HALF } from './config.js';
 
 // Bangkok weather: mostly hot and hazy, with tropical downpours that roll in and out.
 // `rain` goes 0..1 smoothly; everything else (sky, fog, grip, fares, sound) reads it.
@@ -7,7 +6,7 @@ const STREAKS = 2600;
 const BOX = { x: 70, y: 32, z: 70 };
 
 export class Weather {
-  constructor(scene) {
+  constructor(scene, bounds, wetY = 0.015) {
     this.rain = 0;
     this.target = 0;
     this.mode = 'auto'; // 'auto' | 'clear' | 'rain'
@@ -29,12 +28,12 @@ export class Weather {
     this.fall = 0;
 
     // wet road: a glossy film over the asphalt that reflects the sky and the street lights
-    const size = HALF * 2 + 900;
+    const w = bounds.x1 - bounds.x0 + 1200; const d = bounds.z1 - bounds.z0 + 1200;
     this.wet = new THREE.Mesh(
-      new THREE.PlaneGeometry(size, size).rotateX(-Math.PI / 2),
+      new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2),
       new THREE.MeshStandardMaterial({ color: 0x1a1c20, roughness: 0.12, metalness: 0.0, transparent: true, opacity: 0, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
     );
-    this.wet.position.y = 0.015;
+    this.wet.position.set((bounds.x0 + bounds.x1) / 2, wetY, (bounds.z0 + bounds.z1) / 2);
     this.wet.receiveShadow = true;
     scene.add(this.wet);
   }

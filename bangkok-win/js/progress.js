@@ -24,7 +24,7 @@ export const UNLOCKS = [
   { level: 4, icon: '🛍', text: 'แม่ค้าเรียกรถ (ของเยอะ ขับนิ่มๆ)' },
   { level: 8, icon: '💸', text: 'ค่าโดยสารเพิ่ม 10% (ลูกค้าประจำ)' },
   { level: 12, icon: '💸', text: 'ค่าโดยสารเพิ่มอีก 10%' },
-  { level: 15, icon: '🔧', text: 'อาชีพช่าง: จูนรถเอง', soon: true },
+  { level: 15, icon: '🔧', text: 'อาชีพช่าง: เปิดอู่รับซ่อมรถคนอื่น หารายได้เพิ่ม', soon: true },
   { level: 20, icon: '🍜', text: 'อาชีพไรเดอร์ส่งอาหาร', soon: true },
 ].sort((a, b) => a.level - b.level);
 

@@ -46,6 +46,28 @@ export class Sfx {
     this.skidGain.gain.setTargetAtTime(this.muted ? 0 : bike.skid * 0.1, t, 0.05);
   }
 
+  // Rain on the city: low-passed noise, louder with heavier rain.
+  rain(level) {
+    if (!this.ctx) return;
+    if (!this.rainGain) {
+      const ctx = this.ctx;
+      const buf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 1400;
+      this.rainGain = ctx.createGain();
+      this.rainGain.gain.value = 0;
+      src.connect(lp); lp.connect(this.rainGain); this.rainGain.connect(this.master);
+      src.start();
+    }
+    this.rainGain.gain.setTargetAtTime(this.muted ? 0 : level * 0.12, this.ctx.currentTime, 0.3);
+  }
+
   // Looping noise through a band-pass: tyre squeal under hard braking.
   makeSkid() {
     const ctx = this.ctx;
@@ -87,6 +109,11 @@ export class Sfx {
   carHorn() { this.tone(330, 0.5, 'sawtooth', 0.08); this.tone(392, 0.5, 'sawtooth', 0.06); }
   ding() { this.tone(880, 0.25, 'sine', 0.25); this.tone(1320, 0.4, 'sine', 0.2, 0.12); }
   levelUp() { [523, 659, 784, 1046, 1318].forEach((f, i) => this.tone(f, 0.28, 'triangle', 0.22, i * 0.09)); }
+  phone() { [1318, 1568, 1318, 1568].forEach((f, i) => this.tone(f, 0.12, 'sine', 0.15, i * 0.16)); }
+  countdown(go) { this.tone(go ? 880 : 440, go ? 0.5 : 0.18, 'square', 0.12); }
+  fanfare() { [392, 523, 659, 784, 659, 784, 1046].forEach((f, i) => this.tone(f, 0.22, 'triangle', 0.2, i * 0.11)); }
+  lose() { [392, 349, 311, 262].forEach((f, i) => this.tone(f, 0.3, 'triangle', 0.18, i * 0.18)); }
+  whistle() { this.tone(2400, 0.25, 'sine', 0.12); this.tone(2600, 0.35, 'sine', 0.1, 0.28); }
   cash() { [1046, 1318, 1568, 2093].forEach((f, i) => this.tone(f, 0.2, 'triangle', 0.2, i * 0.07)); }
 
   crash(power) {

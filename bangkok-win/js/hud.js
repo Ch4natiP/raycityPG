@@ -65,13 +65,19 @@ export class Hud {
       g.stroke();
     } else {
       for (const w of jobs.waiting) {
-        g.fillStyle = '#2ecc71';
+        g.fillStyle = w.customer ? '#ff4fa3' : '#2ecc71';
         g.strokeStyle = '#fff';
         g.lineWidth = 2;
         g.beginPath();
         g.arc(tx(w.poi.x), tz(w.poi.z), 5, 0, Math.PI * 2);
         g.fill();
         g.stroke();
+      }
+    }
+    if (this.battles) {
+      for (const r of this.battles.rivals) {
+        g.fillStyle = '#9b59b6'; g.strokeStyle = '#fff'; g.lineWidth = 2;
+        g.beginPath(); g.arc(tx(r.x), tz(r.z), 5, 0, Math.PI * 2); g.fill(); g.stroke();
       }
     }
     g.restore();
@@ -90,7 +96,8 @@ export class Hud {
       g.fill();
       g.stroke();
     };
-    if (jobs.active) pin(jobs.active.dest.x, jobs.active.dest.z, '#ffc400');
+    if (this.battles?.active) pin(this.battles.active.fin.x, this.battles.active.fin.z, '#ff2a2a');
+    else if (jobs.active) pin(jobs.active.dest.x, jobs.active.dest.z, '#ffc400');
     else {
       let best = null;
       for (const w of jobs.waiting) { const d = Math.hypot(w.poi.x - player.x, w.poi.z - player.z); if (!best || d < best.d) best = { d, w }; }
@@ -184,28 +191,39 @@ export class Hud {
 
   showGarageHint(show) { $('garage-hint').classList.toggle('show', show); }
 
-  openGarage(save, onPick) {
-    const el = $('garage');
-    const list = $('garage-list');
-    list.innerHTML = '';
-    for (const b of BIKES) {
-      const owned = save.owned.includes(b.id);
-      const lockedByLevel = !owned && (save.level || 1) < b.level;
-      const cur = save.bike === b.id;
-      const row = document.createElement('div');
-      row.className = 'bike-row';
-      row.innerHTML = `<span class="sw" style="background:#${b.color.toString(16).padStart(6, '0')}"></span>` +
-        `<span class="nm">${b.name}<small>ความเร็วสูงสุด ${Math.round(b.top * 3.6)} กม./ชม.</small></span>`;
-      const btn = document.createElement('button');
-      btn.textContent = cur ? 'ใช้อยู่' : owned ? 'ใช้คันนี้' : lockedByLevel ? `🔒 Lv.${b.level}` : `ซื้อ ฿${b.price.toLocaleString('th-TH')}`;
-      btn.disabled = cur || lockedByLevel || (!owned && save.money < b.price);
-      btn.onclick = () => { onPick(b); this.openGarage(save, onPick); };
-      row.appendChild(btn);
-      list.appendChild(row);
-    }
-    el.classList.add('show');
+  battleHint(show) {
+    $('battle-hint').classList.toggle('show', show);
+    $('touch-battle').classList.toggle('show', show);
   }
 
-  closeGarage() { $('garage').classList.remove('show'); }
-  get garageOpen() { return $('garage').classList.contains('show'); }
+  status(text) { if (text !== this.lastStatus) { $('status').textContent = text; this.lastStatus = text; } }
+
+  // parts below 25 %: blinking tags, plus a toast the first time each one gets there
+  warnings(list) {
+    this.warned ??= new Set();
+    const ids = new Set(list.map((p) => p.id));
+    for (const p of list) if (!this.warned.has(p.id)) this.toast(`${p.icon} ${p.name}เหลือ ${Math.round(p.cond * 100)}% ${p.tip} · ซ่อมได้ที่อู่ซุ้มวิน`, '🔧 รถต้องซ่อม');
+    this.warned = ids;
+    $('warn').innerHTML = list.slice(0, 4).map((p) => `<span>${p.icon} ${p.name} ${Math.round(p.cond * 100)}%</span>`).join('');
+  }
+
+  countdown(t) {
+    const el = $('countdown');
+    el.textContent = t;
+    clearTimeout(this.cdT);
+    this.cdT = setTimeout(() => { el.textContent = ''; }, t.length > 2 ? 1600 : 900);
+  }
+
+  battle(a) {
+    const box = $('battle');
+    box.hidden = !a;
+    $('job').style.visibility = a ? 'hidden' : '';
+    if (!a) return;
+    $('bt-title').textContent = `⚔️ VS ${a.r.name} → ${a.fin.name}`;
+    $('bt-rname').textContent = a.r.name;
+    $('bt-me').style.width = `${a.me}%`;
+    $('bt-them').style.width = `${a.r.gauge}%`;
+    $('bt-dist').textContent = a.countdown > 0 ? 'เตรียมตัว...' : `${Math.round(a.mine ?? 0)} ม. ${a.mine < a.theirs ? '🥇 นำอยู่' : '🥈 ตามหลัง'}`;
+  }
+
 }

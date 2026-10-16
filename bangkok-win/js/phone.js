@@ -1,5 +1,8 @@
 import { BIKES, HALF } from './config.js';
 import { xpToNext, MAX_LEVEL, UNLOCKS } from './progress.js';
+import { CUSTOMERS, RARITY, bondOf } from './customers.js';
+import { RIVALS, battleReward } from './battle.js';
+import { PARTS, bikeState } from './garage.js';
 
 // The rider's phone: a home screen with apps. Opening it pauses the game.
 // New apps are one entry in APPS plus a render function.
@@ -8,6 +11,9 @@ const baht = (n) => `฿${Math.round(n).toLocaleString('th-TH')}`;
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 const APPS = [
+  { id: 'missions', icon: '🎯', label: 'ภารกิจ', color: '#e74c3c' },
+  { id: 'customers', icon: '📒', label: 'ลูกค้า', color: '#ff4fa3' },
+  { id: 'battle', icon: '⚔️', label: 'Battle', color: '#111827' },
   { id: 'profile', icon: '👤', label: 'โปรไฟล์', color: '#ff7a00' },
   { id: 'map', icon: '🗺️', label: 'แผนที่', color: '#2e86de' },
   { id: 'history', icon: '🧾', label: 'ประวัติงาน', color: '#27ae60' },
@@ -65,7 +71,8 @@ export class Phone {
     const a = jobs.active;
     this.screen.innerHTML = `
       <div class="ph-card"><div class="s">เงินในกระเป๋า</div><div class="m">${baht(save.money)}</div>
-        <div class="s">Lv.${save.level} · ${save.trips} เที่ยว · ${this.g.atmo.clock} น.</div></div>
+        <div class="s">Lv.${save.level} · ${save.trips} เที่ยว · ${this.g.atmo.clock} น.</div>
+        <div class="s">${this.g.weather.label}${this.g.rush() ? ' · 🚦 ช่วงเร่งด่วน' : ''}</div></div>
       <div class="ph-card" style="margin-top:10px"><div class="s">${a ? 'งานตอนนี้' : 'สถานะ'}</div>
         <div style="font-weight:700">${a ? `${esc(a.name)} → ${esc(a.dest.name)}` : `ว่าง · มีคนรอเรียกรถ ${jobs.waiting.length} คน`}</div></div>
       <div class="ph-apps">${APPS.map((p) => `<button class="ph-app" data-app="${p.id}"><span class="ic" style="background:${p.color}">${p.icon}</span><span class="lb">${p.label}</span></button>`).join('')}</div>`;
@@ -97,7 +104,8 @@ export class Phone {
     const { hud, city, jobs, player } = this.g;
     this.screen.innerHTML = `<div class="ph-title">แผนที่กรุงเทพฯ</div><canvas class="ph-map" id="ph-map" width="640" height="640"></canvas>
       <div class="ph-legend"><span><i style="background:#ff3b30"></i>เรา</span><span><i style="background:#2ecc71"></i>คนรอเรียกรถ</span>
-        <span><i style="background:#ffc400"></i>จุดส่ง</span><span><i style="background:#ff7a00"></i>ซุ้มวิน</span></div>`;
+        <span><i style="background:#ffc400"></i>จุดส่ง</span><span><i style="background:#ff7a00"></i>ซุ้มวิน</span>
+        <span><i style="background:#ff4fa3"></i>ลูกค้าในสมุด</span><span><i style="background:#9b59b6"></i>คู่แข่ง Battle</span></div>`;
     const c = $('ph-map');
     const g = c.getContext('2d');
     const W = c.width;
@@ -134,7 +142,9 @@ export class Phone {
       jobs.active.route.pts.forEach(([x, z], i) => (i ? g.lineTo(tx(x), tz(z)) : g.moveTo(tx(x), tz(z))));
       g.stroke();
       dot(jobs.active.dest.x, jobs.active.dest.z, '#ffc400', 13);
-    } else for (const w of jobs.waiting) dot(w.poi.x, w.poi.z, '#2ecc71');
+    } else for (const w of jobs.waiting) dot(w.poi.x, w.poi.z, w.customer ? '#ff4fa3' : '#2ecc71');
+    for (const r of this.g.battles.rivals) dot(r.x, r.z, '#9b59b6', 8);
+    if (this.g.battles.active) dot(this.g.battles.active.fin.x, this.g.battles.active.fin.z, '#ff2a2a', 13);
     // player arrow
     g.save();
     g.translate(tx(player.x), tz(player.z));
@@ -164,8 +174,8 @@ export class Phone {
       const cur = save.bike === b.id;
       const chip = cur ? '<span class="ph-chip cur">ใช้อยู่</span>' : owned ? '<span class="ph-chip ok">มีแล้ว</span>' : save.level < b.level ? `<span class="ph-chip">🔒 Lv.${b.level}</span>` : `<span class="ph-chip">${baht(b.price)}</span>`;
       return `<div class="ph-row${!owned && save.level < b.level ? ' locked' : ''}"><span class="em" style="color:#${b.color.toString(16).padStart(6, '0')}">●</span>
-        <div class="grow"><div class="t">${esc(b.name)}</div><div class="d">สูงสุด ${Math.round(b.top * 3.6)} กม./ชม. · อัตราเร่ง ${b.accel}</div></div>${chip}</div>`;
-    }).join('')}</div><p style="font-size:12px;color:#6b6f78;margin-top:12px">ซื้อหรือเปลี่ยนรถได้ที่ซุ้มวิน (จอดใกล้ซุ้มแล้วกด G)</p>`;
+        <div class="grow"><div class="t">${esc(b.name)}</div><div class="d">สูงสุด ${Math.round(b.top * 3.6)} กม./ชม. · อัตราเร่ง ${b.accel}${owned ? ` · สภาพ ${Math.round(PARTS.reduce((t, p) => t + bikeState(save, b.id).parts[p.id], 0) / PARTS.length * 100)}%` : ''}</div></div>${chip}</div>`;
+    }).join('')}</div><p style="font-size:12px;color:#6b6f78;margin-top:12px">ซื้อ ซ่อม แต่ง หรือเปลี่ยนรถได้ที่อู่ซุ้มวิน (จอดใกล้ซุ้มแล้วกด G)</p>`;
   }
 
   app_unlocks() {
@@ -177,16 +187,62 @@ export class Phone {
     }).join('')}</div><p style="font-size:12px;color:#6b6f78;margin-top:12px">ทุกครั้งที่เลเวลอัป ได้โบนัสเงิน 50 บาท × เลเวลใหม่</p>`;
   }
 
+  app_missions() {
+    const ms = this.g.missions.list;
+    this.screen.innerHTML = `<div class="ph-title">ภารกิจวันนี้</div><div class="ph-list">${ms.map((m) => {
+      const pct = Math.round((m.progress / m.target) * 100);
+      const prog = m.id === 'km' ? `${m.progress.toFixed(1)} / ${m.target}` : m.id === 'earn' ? `${baht(m.progress)} / ${baht(m.target)}` : `${m.progress} / ${m.target}`;
+      return `<div class="ph-row${m.done ? '' : ''}"><span class="em">${m.done ? '✅' : '🎯'}</span><div class="grow"><div class="t">${esc(m.text)}</div>
+        <div class="ph-xp"><div style="width:${pct}%"></div></div><div class="d">${prog} · รางวัล ${baht(m.money)} + ${m.xp} XP</div></div></div>`;
+    }).join('')}</div><p style="font-size:12px;color:#6b6f78;margin-top:12px">ภารกิจใหม่ทุกเที่ยงคืน (เวลาในเกม) ทำเสร็จได้รางวัลทันที</p>`;
+  }
+
+  app_customers() {
+    const book = this.g.save.customers || {};
+    const met = CUSTOMERS.filter((c) => book[c.id]);
+    this.screen.innerHTML = `<div class="ph-title">สมุดลูกค้า</div><div class="ph-card" style="background:#fff;color:#1b1d22;backdrop-filter:none">
+      <b>พบแล้ว ${met.length} / ${CUSTOMERS.length} คน</b><div class="ph-xp"><div style="width:${Math.round(met.length / CUSTOMERS.length * 100)}%"></div></div>
+      <div style="font-size:12px;color:#6b6f78">ส่งดีๆ ได้หัวใจ 💖 · 3 ดวง = ขาประจำ (โทรเรียกเรา, ค่าโดยสาร +20%) · 6 = เพื่อนสนิท (+40%) · 10 = VIP (+60%)</div></div>
+      <div class="ph-list" style="margin-top:10px">${CUSTOMERS.map((c) => {
+        const e = book[c.id];
+        const rar = RARITY[c.rarity];
+        if (!e) return `<div class="ph-row locked"><span class="em">❔</span><div class="grow"><div class="t">???</div><div class="d">ลูกค้า${rar.label} · แถว${esc(c.home)}${this.g.save.level < rar.level ? ` · เจอได้ตั้งแต่ Lv.${rar.level}` : ''}</div></div><span class="ph-chip" style="color:${rar.color}">${rar.label}</span></div>`;
+        const b = bondOf(e.hearts);
+        return `<div class="ph-row"><span class="em">${c.emoji}</span><div class="grow"><div class="t">${esc(c.name)} <span class="d">· ${esc(c.job)}</span></div>
+          <div class="d">${'💖'.repeat(Math.min(5, Math.ceil(e.hearts / 2)))}${'🤍'.repeat(5 - Math.min(5, Math.ceil(e.hearts / 2)))} ${b.label} · ${e.rides} เที่ยว · ทิปสูงสุด ${baht(e.bestTip)}</div>
+          <div class="d">ชอบ: ${esc(c.likes)}</div></div><span class="ph-chip" style="color:${rar.color}">${rar.label}</span></div>`;
+      }).join('')}</div>`;
+  }
+
+  app_battle() {
+    const { save, battles } = this.g;
+    const rec = save.battle;
+    this.screen.innerHTML = `<div class="ph-title">Battle</div><div class="ph-card" style="background:#111827;backdrop-filter:none">
+      <div class="s">สถิติ</div><div class="m">${rec.wins}W · ${rec.losses}L</div>
+      <div class="s">ขับเข้าไปใกล้วินคู่แข่ง (ป้าย ⚔️ เหนือหัว) แล้วกด B · ใครตามหลัง เกจลดเรื่อยๆ ถึงเส้นชัยก่อนหรือเกจอีกฝ่ายหมดก่อน = ชนะ</div></div>
+      <div class="ph-list" style="margin-top:10px">${RIVALS.map((r) => {
+        const st = rec.rivals[r.id] || { w: 0, l: 0 };
+        const live = battles.rivals.find((x) => x.id === r.id);
+        const d = Math.hypot(live.x - this.g.player.x, live.z - this.g.player.z);
+        const rw = battleReward(r, st.w === 0);
+        return `<div class="ph-row"><span class="em">🏍️</span><div class="grow"><div class="t">${esc(r.name)} <span class="ph-chip">Lv.${r.level}</span></div>
+          <div class="d">"${esc(r.line)}" · ห่าง ${d > 1000 ? (d / 1000).toFixed(1) + ' กม.' : Math.round(d) + ' ม.'}</div>
+          <div class="d">ชนะ ${st.w} แพ้ ${st.l} · รางวัล ${baht(rw.money)} + ${rw.xp} XP${st.w === 0 ? ' (ชนะครั้งแรก x2)' : ''}</div></div></div>`;
+      }).join('')}</div><p style="font-size:12px;color:#6b6f78;margin-top:12px">คู่แข่งเป็นจุดสีม่วงบนแผนที่</p>`;
+  }
+
   app_settings() {
     const { save, sfx } = this.g;
     const q = save.settings.quality;
     this.screen.innerHTML = `<div class="ph-title">ตั้งค่า</div><div class="ph-list">
       <div class="ph-row"><div class="grow"><div class="t">เสียง</div></div><div class="ph-seg"><button data-snd="on" class="${sfx.muted ? '' : 'on'}">เปิด</button><button data-snd="off" class="${sfx.muted ? 'on' : ''}">ปิด</button></div></div>
       <div class="ph-row"><div class="grow"><div class="t">คุณภาพภาพ</div><div class="d">ต่ำ = ปิดเงาและแสงเรือง ลื่นขึ้น</div></div><div class="ph-seg"><button data-q="high" class="${q === 'high' ? 'on' : ''}">สูง</button><button data-q="low" class="${q === 'low' ? 'on' : ''}">ต่ำ</button></div></div>
+      <div class="ph-row"><div class="grow"><div class="t">สภาพอากาศ</div><div class="d">${this.g.weather.label}</div></div><div class="ph-seg"><button data-wx="auto" class="${this.g.weather.mode === 'auto' ? 'on' : ''}">อัตโนมัติ</button><button data-wx="clear" class="${this.g.weather.mode === 'clear' ? 'on' : ''}">แดด</button><button data-wx="rain" class="${this.g.weather.mode === 'rain' ? 'on' : ''}">ฝน</button></div></div>
       <div class="ph-row"><div class="grow"><div class="t">เวลา ${this.g.atmo.clock} น.</div><div class="d">เลื่อนเวลาไป 1 ชั่วโมง (เหมือนกด T)</div></div><button class="ph-btn ghost" id="ph-skip">+1 ชม.</button></div>
       <div class="ph-row"><div class="grow"><div class="t">เริ่มเกมใหม่</div><div class="d" id="ph-reset-d">ลบเงิน เลเวล และรถทั้งหมด</div></div><button class="ph-btn danger" id="ph-reset">ลบ</button></div>
     </div>`;
     this.screen.querySelectorAll('[data-snd]').forEach((b) => { b.onclick = () => { if ((b.dataset.snd === 'off') !== sfx.muted) sfx.toggle(); this.app_settings(); }; });
+    this.screen.querySelectorAll('[data-wx]').forEach((b) => { b.onclick = () => { this.g.weather.setMode(b.dataset.wx); this.app_settings(); }; });
     this.screen.querySelectorAll('[data-q]').forEach((b) => { b.onclick = () => { this.g.onQuality(b.dataset.q); this.app_settings(); }; });
     $('ph-skip').onclick = () => { this.g.atmo.skip(1); $('ph-clock').textContent = this.g.atmo.clock; this.app_settings(); };
     const reset = $('ph-reset');

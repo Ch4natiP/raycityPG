@@ -18,6 +18,7 @@ const SUN_HIGH = new THREE.Color(1.0, 0.96, 0.9);
 const MOON = new THREE.Color(0.62, 0.72, 1.0);
 const HAZE = new THREE.Color(0.7, 0.75, 0.8);          // Bangkok smog, grey-blue
 const CITY_GLOW = new THREE.Color(0.11, 0.085, 0.07);  // light pollution on the night haze
+const RAIN_GREY = new THREE.Color(0.42, 0.45, 0.48);
 
 export class Atmosphere {
   constructor(scene, renderer, { mobile = false, hour = 17 } = {}) {
@@ -26,6 +27,8 @@ export class Atmosphere {
     this.mobile = mobile;
     this.hour = hour;
     this.night = 0;
+    this.rain = 0; // 0..1, set by the weather
+    this.day = 0;  // days since the game started (the clock wraps at midnight)
     this.sunDir = new THREE.Vector3();
     this.lightDir = new THREE.Vector3();
 
@@ -97,10 +100,12 @@ export class Atmosphere {
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   }
 
-  skip(hours) { this.hour = (this.hour + hours) % 24; this.envTimer = 0; }
+  skip(hours) { const h = this.hour + hours; if (h >= 24) this.day++; this.hour = h % 24; this.envTimer = 0; }
 
   update(dt, focus, camera, force = false) {
+    const before = this.hour;
     this.hour = (this.hour + dt / HOUR_SECONDS) % 24;
+    if (this.hour < before) this.day++;
     // sun path: rises in the east (+x) at 06:00, high in the sky at noon (a little to the south), sets at 18:00
     const th = ((this.hour - 6) / 12) * Math.PI;
     this.sunDir.set(Math.cos(th), Math.sin(th) * 0.97, 0.24).normalize();
@@ -112,7 +117,7 @@ export class Atmosphere {
     for (const s of [this.sky, this.envSky]) {
       const u = s.material.uniforms;
       u.sunPosition.value.copy(this.sunDir);
-      u.turbidity.value = 6 + dusk * 5;     // hazy city air, thicker at sunset
+      u.turbidity.value = 6 + dusk * 5 + this.rain * 10; // hazy city air, thicker at sunset and under rain clouds
       u.rayleigh.value = 2.0 + dusk * 1.2;
       u.mieCoefficient.value = 0.009;
       u.mieDirectionalG.value = 0.86;
@@ -132,7 +137,8 @@ export class Atmosphere {
     const sky = lerpC(lerpC(SKY_NIGHT, SKY_DUSK, smooth(-0.15, 0.0, e)), SKY_DAY, smooth(0.05, 0.4, e));
     this.hemi.color.copy(sky);
     this.hemi.groundColor.copy(lerpC(GROUND_NIGHT, GROUND_DAY, day));
-    this.hemi.intensity = 0.85 + 0.8 * day + 0.8 * dusk; // the sky still lights the shade at dusk and at night
+    this.hemi.intensity = (0.85 + 0.8 * day + 0.8 * dusk) * (1 - 0.2 * this.rain); // the sky still lights the shade at dusk and at night
+    this.sun.intensity *= 1 - 0.8 * this.rain; // clouds hide the sun
 
     // eyes adapt: open up the exposure at night
     this.renderer.toneMappingExposure = 0.78 + 0.22 * this.night + 0.2 * dusk;
@@ -143,9 +149,9 @@ export class Atmosphere {
       this.envTimer = 4;
       this.refreshEnvironment();
     }
-    const fog = lerpC(this.horizon.clone().lerp(HAZE, 0.25 * day), CITY_GLOW, smooth(0.3, 1, this.night));
+    const fog = lerpC(this.horizon.clone().lerp(HAZE, 0.25 * day), CITY_GLOW, smooth(0.3, 1, this.night)).lerp(RAIN_GREY.clone().multiplyScalar(0.25 + 0.75 * day), this.rain * 0.8);
     this.scene.fog.color.copy(fog);
-    this.scene.fog.density = 0.0017 + 0.0012 * this.night + 0.0006 * dusk;
+    this.scene.fog.density = 0.0017 + 0.0012 * this.night + 0.0006 * dusk + 0.0045 * this.rain;
     this.dome.material.uniforms.strength.value = this.night;
 
     this.stars.material.opacity = smooth(0.75, 1, this.night) * 0.85;

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BIKES, districtOf, nodeX, N, HALF, BLOCK } from './config.js';
+import { BIKES, districtOf, nodeX, N, HALF, BLOCK, roadW } from './config.js';
 import { buildCity } from './city.js';
 import { Traffic } from './traffic.js';
 import { Jobs } from './jobs.js';
@@ -9,7 +9,14 @@ import { Sfx } from './audio.js';
 import { Bike } from './bike.js';
 import { Atmosphere } from './sky.js';
 import { Phone } from './phone.js';
-import { migrate } from './progress.js';
+import { migrate, addXp } from './progress.js';
+import { TrafficLights } from './lights.js';
+import { Weather } from './weather.js';
+import { Missions } from './missions.js';
+import { CustomerBook } from './customers.js';
+import { Battles } from './battle.js';
+import { Shop } from './shop.js';
+import { effective, wear, damage, warnings } from './garage.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -50,19 +57,40 @@ if (!mobile) {
 }
 
 const city = buildCity(scene, { shadows: !mobile });
-const traffic = new Traffic(scene, mobile ? 45 : 75);
+const traffic = new Traffic(scene, mobile ? 60 : 120);
+const lights = new TrafficLights(scene, city.colliders);
+traffic.lights = lights;
+const weather = new Weather(scene);
 const hud = new Hud(city);
 const sfx = new Sfx();
 const input = new Input();
 
 // ---- player ----
-const bikeSpec = () => BIKES.find((b) => b.id === save.bike) || BIKES[0];
+// the bike's numbers come from its parts, upgrades and the weather (garage.js)
+const bikeSpec = () => effective(save, save.bike, weather.rain);
 const player = new Bike(scene, bikeSpec());
+player.setSpec(bikeSpec());
 const startStand = city.stands[0];
 player.place(startStand.x, startStand.z, Math.PI / 2);
 const jobs = new Jobs(scene, city, hud, sfx, save);
 jobs.clock = () => atmo.clock;
 jobs.onLevelUp = (up) => { hud.levelUp(up); sfx.levelUp(); };
+const book = new CustomerBook(save);
+jobs.book = book;
+jobs.onCall = (c) => { sfx.phone(); hud.toast(`📞 ${c.emoji} ${c.name} โทรมา: "${c.call}" (จุดสีชมพูบนแผนที่)`, 'สายเข้า'); };
+const missions = new Missions(save, (m) => {
+  save.money += m.money;
+  save.earned += m.money;
+  for (const up of addXp(save, m.xp)) { hud.levelUp(up); sfx.levelUp(); }
+  hud.toast(`ภารกิจสำเร็จ: ${m.text} · +฿${m.money} +${m.xp} XP`, '🎯 ภารกิจ');
+  sfx.cash();
+  save.write();
+  hud.stats(save);
+});
+jobs.emit = (type, data) => missions.event(type, data);
+const battles = new Battles(scene, city, traffic, save);
+hud.battles = battles;
+const shop = new Shop({ save, sfx, onChange: () => { player.setSpec(bikeSpec()); hud.stats(save); } });
 hud.stats(save);
 const world = { colliders: city.colliders, traffic, groundHeight: city.groundHeight };
 
@@ -79,39 +107,37 @@ function respawn() {
   const j = Math.max(0, Math.min(N - 1, Math.floor((player.z + HALF) / BLOCK)));
   player.place(nodeX(i) + 4, nodeX(j) + BLOCK / 2, 0);
   jobs.cancel(player);
+  if (battles.active) { battles.cancel(); jobs.locked = false; hud.toast('ยกเลิก Battle', '⚔️'); }
 }
 
-// ---- garage ----
-function pickBike(b) {
-  if (!save.owned.includes(b.id)) {
-    if (save.money < b.price || save.level < b.level) return;
-    save.money -= b.price;
-    save.owned.push(b.id);
-    sfx.cash();
-  }
-  save.bike = b.id;
-  player.setSpec(b);
-  save.write();
-  hud.stats(save);
-}
-document.getElementById('garage-close').onclick = () => hud.closeGarage();
-document.getElementById('garage-hint').onclick = () => hud.openGarage(save, pickBike);
+// ---- workshop ----
+document.getElementById('garage-hint').onclick = () => shop.open();
 
 // ---- step ----
 let crashCooldown = 0;
+let inJunction = false;
+let kmAcc = 0;
 let placeTimer = 0;
 let shake = 0;
 
 function step(dt) {
-  const controls = { throttle: input.throttle, brake: input.brake, handbrake: input.handbrake, steer: input.steer, boost: input.boost };
+  let controls = { throttle: input.throttle, brake: input.brake, handbrake: input.handbrake, steer: input.steer, boost: input.boost };
+  if (battles.active && battles.active.countdown > 0) controls = { throttle: 0, brake: 0, handbrake: 1, steer: 0, boost: false }; // wait for GO
   crashCooldown -= dt;
-  save.distance += Math.abs(player.speed) * dt;
+  const metres = Math.abs(player.speed) * dt;
+  save.distance += metres;
+  wear(save, save.bike, metres / 1000, player.braking || 0);
+  kmAcc += metres;
+  if (kmAcc >= 100) { missions.event('km', { km: kmAcc / 1000 }); kmAcc = 0; }
   for (const hit of player.update(dt, controls, world)) {
     if (hit.kind === 'honk') { sfx.carHorn(); hit.car.honk = 3; continue; }
     if (crashCooldown > 0) continue;
     crashCooldown = 0.8;
     sfx.crash(hit.power);
     jobs.crash(hit.power + (hit.kind === 'car' ? 2 : 0));
+    battles.crashed();
+    const broke = damage(save, save.bike, hit.power);
+    if (broke.length) hud.toast(`💥 ${broke.map((p) => p.name).join(', ')} เสียหายหนัก! ไปซ่อมที่อู่`, '🔧 รถพัง');
     shake = Math.min(0.7, hit.power * 0.05);
     if (hit.car && hit.car.honk <= 0) { sfx.carHorn(); hit.car.honk = 3; }
   }
@@ -127,15 +153,101 @@ function step(dt) {
   if (input.take('KeyM')) { const m = sfx.toggle(); hud.toast(m ? 'ปิดเสียง' : 'เปิดเสียง', '🔊'); }
   const nearStand = city.stands.some((s) => Math.hypot(s.x - player.x, s.z - player.z) < 14) && Math.abs(player.speed) < 2 && !jobs.active;
   hud.showGarageHint(nearStand);
-  if (nearStand && input.take('KeyG')) { if (hud.garageOpen) hud.closeGarage(); else hud.openGarage(save, pickBike); }
-  if (!nearStand && hud.garageOpen) hud.closeGarage();
+  if (nearStand && input.take('KeyG')) { if (shop.isOpen) shop.close(); else shop.open(); }
+  if (!nearStand && shop.isOpen) shop.close();
 
-  traffic.update(dt, player);
-  jobs.update(dt, player);
-  city.updateTrain(dt);
+  // red lights: entering a junction while our direction has red
+  {
+    const i = Math.round((player.x + HALF) / BLOCK);
+    const j = Math.round((player.z + HALF) / BLOCK);
+    const inside = i >= 0 && i <= N && j >= 0 && j <= N && Math.abs(player.x - nodeX(i)) < roadW(i) / 2 && Math.abs(player.z - nodeX(j)) < roadW(j) / 2;
+    if (inside && !inJunction && Math.abs(player.speed) > 4) {
+      const axis = Math.abs(Math.sin(player.h)) > Math.abs(Math.cos(player.h)) ? 'ew' : 'ns';
+      if (lights.state(i, j, axis) === 'r') ranRed();
+    }
+    inJunction = inside;
+  }
+
+  // battles: challenge a rival nearby with B
+  const rival = !jobs.active && !battles.active ? battles.nearby(player) : null;
+  hud.battleHint(!!rival);
+  if (rival && input.take('KeyB')) {
+    battles.start(rival, player);
+    jobs.locked = true;
+    hud.toast(`"${rival.line}" · แข่งไป ${battles.active.fin.name}!`, `⚔️ ${rival.name}`);
+  }
+
+
 
   placeTimer -= dt;
   if (placeTimer <= 0) { player.district = districtOf(player.x, player.z); placeTimer = 0.5; }
+}
+
+function ranRed() {
+  sfx.whistle();
+  if (!jobs.redLight() && Math.random() < 0.3) {
+    const fine = Math.min(save.money, 200);
+    save.money -= fine;
+    hud.stats(save);
+    hud.toast(`ฝ่าไฟแดง! ตำรวจจราจรปรับ ฿${fine}`, '🚨 ตำรวจ');
+  } else if (!jobs.active) hud.toast('ฝ่าไฟแดง! ระวังตำรวจนะพี่', '🚦');
+}
+
+function battleOver({ end, reward, rival, first }) {
+  jobs.locked = false;
+  if (end === 'win') {
+    save.money += reward.money;
+    save.earned += reward.money;
+    for (const up of addXp(save, reward.xp)) { hud.levelUp(up); sfx.levelUp(); }
+    hud.toast(`ชนะ ${rival.name}!${first ? ' (ชนะครั้งแรก x2)' : ''} · +฿${reward.money} +${reward.xp} XP`, '🏆 Battle');
+    hud.countdown('WIN!');
+    sfx.fanfare();
+    missions.event('battleWin');
+  } else {
+    hud.toast(`แพ้ ${rival.name}... ไปแต่งรถแล้วมาใหม่!`, '⚔️ Battle');
+    hud.countdown('LOSE');
+    sfx.lose();
+  }
+  save.write();
+  hud.stats(save);
+}
+
+// The rest of the city moves once per frame (the bike itself runs in fine sub-steps).
+function worldStep(dt) {
+  traffic.update(dt, player);
+  jobs.update(dt, player);
+  city.updateTrain(dt);
+  lights.update(dt);
+  for (const ev of battles.update(dt, player)) {
+    if (ev.countdown) { hud.countdown(String(ev.countdown)); sfx.countdown(false); }
+    if (ev.go) { hud.countdown('GO!'); sfx.countdown(true); }
+    if (ev.end) battleOver(ev);
+  }
+}
+
+// ---- time of day / weather → traffic, passengers and fares ----
+let densityTimer = 0;
+let specTimer = 0;
+const isRush = () => { const h = atmo.hour; return (h >= 7 && h < 9.5) || (h >= 17 && h < 19.5); };
+function updateCity(dt) {
+  const h = atmo.hour;
+  const rush = isRush();
+  const late = h >= 0 && h < 5;
+  const night = h >= 19 || h < 5;
+  const wet = weather.rain > 0.3;
+  densityTimer -= dt;
+  if (densityTimer <= 0) { densityTimer = 2; traffic.setDensity(rush ? 1 : late ? 0.3 : night ? 0.5 : 0.65, player); }
+  jobs.demand = { count: (rush ? 12 : late ? 5 : 8) + (wet ? 3 : 0), fareMul: (rush ? 1.3 : 1) * (wet ? 1.2 : 1) * (late ? 1.15 : 1) };
+  jobs.context = () => ({ night, rush, rain: wet });
+  const tags = [];
+  if (rush) tags.push('🚦 ช่วงเร่งด่วน ×1.3');
+  if (wet) tags.push(`${weather.label} ×1.2`);
+  if (late) tags.push('🌙 ดึก ×1.15');
+  hud.status(tags.join(' · '));
+  missions.ensure(atmo.day, save.level);
+  // parts wear and rain change the bike's numbers: refresh them now and then
+  specTimer -= dt;
+  if (specTimer <= 0) { specTimer = 1; player.setSpec(bikeSpec()); hud.warnings(warnings(save, save.bike)); }
 }
 
 // ---- camera ----
@@ -182,23 +294,32 @@ function updateCamera(dt) {
 let running = false;
 let last = performance.now();
 function frame(dt) {
-  if (running && !phone.isOpen) { // the phone pauses the game
+  const paused = phone.isOpen || shop.isOpen; // the phone and the workshop pause the game
+  if (paused) { if (shop.isOpen && input.take('KeyG')) shop.close(); input.endFrame(); } // G closes the workshop; drop key presses made while paused
+  if (running && !paused) {
     // fixed sub-steps keep collisions solid at high speed
     const n = Math.ceil(dt / (1 / 120));
     for (let k = 0; k < n; k++) step(dt / n);
+    worldStep(dt);
     player.sync(dt);
     sfx.engine(player);
     input.endFrame();
     hud.frame(dt, player, jobs, player.boost);
+    hud.battle(battles.active);
+    updateCity(dt);
+    weather.update(dt, camera);
   }
   updateCamera(dt);
   focus.set(player.x, 0, player.z);
-  atmo.update(running && !phone.isOpen ? dt : 0, focus, camera);
+  atmo.rain = weather.rain;
+  sfx.rain(running && !paused ? weather.rain : 0);
+  atmo.update(running && !paused ? dt : 0, focus, camera);
   const n = atmo.night;
   city.setNight(n);
   traffic.setNight(n);
   traffic.updateLights();
-  headlight.intensity = Math.min(1, n * 1.6) * 90;
+  headlight.intensity = Math.min(1, Math.max(n, weather.rain * 0.6) * 1.6) * 90 * (player.spec.headlight ?? 1);
+  player.setNight(Math.max(n, weather.rain * 0.5));
   if (bloom && bloomOn) { bloom.strength = 0.15 + n * 0.5; bloom.threshold = 0.95 - n * 0.15; }
   hud.clock(atmo.clock);
 }
@@ -233,7 +354,7 @@ applyQuality(save.settings.quality);
 
 // ---- phone ----
 const phone = new Phone({
-  save, hud, city, jobs, player, atmo, sfx,
+  save, hud, city, jobs, player, atmo, sfx, missions, battles, weather, rush: isRush,
   started: () => running,
   onQuality: applyQuality,
   onReset: () => { try { localStorage.removeItem(SAVE_KEY); } catch { /* blocked */ } location.reload(); },
@@ -247,4 +368,4 @@ document.getElementById('start').onclick = () => {
 };
 
 // for debugging in the console / automated tests
-window.__game = { player, jobs, traffic, city, save, camera, renderer, step, frame, input, bikes: BIKES, atmo, phone, hud };
+window.__game = { player, jobs, traffic, city, save, camera, renderer, step, frame, input, bikes: BIKES, atmo, phone, hud, lights, weather, missions, book, battles, shop };

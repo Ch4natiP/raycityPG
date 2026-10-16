@@ -32,7 +32,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #c9d8df; fon
 #garage-hint.show { display: block; }
 #garage { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0, 0, 0, .4); }
 #garage.show { display: flex; }
-#garage .box { background: #1b1f27; border-radius: 16px; padding: 18px 20px; width: min(440px, 92vw); }
+#garage .box { background: #1b1f27; border-radius: 16px; padding: 14px 16px; width: min(560px, 94vw); max-height: min(720px, calc(100vh - 32px)); display: flex; flex-direction: column; position: relative; }
 #garage h2 { margin: 0 0 10px; }
 .bike-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(255, 255, 255, .08); }
 .bike-row .sw { width: 22px; height: 22px; border-radius: 6px; border: 2px solid #fff; flex: none; }
@@ -142,3 +142,60 @@ body.mobile .keys { display: none; }
 .ph-empty { text-align: center; color: #6b6f78; padding: 30px 10px; font-size: 14px; }
 body.mobile #phone-btn { top: 108px; }
 @media (max-height: 500px) { #phone-btn { top: 100px; } #phone .device { height: calc(100vh - 20px); } }
+
+/* ---- workshop ---- */
+.garage-top { display: flex; align-items: center; gap: 10px; }
+.garage-top h2 { margin: 0; font-size: 20px; }
+#garage-money { flex: 1; font-size: 13px; opacity: .8; min-width: 0; }
+#garage-close { margin: 0 !important; width: auto !important; background: #2b303a !important; color: #fff !important; }
+.garage-tabs { display: flex; gap: 6px; margin: 12px 0 8px; flex-wrap: wrap; }
+.garage-tabs button { background: #2b303a !important; color: #cfd3da !important; font-size: 14px; padding: 7px 12px !important; }
+.garage-tabs button.on { background: #ff7a00 !important; color: #111 !important; }
+.garage-body { overflow-y: auto; min-height: 0; flex: 1; padding-right: 4px; }
+.shop-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 0 4px; }
+.shop-group { font-size: 12px; font-weight: 800; letter-spacing: .04em; color: #ffb000; margin: 12px 0 4px; }
+.part-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid rgba(255, 255, 255, .06); }
+.part-row.fitted .pn { color: #ffd84a; }
+.part-row .pi { width: 26px; text-align: center; font-size: 18px; }
+.part-row .pn { flex: 1; min-width: 0; font-size: 14px; }
+.part-row .pn small { display: block; font-size: 11px; opacity: .65; }
+.part-row .pc { width: 42px; text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; }
+.part-row button, .bike-row button, .shop-head button { font-size: 13px !important; padding: 6px 10px !important; white-space: nowrap; }
+.bar { display: block; height: 5px; border-radius: 3px; background: rgba(255, 255, 255, .12); margin-top: 4px; overflow: hidden; }
+.bar i { display: block; height: 100%; }
+.bar.good i { background: #2ecc71; } .bar.mid i { background: #f1c40f; } .bar.bad i { background: #e74c3c; }
+.swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.swatch { width: 38px !important; height: 38px; border-radius: 50% !important; border: 3px solid rgba(255, 255, 255, .25) !important; padding: 0 !important; }
+.swatch.on { border-color: #ffb000 !important; }
+.spec-row { display: grid; grid-template-columns: 110px 1fr 96px; gap: 10px; align-items: center; padding: 8px 0; font-size: 14px; }
+.spec-row b { text-align: right; font-variant-numeric: tabular-nums; }
+.spec-bar { position: relative; height: 10px; background: rgba(255, 255, 255, .1); border-radius: 5px; overflow: hidden; }
+.spec-bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; }
+.spec-bar .base { background: rgba(255, 255, 255, .28); }
+.spec-bar .now { background: linear-gradient(90deg, #ff7a00, #ffd200); opacity: .85; }
+.shop-note { font-size: 12px; opacity: .7; } .shop-note.bad { color: #ff6b6b; opacity: 1; }
+#garage-msg { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); background: #2ecc71; color: #062; font-weight: 700; padding: 6px 14px; border-radius: 12px; opacity: 0; transition: .2s; pointer-events: none; }
+#garage-msg.show { opacity: 1; }
+
+/* ---- warnings, status, battle ---- */
+#status { color: #ffd84a; }
+#warn { position: absolute; right: 14px; bottom: 110px; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+#warn span { background: rgba(231, 76, 60, .85); color: #fff; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 8px; animation: blink 1.2s infinite; }
+@keyframes blink { 50% { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) { #warn span { animation: none; } }
+#battle { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); width: min(460px, calc(100vw - 440px)); min-width: 260px; }
+#battle[hidden] { display: none; }
+.bt-top { display: flex; justify-content: space-between; font-weight: 800; font-size: 14px; margin-bottom: 6px; gap: 10px; }
+#bt-dist { color: #ff6b6b; font-variant-numeric: tabular-nums; }
+.bt-row { display: grid; grid-template-columns: 80px 1fr; gap: 8px; align-items: center; font-size: 12px; margin-top: 3px; }
+.bt-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bt-bar { height: 10px; border-radius: 5px; background: rgba(255, 255, 255, .15); overflow: hidden; }
+.bt-bar i { display: block; height: 100%; transition: width .2s; }
+.bt-bar.me i { background: linear-gradient(90deg, #2ecc71, #4fd1c5); }
+.bt-bar.them i { background: linear-gradient(90deg, #e74c3c, #ff7a00); }
+#countdown { position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%); font-size: 120px; font-weight: 900; color: #ffd84a; text-shadow: 0 6px 30px rgba(0, 0, 0, .6); pointer-events: none; }
+#battle-hint { position: absolute; left: 50%; bottom: 100px; transform: translateX(-50%); pointer-events: auto; background: #e74c3c; color: #fff; border: 0; border-radius: 20px; padding: 8px 16px; font: inherit; font-weight: 700; cursor: pointer; display: none; }
+#battle-hint.show { display: block; }
+#touch-battle { display: none; }
+#touch-battle.show { display: inline-block; }
+@media (max-width: 760px) { #battle { top: 140px; left: 12px; right: 12px; width: auto; transform: none; } }

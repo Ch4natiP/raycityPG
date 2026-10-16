@@ -27,14 +27,23 @@
       <div id="place">-</div>
       <div id="district" class="sub">-</div>
       <div id="clock" class="sub">-</div>
+      <div id="status" class="sub"></div>
     </div>
     <div id="speedo" class="panel">
       <div><span id="gear" class="gear">1</span><span id="speed">0</span><small>กม./ชม.</small></div>
       <div class="boost" title="บิดสุด (Shift)"><div id="boost-fill"></div></div>
     </div>
+    <div id="warn"></div>
+    <div id="battle" class="panel" hidden>
+      <div class="bt-top"><span id="bt-title">⚔️ Battle</span><span id="bt-dist"></span></div>
+      <div class="bt-row"><span>เรา</span><div class="bt-bar me"><i id="bt-me"></i></div></div>
+      <div class="bt-row"><span id="bt-rname">คู่แข่ง</span><div class="bt-bar them"><i id="bt-them"></i></div></div>
+    </div>
+    <div id="countdown"></div>
+    <button id="battle-hint">⚔️ ท้าแข่ง (กด B)</button>
     <div id="toast"></div>
     <div id="payout"></div>
-    <button id="garage-hint">🔧 อู่วิน: เปลี่ยน/ซื้อรถ (กด G)</button>
+    <button id="garage-hint">🔧 อู่วิน: ซ่อม / แต่งรถ (กด G)</button>
   </div>
 
   <div id="phone" hidden>
@@ -46,10 +55,11 @@
   </div>
 
   <div id="garage">
-    <div class="box">
-      <h2>🔧 อู่วิน</h2>
-      <div id="garage-list"></div>
-      <button id="garage-close">ปิด</button>
+    <div class="box" role="dialog" aria-label="อู่วิน">
+      <div class="garage-top"><h2>🔧 อู่วิน</h2><span id="garage-money"></span><button id="garage-close" aria-label="ปิด">✕</button></div>
+      <div id="garage-tabs" class="garage-tabs"></div>
+      <div id="garage-list" class="garage-body"></div>
+      <div id="garage-msg"></div>
     </div>
   </div>
 
@@ -60,6 +70,7 @@
     </div>
     <div class="right">
       <button data-touch="horn" class="small">📯</button>
+      <button data-touch="KeyB" class="small" id="touch-battle">⚔️</button>
       <button data-touch="cam" class="small">🎥</button>
       <button data-touch="reset" class="small">↺</button>
       <button data-touch="boost" class="small">🔥</button>
@@ -75,7 +86,8 @@
       <ol>
         <li>ขับไปหาคนที่ยืนโบกมือ (<b style="color:#2ecc71">วงสีเขียว</b>) แล้วจอดใกล้ๆ</li>
         <li>ตามเส้น<b style="color:#ffc400">สีเหลือง</b>บนแผนที่ไปส่งที่ลำแสงสีเหลือง</li>
-        <li>ส่งไวได้ทิป ชน/ขึ้นฟุตบาท โดนหักทิป เก็บเงินไปซื้อรถใหม่ที่ซุ้มวิน</li>
+        <li>ส่งไวได้ทิป ชน / ขึ้นฟุตบาท / ฝ่าไฟแดง โดนหักทิป · รถสึกตามระยะทาง ซ่อมและแต่งได้ที่อู่ซุ้มวิน</li>
+        <li>ลูกค้าประจำโทรเรียก · ทำภารกิจรายวัน · ท้าแข่งวินคู่แข่ง (ป้าย ⚔️)</li>
       </ol>
       <table class="keys">
         <tr><td>W / ↑</td><td>บิด</td><td>S / ↓</td><td>เบรก / ถอย</td></tr>
@@ -83,7 +95,8 @@
         <tr><td>Shift</td><td>บิดสุด</td><td>H</td><td>บีบแตร</td></tr>
         <tr><td>C</td><td>มุมกล้อง</td><td>R</td><td>กลับขึ้นถนน</td></tr>
         <tr><td>M</td><td>ปิดเสียง</td><td>G</td><td>อู่วิน (ที่ซุ้ม)</td></tr>
-        <tr><td>T</td><td>เลื่อนเวลา +1 ชม.</td><td>P</td><td>มือถือ (โปรไฟล์ แผนที่ ฯลฯ)</td></tr>
+        <tr><td>T</td><td>เลื่อนเวลา +1 ชม.</td><td>P</td><td>มือถือ (ภารกิจ ลูกค้า แผนที่ ฯลฯ)</td></tr>
+        <tr><td>B</td><td>ท้าแข่ง Battle</td><td>G</td><td>อู่: ซ่อม / แต่งรถ</td></tr>
       </table>
       <button id="start">เริ่มรับงาน ▶</button>
       <p class="note">ขับชิดซ้ายนะพี่ เมืองไทยขับซ้าย 🇹🇭</p>

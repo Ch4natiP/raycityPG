@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { glowTexture } from './textures.js';
 import { makeBike, makePerson, pose, setBikeColor } from './models.js';
 
 // Every number that shapes how the bike feels lives here. Per-bike values (top, accel, grip) are in config.BIKES.
@@ -39,6 +40,10 @@ export class Bike {
     this.seat = new THREE.Group(); // passengers sit here
     lean.add(this.seat);
     this.mesh.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+    // neon under-glow (a garage extra)
+    this.neon = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 2.6).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: glowTexture(), color: 0xffffff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+    this.neon.position.y = 0.04;
+    this.mesh.add(this.neon);
     scene.add(this.mesh);
 
     // state
@@ -59,10 +64,15 @@ export class Bike {
     this.district = '';
   }
 
+  // spec: the bike's numbers after parts and upgrades (see garage.effective); also carries paint.
   setSpec(spec) {
     this.spec = spec;
-    setBikeColor(this.mesh, spec.color);
+    setBikeColor(this.mesh, spec.color, spec.rim ?? null);
+    this.neon.visible = spec.neon != null;
+    if (spec.neon != null) this.neon.material.color.set(spec.neon);
   }
+
+  setNight(n) { this.neon.material.opacity = this.neon.visible ? 0.35 + 0.55 * Math.min(1, n * 1.6) : 0; }
 
   place(x, z, h) {
     this.x = x; this.z = z; this.h = h;
@@ -86,9 +96,11 @@ export class Bike {
     const top = spec.top * (this.boosting ? 1.3 : 1) * (this.onSidewalk ? H.sidewalkTop : 1);
     const accel = spec.accel * (this.boosting ? 1.6 : 1);
     if (c.throttle && v >= -0.5) v += accel * dt * Math.max(0, 1 - Math.max(0, v) / top) ** 0.6;
-    if (c.handbrake) v -= Math.sign(v) * Math.min(Math.abs(v), H.brake * dt);
+    const brake = H.brake * (spec.brakeMul ?? 1); // worn pads brake less, upgraded kits more
+    this.braking = (c.brake || c.handbrake) && Math.abs(v) > 0.5 ? 1 : 0;
+    if (c.handbrake) v -= Math.sign(v) * Math.min(Math.abs(v), brake * dt);
     else if (c.brake) {
-      if (v > 0.5) v = Math.max(0, v - H.brake * dt);
+      if (v > 0.5) v = Math.max(0, v - brake * dt);
       else v = Math.max(-H.reverseTop, v - H.reverseAccel * dt); // reverse / walk it back
     }
     if (!c.throttle && !c.brake && !c.handbrake) v -= Math.sign(v) * Math.min(Math.abs(v), (H.coastDrag + Math.abs(v) * 0.08) * dt);

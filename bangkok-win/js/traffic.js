@@ -24,7 +24,25 @@ export class Traffic {
       this.cars.push(c);
     }
     this.night = 0;
+    this.lights = null;  // TrafficLights, set by the game
+    this.active = count; // how many cars are on the road right now (rush hour = all of them)
     this.makeLights(scene);
+  }
+
+  // density 0..1 of the fleet: cars beyond it park out of sight (far from the player) until rush hour.
+  setDensity(f, player) {
+    const want = Math.round(this.cars.length * Math.max(0.2, Math.min(1, f)));
+    for (const c of this.cars) {
+      const on = c.group.visible;
+      const far = !player || Math.hypot(c.x - player.x, c.z - player.z) > 140;
+      if (!on && this.active < want) {
+        this.spawn(c, player);
+        if (!player || Math.hypot(c.x - player.x, c.z - player.z) > 90) { c.group.visible = true; this.active++; }
+      } else if (on && this.active > want && far) {
+        c.group.visible = false; this.active--;
+        c.x = 1e5; c.z = 1e5; // out of every check
+      }
+    }
   }
 
   // Head and tail lights as glowing points (one draw call each) plus a beam of light on the road per car.
@@ -65,6 +83,12 @@ export class Traffic {
     const tp = this.tails.geometry.attributes.position;
     const Y = new THREE.Vector3(0, 1, 0);
     this.cars.forEach((c, k) => {
+      if (!c.group.visible) {
+        for (let s = 0; s < 2; s++) { hp.setXYZ(k * 2 + s, 0, -100, 0); tp.setXYZ(k * 2 + s, 0, -100, 0); }
+        this.m4.makeScale(0, 0, 0);
+        this.beams.setMatrixAt(k, this.m4);
+        return;
+      }
       const fx = Math.sin(c.h); const fz = Math.cos(c.h);
       const half = c.len / 2;
       const side = c.type === 'moto' ? 0 : c.wid * 0.36;
@@ -94,7 +118,7 @@ export class Traffic {
     return big ? lanes[2] : lanes[Math.min(c.lane, 1)];
   }
 
-  spawn(c) {
+  spawn(c, player = null) {
     const R = this.R;
     for (let tries = 0; tries < 50; tries++) {
       c.i = Math.floor(R() * (N + 1));
@@ -108,6 +132,7 @@ export class Traffic {
       c.x = nodeX(c.i) + dx * t + dz * off;
       c.z = nodeX(c.j) + dz * t - dx * off;
       if (this.cars.some((o) => o !== c && Math.hypot(o.x - c.x, o.z - c.z) < 12)) continue;
+      if (player && tries < 40 && Math.hypot(player.x - c.x, player.z - c.z) < 90) continue; // pop in out of sight
       c.h = Math.atan2(dx, dz);
       c.top = (c.type === 'bus' ? 9 : c.type === 'tuktuk' ? 10 : c.type === 'moto' ? 13 : 12) + R() * 3;
       c.speed = c.top * 0.6;
@@ -134,6 +159,7 @@ export class Traffic {
 
   update(dt, player) {
     for (const c of this.cars) {
+      if (!c.group.visible) continue;
       const [dx, dz] = DIRS[c.dir];
       const nx = nodeX(c.i);
       const nz = nodeX(c.j);
@@ -165,6 +191,14 @@ export class Traffic {
       let target = c.top;
       if (c.next >= 0 && c.next !== c.dir && remain < 30) target = Math.min(target, 6);
       if (Math.abs(dh) > 0.3) target = Math.min(target, 5);
+      // traffic lights: stop at the line on red, and on yellow unless already too close to stop
+      if (this.lights) {
+        const st = this.lights.state(ti, tj, dx !== 0 ? 'ew' : 'ns');
+        const toLine = remain - crossW / 2 - 3.6;
+        if (st !== 'g' && toLine > -0.5 && toLine < 40 && !(st === 'y' && toLine < c.speed * 0.9)) {
+          target = Math.min(target, Math.max(0, toLine) * 0.7);
+        }
+      }
       const fx = Math.sin(c.h);
       const fz = Math.cos(c.h);
       const blocked = (ox, oz, len, wid) => {
@@ -178,7 +212,7 @@ export class Traffic {
       if (player && blocked(player.x, player.z, 2, 0.8)) { target = 0; c.blockedByPlayer = true; }
       else {
         for (const o of this.cars) {
-          if (o === c) continue;
+          if (o === c || !o.group.visible) continue;
           if (Math.abs(o.x - c.x) > 25 || Math.abs(o.z - c.z) > 25) continue;
           if (blocked(o.x, o.z, o.len, o.wid)) { target = Math.min(target, Math.max(0, o.speed - 1)); break; }
         }
@@ -199,6 +233,7 @@ export class Traffic {
   collide(p, r) {
     let hit = null;
     for (const c of this.cars) {
+      if (!c.group.visible) continue;
       const rx = p.x - c.x;
       const rz = p.z - c.z;
       if (rx * rx + rz * rz > 64) continue;

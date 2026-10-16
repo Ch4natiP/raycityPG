@@ -140,6 +140,9 @@ export function makeBike(color = 0xc81e1e) {
   lamp.position.set(0, 0.02, 0.175);
   fork.add(lamp);
   lean.add(front, rear, fork);
+  const rimMat = new THREE.MeshLambertMaterial({ color: 0x9aa0a6 }); // own material so the rims can be painted
+  front.children[0].material = rimMat;
+  rear.children[0].material = rimMat;
   lean.add(box(0.26, 0.22, 0.95, body, 0, 0.62, 0.0)); // body
   lean.add(box(0.3, 0.1, 0.7, dark, 0, 0.8, -0.28)); // seat
   lean.add(box(0.28, 0.3, 0.12, body, 0, 0.62, 0.42)); // leg shield
@@ -151,11 +154,14 @@ export function makeBike(color = 0xc81e1e) {
   plate.rotation.y = Math.PI;
   lean.add(plate);
 
-  root.userData = { lean, front, rear, fork, body };
+  root.userData = { lean, front, rear, fork, body, rimMat };
   return root;
 }
 
-export function setBikeColor(bike, color) { bike.userData.body.color.set(color); }
+export function setBikeColor(bike, color, rim = null) {
+  bike.userData.body.color.set(color);
+  if (rim !== null && bike.userData.rimMat) bike.userData.rimMat.color.set(rim);
+}
 
 // ---------- Traffic ----------
 const PAINTS = [0xf5f5f5, 0x1c1c1c, 0x9aa5b1, 0x8a1c1c, 0x1e3a8a, 0x6b7280, 0xd4d4d4, 0x0f5132];

@@ -9,7 +9,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { parseOM, writeOM, omParts } from '../om.js';
 import { makeZip, readZip } from '../zip.js';
 import { decodePNG, png, dds, chartsLayout, underTris, filmGlass, plateQuad, FILM_RECT, PLATE_RECT, applyOBJ } from '../convert.js';
-import { decodeSpec } from '../carSpec.js';
+import { decodeSpec, encodeSpec } from '../carSpec.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (t) => { $('status').textContent = t; };
@@ -68,7 +68,7 @@ async function openFiles(entries) {
     const dir = rel.includes('/') ? rel.split('/')[0] : '';
     const listText = dir && car.files.has(`${dir}/list.xml`) ? decodeSpec(car.files.get(`${dir}/list.xml`)) : '';
     const tex = (listText.match(/name='default'[^>]*tex='([^']*)'/) || [])[1] || '';
-    if (tex && car.files.has(`${dir}/${tex}.png`)) {
+    if (tex && dir !== 'rearlight' && dir !== 'headlight' && car.files.has(`${dir}/${tex}.png`)) { // (lamp folders always load: 🔴 / 💡 work on them)
       // only a texture that covers the part completely (our tail lamps' opaque bands) hides the mask;
       // game cars' part textures are mostly see-through (the paint shows) and stay on the sheet
       try {
@@ -599,12 +599,13 @@ uvc.addEventListener('wheel', (e) => {
 // ---------------------------------------------------------------------------------------------
 // Blender round trip
 
+// each object's material names its kind (glass / lamps), so a holder (8 points) can be modelled into in Blender
+const KIND_MTL = ['paint', 'glass', 'headlight_lamp', 'brake_reverse_lamp', 'brake_lamp'];
 function exportOBJ() {
   const lines = ['# RayCity car for Blender. Edit shape and UVs; keep each object (its name is its game part).', `mtllib ${car.name}.mtl`, `usemtl mask`];
   let vo = 1;
   car.meshes.forEach((m) => m.parts.forEach((p, pi) => {
-    if (p.positions.length / 3 <= 8) return;
-    lines.push(`o ${m.rel.replace(/\//g, '__')}#${pi}`);
+    lines.push(`o ${m.rel.replace(/\//g, '__')}#${pi}`); lines.push(`usemtl ${KIND_MTL[p.flags[0]] || 'paint'}${p.positions.length / 3 <= 8 ? '_holder' : ''}`);
     for (let i = 0; i < p.positions.length / 3; i++) lines.push(`v ${p.positions[i * 3].toFixed(6)} ${p.positions[i * 3 + 2].toFixed(6)} ${(-p.positions[i * 3 + 1]).toFixed(6)}`);
     for (let i = 0; i < p.positions.length / 3; i++) lines.push(`vt ${p.uvs[i * 2].toFixed(6)} ${(1 - p.uvs[i * 2 + 1]).toFixed(6)}`);
     for (let t = 0; t < p.indices.length; t += 3) { const f = [0, 1, 2].map((k) => p.indices[t + k] + vo); lines.push(`f ${f.map((x) => `${x}/${x}`).join(' ')}`); }
@@ -751,6 +752,23 @@ function lampClick(e) {
 // (the tail panel) black like a housing.
 function tailAuto() {
   const rl = car.meshes.find((m) => m.rel === 'rearlight/default_2.0m'); if (!rl) { status('ไม่มี rearlight/default_2.0m'); return; }
+  // a car whose lamps are only holders (made from a model whose lamp glass was not found): the rearlight
+  // panel itself becomes the lamps — a copy 3 mm out along its normals, kind 3 (reverse) on its inner third,
+  // kind 4 (brake) on the rest; the panel stays as the housing
+  { const k3 = rl.parts.find((x) => x.flags[0] === 3); const k4 = rl.parts.find((x) => x.flags[0] === 4); const pan = rl.parts.filter((x) => x.flags[0] === 0 && x.positions.length / 3 > 8).sort((a, b) => b.positions.length - a.positions.length)[0];
+    if (k3 && k4 && pan && rl.parts.every((x) => (x.flags[0] !== 3 && x.flags[0] !== 4) || x.positions.length / 3 <= 8)) {
+      const P = pan.positions; const N = pan.normals; const I = pan.indices; const sg = outwardSign(pan); let xm = 0; let xn = Infinity; for (let i = 0; i < P.length; i += 3) { xm = Math.max(xm, Math.abs(P[i])); xn = Math.min(xn, Math.abs(P[i])); } const xcut = xn + (xm - xn) * 0.35; // (inner 35 % of each side's span)
+      const make = (inner) => { const map = new Map(); const Pp = []; const Nn = []; const Uu = []; const Ii = [];
+        for (let t = 0; t < I.length; t += 3) { const cx = (P[I[t] * 3] + P[I[t + 1] * 3] + P[I[t + 2] * 3]) / 3; if ((Math.abs(cx) < xcut) !== inner) continue;
+          for (let k = 0; k < 3; k++) { const i = I[t + k]; if (!map.has(i)) { map.set(i, map.size); for (let c = 0; c < 3; c++) Pp.push(P[i * 3 + c] + sg * N[i * 3 + c] * 0.003); Nn.push(N[i * 3], N[i * 3 + 1], N[i * 3 + 2]); Uu.push(0, 0); } Ii.push(map.get(i)); } }
+        return { positions: Float32Array.from(Pp), normals: Float32Array.from(Nn), uvs: Float32Array.from(Uu), indices: Uint32Array.from(Ii), _sg: 0 }; };
+      const rev = make(true); const brk = make(false);
+      if (rev.indices.length && brk.indices.length) {
+        Object.assign(k3, rev); Object.assign(k4, brk);
+        for (const x of rl.parts) if (x !== k3 && x !== k4 && (x.flags[0] === 3 || x.flags[0] === 4)) { const a = x.positions.slice(0, 3); Object.assign(x, { positions: Float32Array.from([...a, ...a, ...a]), normals: Float32Array.from([0, 1, 0, 0, 1, 0, 0, 1, 0]), uvs: new Float32Array(6), indices: Uint32Array.from([0, 1, 2]) }); }
+        rl.dirty = true;
+      }
+    } }
   const lenses = [];
   for (const p of rl.parts) { const k = p.flags[0]; if (k !== 3 && k !== 4) continue; const P = p.positions; const I = p.indices;
     // each lamp piece in its connected bits (by position)
@@ -764,7 +782,7 @@ function tailAuto() {
     // lamps facing back only (side markers keep their own colour spot)
     for (const e of box.values()) if (e.mx[0] - e.mn[0] + e.mx[2] - e.mn[2] > 0.02 && e.ny / e.n > 0.5) lenses.push(e);
   }
-  if (!lenses.length) { status('rearlight ไม่มีดวงไฟ (ไฟเบรก/ไฟเลี้ยว) ให้ยึดตำแหน่ง'); return; }
+  if (!lenses.length && !rl.parts.some((x) => (x.flags[0] === 3 || x.flags[0] === 4) && x.positions.length / 3 > 8)) { status('rearlight ไม่มีดวงไฟ (ไฟเบรก/ไฟเลี้ยว) และไม่มีแผงไฟให้ใช้แทน'); return; } // (lamps not facing back, e.g. made from the panel: no red surround, the panel stays a black housing)
   undo.push(comboSnap()); if (undo.length > 60) undo.shift(); redo.length = 0;
   const near = (c) => lenses.find((e) => c[0] > e.mn[0] - 0.015 && c[0] < e.mx[0] + 0.015 && c[2] > e.mn[2] - 0.015 && c[2] < e.mx[2] + 0.015 && c[1] > e.mn[1] - 0.06 && c[1] < e.mx[1] + 0.06);
   const dst = paintPartOf('rearlight/default_2.0m', true); let red = 0;
@@ -831,6 +849,7 @@ async function lampPictures(out) {
   for (const dir of dirs) {
     const spots = new Map();
     for (const m of car.meshes) if (m.rel.startsWith(`${dir}/`)) for (const p of m.parts) { const c = LAMP_RGB[p.flags[0]]; const U = p.uvs; if (c && U.length && U.every((x, i) => x === U[i & 1])) spots.set(`${U[0]},${U[1]}`, [U[0], U[1], c]); }
+    if ((lamp.pics.get(dir) || {}).esc) spots.clear(); // (Escarabajo's picture: its lamp patches stay as they are)
     if (!spots.size && !lamp.pics.has(dir)) continue;
     const list = car.files.has(`${dir}/list.xml`) ? decodeSpec(car.files.get(`${dir}/list.xml`)) : '';
     const names = [...list.matchAll(/tex='([^']+)'/g)].map((x) => x[1]); // every variant's picture (a missing one borrows another folder's)
@@ -901,9 +920,19 @@ async function saveZip() {
     const parts = m.parts.map((p) => ({ ...p, kind: p.flags[0] }));
     const bytes = writeOM(m.om, parts);
     const dir = (r) => (r.includes('/') ? r.split('/')[0] : '');
-    for (const [rel, b] of car.files) if (dir(rel) === dir(m.rel) && b.length === m.orig.length && b.every((x, i) => x === m.orig[i])) { out.set(rel, bytes); n++; }
+    const lodBase = m.rel.replace(/_2\.0m$/, ''); // (LOD 0 / 1 of the same mesh get it too, even when they differed)
+    for (const [rel, b] of car.files) if ((dir(rel) === dir(m.rel) && b.length === m.orig.length && b.every((x, i) => x === m.orig[i])) || /_[01]\.0m$/.test(rel) && rel.replace(/_[01]\.0m$/, '') === lodBase) { out.set(rel, bytes); n++; }
   }
   const lampN = await lampPictures(out);
+  // a lamp folder whose list has a 'base' part (the game's default for Escarabajo-style folders): base = the
+  // edited default mesh and its picture, so the car shows the same lamps whichever part the game picks
+  for (const dir of ['rearlight', 'headlight']) {
+    const lt = out.get(`${dir}/list.xml`); if (!lt || !out.has(`${dir}/base_2.0m`) || !out.has(`${dir}/default_2.0m`)) continue;
+    const text = decodeSpec(lt); const tex = (text.match(/name='default'[^>]*tex='([^']*)'/) || [])[1];
+    if (!car.meshes.some((m) => m.rel === `${dir}/default_2.0m` && m.dirty)) continue;
+    for (const l of ['0', '1', '2']) if (out.has(`${dir}/default_${l}.0m`)) out.set(`${dir}/base_${l}.0m`, out.get(`${dir}/default_${l}.0m`));
+    if (tex) out.set(`${dir}/list.xml`, encodeSpec(text.replace(/(name='base'[^>]*tex=')[^']*'/, `$1${tex}'`)));
+  }
   // ride height / wheel arches: every mesh file moved down and along (the wheels stay where the game puts them)
   const drop = +$('ride-drop').value; const shift = +$('ride-shift').value; const nose = +$('ride-nose').value; let lowered = 0;
   // nose: down by `nose` at the front wheels, nothing at the rear wheels (the game's: y −1.23 / 1.15), straight between
@@ -1903,7 +1932,7 @@ $('btn-fixall').addEventListener('click', () => cutParts((mi, pi, id, p, t) => i
 $('btn-save').addEventListener('click', () => { if (car.meshes.length) saveZip(); });
 $('btn-blender-out').addEventListener('click', async () => {
   if (!car.meshes.length) return;
-  const mtl = new TextEncoder().encode(`newmtl mask\nmap_Kd ${car.name}_base.png\n`);
+  const mtl = new TextEncoder().encode([...KIND_MTL, ...KIND_MTL.map((k) => `${k}_holder`), 'mask'].map((k) => `newmtl ${k}\nmap_Kd ${car.name}_base.png\n`).join(''));
   const files = [{ path: `${car.name}.obj`, data: exportOBJ() }, { path: `${car.name}.mtl`, data: mtl }];
   if (car.files.has(`${car.name}_base.png`)) files.push({ path: `${car.name}_base.png`, data: car.files.get(`${car.name}_base.png`) });
   const a = document.createElement('a'); a.href = URL.createObjectURL(await makeZip(files)); a.download = `${car.name}_blender.zip`; a.click();

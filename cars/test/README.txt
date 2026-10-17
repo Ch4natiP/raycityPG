@@ -420,3 +420,11 @@ The owner: make the tail lamps not look hollow. Off, the lamps show what is behi
 take the car colour from the mask. 81_your_canyon_80_dark_lamp_insides.zip: pack 80 with the lamp boxes' paint
 (339 triangles near the lamps) on a black mask spot at (0.03, 0.45) (9×9 px, nothing else there), so the lamps
 read dark like tinted lamps when off and light red / white over it.
+2026-10-17: the owner's new car (4314ee30-canyon.zip, a Mercedes GLS shape) to be made complete. It had no glass
+and every lamp only a holder; its rearlight (and headlight) list use 'base' as the default part. RayCity UV:
+lamp folders always load; 🔴 makes lamps from the rearlight panel when the lamps are only holders (a copy 3 mm
+out: inner 35 % of each side reverse, the rest brake; panel = black housing); saving writes the edited mesh to
+LOD 0 / 1 too and mirrors default → base (mesh + picture) in lamp folders; Escarabajo's picture no longer gets
+colour spots; Blender export includes holder parts with kind materials (glass, lamps) to model into.
+82_your_gls_canyon_game_ready.zip  that car after ⚡: decal sheet, plates, tail lamps (Escarabajo picture).
+Still no glass: the model's windows are open holes.

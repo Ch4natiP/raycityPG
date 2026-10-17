@@ -242,17 +242,18 @@ function meshesOf(files) {
     return { rel, om, orig: b, parts: omParts(om) };
   });
 }
+// each object's material names its kind (glass / lamps), so a holder (8 points) can be modelled into in Blender
+const KIND_MTL = ['paint', 'glass', 'headlight_lamp', 'brake_reverse_lamp', 'brake_lamp'];
 async function blenderOut() {
   const name = state.outName; const lines = [`mtllib ${name}.mtl`, 'usemtl mask']; let vo = 1;
   for (const m of meshesOf(state.out)) m.parts.forEach((p, pi) => {
-    if (p.positions.length / 3 <= 8) return;
-    lines.push(`o ${m.rel.replace(/\//g, '__')}#${pi}`);
+    lines.push(`o ${m.rel.replace(/\//g, '__')}#${pi}`); lines.push(`usemtl ${KIND_MTL[p.flags[0]] || 'paint'}${p.positions.length / 3 <= 8 ? '_holder' : ''}`);
     for (let i = 0; i < p.positions.length / 3; i++) lines.push(`v ${p.positions[i * 3].toFixed(6)} ${p.positions[i * 3 + 2].toFixed(6)} ${(-p.positions[i * 3 + 1]).toFixed(6)}`);
     for (let i = 0; i < p.positions.length / 3; i++) lines.push(`vt ${p.uvs[i * 2].toFixed(6)} ${(1 - p.uvs[i * 2 + 1]).toFixed(6)}`);
     for (let t = 0; t < p.indices.length; t += 3) lines.push(`f ${[0, 1, 2].map((k) => { const x = p.indices[t + k] + vo; return `${x}/${x}`; }).join(' ')}`);
     vo += p.positions.length / 3;
   });
-  const files = [{ path: `${name}.obj`, data: new TextEncoder().encode(lines.join('\n')) }, { path: `${name}.mtl`, data: new TextEncoder().encode(`newmtl mask\nmap_Kd ${name}_base.png\n`) }, { path: `${name}_base.png`, data: state.out.get(`${name}_base.png`) }];
+  const files = [{ path: `${name}.obj`, data: new TextEncoder().encode(lines.join('\n')) }, { path: `${name}.mtl`, data: new TextEncoder().encode([...KIND_MTL, ...KIND_MTL.map((k) => `${k}_holder`), 'mask'].map((k) => `newmtl ${k}\nmap_Kd ${name}_base.png\n`).join('')) }, { path: `${name}_base.png`, data: state.out.get(`${name}_base.png`) }];
   download(await makeZip(files), `${name}_blender.zip`);
 }
 async function blenderIn(text) {

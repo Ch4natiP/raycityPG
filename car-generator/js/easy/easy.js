@@ -219,7 +219,7 @@ async function build() {
     state.out = out; state.outName = name;
     say(`เสร็จ: ${out.size} ไฟล์`);
     renderChecks($('checks'), await checkCar(out, name, template));
-    $('btn-download').disabled = false; $('btn-paint').disabled = false; $('btn-blender-out').disabled = false; $('btn-blender-in').disabled = false;
+    $('btn-download').disabled = false; $('btn-paint').disabled = false; $('btn-game').disabled = false; $('btn-blender-out').disabled = false; $('btn-blender-in').disabled = false;
     $('s4').classList.add('done');
     await showCar(); setTab('car');
   } catch (e) { console.error(e); say(`ผิดพลาด: ${e.message}`); }
@@ -326,16 +326,18 @@ $('file-tpl').addEventListener('change', async (e) => { if (e.target.files[0]) a
 $('btn-build').addEventListener('click', build);
 $('btn-download').addEventListener('click', downloadZip);
 // 🖌: the car to the RayCity UV page (paint the colours by clicking panels, edit UVs), sent by message
-$('btn-paint').addEventListener('click', () => {
-  const files0 = [...state.out].map(([rel, data]) => ({ path: `${state.outName}/${rel}`, data }));
+function openUV(auto) {
+  const files = [...state.out].map(([rel, data]) => ({ path: `${state.outName}/${rel}`, data }));
   // inside the one-page RayCity: its UV tab takes the car
-  if (window.parent !== window) { window.parent.postMessage({ type: 'rc-open-uv', files: files0 }, '*'); return; }
+  if (window.parent !== window) { window.parent.postMessage({ type: 'rc-open-uv', files, auto }, '*'); return; }
   const w = window.open('RayCity-UV.html', '_blank');
   if (!w) { $('build-log').textContent = 'เบราว์เซอร์บล็อกหน้าต่างใหม่ · อนุญาต pop-up แล้วกดอีกครั้ง'; return; }
-  const files = [...state.out].map(([rel, data]) => ({ path: `${state.outName}/${rel}`, data }));
-  const onMsg = (e) => { if (e.source === w && e.data?.type === 'rc-uv-ready') { w.postMessage({ type: 'rc-car', files }, '*'); window.removeEventListener('message', onMsg); } };
+  const onMsg = (e) => { if (e.source === w && e.data?.type === 'rc-uv-ready') { w.postMessage({ type: 'rc-car', files, auto }, '*'); window.removeEventListener('message', onMsg); } };
   window.addEventListener('message', onMsg);
-});
+}
+$('btn-paint').addEventListener('click', () => openUV(false));
+// 🎮 straight to a game-ready zip: the UV page does decal sheet, glass, plates and tail lamps, then downloads
+$('btn-game').addEventListener('click', () => openUV(true));
 $('btn-blender-out').addEventListener('click', blenderOut);
 $('btn-blender-in').addEventListener('click', () => $('file-obj').click());
 $('file-obj').addEventListener('change', async (e) => { if (e.target.files[0]) await blenderIn(await e.target.files[0].text()); e.target.value = ''; });

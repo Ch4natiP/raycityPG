@@ -107,7 +107,7 @@ ${pages.map(([id, label], i) => `<button data-tab="${id}"${i ? '' : ' class="on"
 <main><div id="loading">กำลังเปิด…</div>${pages.map(([id]) => `<iframe id="f-${id}" title="${id}"></iframe>`).join('')}</main>
 ${blobs}
 <script>
-const frames = {}; const ready = {}; let pendingCar = null;
+const frames = {}; const ready = {}; let pendingCar = null; let pendingAuto = false;
 async function load(id) {
   if (frames[id]) return frames[id];
   document.getElementById('loading').style.display = 'flex';
@@ -130,8 +130,8 @@ const byFile = ${JSON.stringify(Object.fromEntries(pages.map(([id, , file]) => [
 window.addEventListener('message', (e) => {
   const d = e.data || {};
   if (d.type === 'rc-tab') { const id = byFile[d.page.split('#')[0]]; if (id) show(id); }
-  if (d.type === 'rc-open-uv') { pendingCar = d.files; show('uv').then(() => { if (ready.uv) { frames.uv.contentWindow.postMessage({ type: 'rc-car', files: pendingCar }, '*'); pendingCar = null; } }); }
-  if (d.type === 'rc-uv-ready' && frames.uv && e.source === frames.uv.contentWindow) { ready.uv = true; if (pendingCar) { frames.uv.contentWindow.postMessage({ type: 'rc-car', files: pendingCar }, '*'); pendingCar = null; } }
+  if (d.type === 'rc-open-uv') { pendingCar = d.files; pendingAuto = !!d.auto; show('uv').then(() => { if (ready.uv) { frames.uv.contentWindow.postMessage({ type: 'rc-car', files: pendingCar, auto: pendingAuto }, '*'); pendingCar = null; } }); }
+  if (d.type === 'rc-uv-ready' && frames.uv && e.source === frames.uv.contentWindow) { ready.uv = true; if (pendingCar) { frames.uv.contentWindow.postMessage({ type: 'rc-car', files: pendingCar, auto: pendingAuto }, '*'); pendingCar = null; } }
 });
 show('easy');
 </script>

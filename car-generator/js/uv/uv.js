@@ -807,7 +807,7 @@ function lampClick(e) {
 // 🔴 Tail lamps by themselves: every paint triangle facing back within 1.5 cm (across) / 6 cm (deep) of a
 // brake / indicator lamp facing back goes into rearlight's paint, red / amber in its picture; the rest of rearlight's paint
 // (the tail panel) black like a housing.
-$('btn-tail-auto').addEventListener('click', () => {
+function tailAuto() {
   const rl = car.meshes.find((m) => m.rel === 'rearlight/default_2.0m'); if (!rl) { status('ไม่มี rearlight/default_2.0m'); return; }
   const lenses = [];
   for (const p of rl.parts) { const k = p.flags[0]; if (k !== 3 && k !== 4) continue; const P = p.positions; const I = p.indices;
@@ -874,7 +874,8 @@ $('btn-tail-auto').addEventListener('click', () => {
   for (const x of car.meshes) x.isl = x.parts.map(islandsOf);
   build3D(); refresh();
   status(`ไฟท้ายอัตโนมัติ: ดวงไฟ ${lenses.length} ดวง · แดง/ส้ม ${red} สามเหลี่ยม · แผงท้ายที่เหลือดำ (${nTris - red}) · ปรับต่อได้ด้วยปุ่มสีไฟ`);
-});
+}
+$('btn-tail-auto').addEventListener('click', tailAuto);
 document.querySelectorAll('#lamp-modes button').forEach((b) => b.addEventListener('click', () => {
   lamp.mode = lamp.mode === b.dataset.lamp ? null : b.dataset.lamp;
   document.querySelectorAll('#lamp-modes button').forEach((x) => x.classList.toggle('accent', x.dataset.lamp === lamp.mode));
@@ -1336,7 +1337,20 @@ setMode('panel');
 
 // Opened from RayCity Easy (🖌 button): the car comes by message
 // (or from the one-page RayCity, whose tab holds this page)
-window.addEventListener('message', async (e) => { if (e.data?.type === 'rc-car' && Array.isArray(e.data.files)) { await openFiles(e.data.files); setPaint(true); } });
+// ⚡ Everything for the game in one go (a car straight from Blender / the Easy page): decal sheet + glass
+// (🎯), plates (🔖), tail lamps (🔴), then the download
+async function readyForGame() {
+  if (!car.meshes.length) { status('เปิดรถก่อน'); return; }
+  status('⚡ กำลังทำให้พร้อมใส่เกม… (ย้าย UV ลงแผ่นลาย · กระจก · ป้าย · ไฟท้าย)'); await new Promise((r) => setTimeout(r, 30));
+  const steps = [];
+  await toSheet(); steps.push('🎯 ' + $('status').textContent.split('·')[0].trim());
+  initPlateSliders(); plateUndo = false; plateNow(); steps.push('🔖 ' + $('plate-info').textContent);
+  tailAuto(); steps.push('🔴 ' + $('status').textContent.split('·')[0].trim());
+  await saveZip();
+  status(`⚡ พร้อมใส่เกม · ดาวน์โหลด ${car.name}.zip แล้ว — ${steps.join(' | ')}`);
+}
+$('btn-ready-game').addEventListener('click', readyForGame);
+window.addEventListener('message', async (e) => { if (e.data?.type === 'rc-car' && Array.isArray(e.data.files)) { await openFiles(e.data.files); if (e.data.auto) await readyForGame(); else setPaint(true); } });
 for (const w of [window.opener, window.parent !== window ? window.parent : null]) if (w) try { w.postMessage({ type: 'rc-uv-ready' }, '*'); } catch { /* gone */ }
 
 // 🧽 the colour layer cleared (alpha 0, so the paint shows) everywhere but the game's block
@@ -1475,7 +1489,7 @@ function fitAffine(src, dst) { // src, dst: [[u, v]…] → f(u, v) or null
   const [p, q] = [solve(bu), solve(bv)]; a = [...p, ...q];
   return (u, v) => [a[0] * u + a[1] * v + a[2], a[3] * u + a[4] * v + a[5]];
 }
-$('btn-to-sheet').addEventListener('click', async () => {
+async function toSheet() {
   if (!car.meshes.length || !car.mask) return;
   status('กำลังย้ายเกาะ UV เดิมลงแผ่นลาย…'); await new Promise((r) => setTimeout(r, 30));
   const { w, h, data } = car.mask; const old = data.slice();
@@ -1583,7 +1597,8 @@ $('btn-to-sheet').addEventListener('click', async () => {
   paint.dirty = true; selected = new Set(); selectedPts = new Map();
   build3D(); maskChanged();
   status(`ย้ายเกาะเดิมลงแผ่นลายแล้ว: ${fitted} เกาะ (ซ้าย/บน/ขวา) · ${strip.length} ชิ้น (หน้า/หลัง/ใต้) ไปมุมซ้ายที่ลายไม่ทับ (ย่อ ${Math.round(stripScale * 100)}%) · กระจก ${gl.n.toLocaleString()} สามเหลี่ยม จัดแบบ Escarabajo (ฟิล์มลงถูกที่) · ไฟ ${gl.lamps} ชิ้น พ้นแผ่นลาย · สีย้ายตาม · เปิดรูปลายมาเทียบได้`);
-});
+}
+$('btn-to-sheet').addEventListener('click', toSheet);
 // 🪟 Glass like Escarabajo's on the films' picture (filmGlass), lamps' colour spots off the sheets, the film,
 // plate and lamp cells red in the mask and clear in the colour layer (no film = clear glass).
 const LAMP_SPOT = { 2: [0.03, 0.45], 3: [0.06, 0.45], 4: [0.09, 0.45] };

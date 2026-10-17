@@ -2716,3 +2716,37 @@ export function applyOBJ(meshes, text) {
   const unknown = [...objs.keys()].filter((k) => !used.has(k) && objs.get(k).length);
   return { parts, tris, tooBig, unknown };
 }
+
+// The game crashes on a mesh file with too many points (8,000 crashed; canyon's 6,032 and phoenix's 5,005
+// load). capFileVerts reduces a file's big parts (meshoptimizer; UV seams kept, points keep their UVs, normals
+// and colours) until the file holds at most `cap` points. parts: omParts list (changed in place); returns
+// [before, after].
+export const VERT_CAP = 5000; // (later steps add a few hundred: plates, glass, lamps)
+export async function capFileVerts(parts, cap = VERT_CAP) {
+  await MeshoptSimplifier.ready;
+  const count = () => parts.reduce((n, p) => n + p.positions.length / 3, 0);
+  const before = count(); if (before <= cap) return [before, before];
+  const fixed = parts.filter((p) => p.positions.length / 3 <= 64).reduce((n, p) => n + p.positions.length / 3, 0);
+  const big = parts.filter((p) => p.positions.length / 3 > 64);
+  const total = big.reduce((n, p) => n + p.positions.length / 3, 0);
+  const orig = big.map((p) => ({ positions: p.positions, normals: p.normals, uvs: p.uvs, indices: p.indices }));
+  let ratio = (cap - fixed) / total;
+  for (let round = 0; round < 12; round++) {
+    big.forEach((p, k) => {
+      const o = orig[k]; const nv = o.positions.length / 3; const want = Math.max(24, Math.floor(nv * ratio));
+      let lo = 0.0; let hi = 1.0; let best = null;
+      for (let it = 0; it < 14; it++) { // index target searched so the kept points fit `want`
+        const mid = (lo + hi) / 2; const [idx] = MeshoptSimplifier.simplify(Uint32Array.from(o.indices), Float32Array.from(o.positions), 3, Math.max(3, Math.floor((o.indices.length / 3) * mid) * 3), 1);
+        const used = new Set(idx); if (used.size <= want) { best = idx; lo = mid; } else hi = mid;
+      }
+      if (!best) best = MeshoptSimplifier.simplify(Uint32Array.from(o.indices), Float32Array.from(o.positions), 3, 3, 1)[0];
+      const map = new Int32Array(nv).fill(-1); let n = 0; for (const i of best) if (map[i] < 0) map[i] = n++;
+      const P = new Float32Array(n * 3); const N = new Float32Array(n * 3); const U = new Float32Array(n * 2);
+      for (let i = 0; i < nv; i++) if (map[i] >= 0) { P.set(o.positions.subarray(i * 3, i * 3 + 3), map[i] * 3); N.set(o.normals.subarray(i * 3, i * 3 + 3), map[i] * 3); U.set(o.uvs.subarray(i * 2, i * 2 + 2), map[i] * 2); }
+      Object.assign(p, { positions: P, normals: N, uvs: U, indices: Uint32Array.from(best, (i) => map[i]) }); delete p._adj; delete p._sg;
+    });
+    if (count() <= cap) break;
+    ratio *= 0.93;
+  }
+  return [before, count()];
+}

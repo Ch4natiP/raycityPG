@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { parseOM, writeOM, omParts } from '../om.js';
 import { makeZip, readZip } from '../zip.js';
-import { decodePNG, png, dds, chartsLayout, underTris, filmGlass, plateQuad, FILM_RECT, PLATE_RECT, applyOBJ } from '../convert.js';
+import { decodePNG, png, dds, chartsLayout, underTris, filmGlass, plateQuad, FILM_RECT, PLATE_RECT, applyOBJ, capFileVerts, VERT_CAP } from '../convert.js';
 import { decodeSpec, encodeSpec } from '../carSpec.js';
 
 const $ = (id) => document.getElementById(id);
@@ -1314,6 +1314,9 @@ async function readyForGame() {
   if (!car.meshes.length) { status('เปิดรถก่อน'); return; }
   status('⚡ กำลังทำให้พร้อมใส่เกม… (ย้าย UV ลงแผ่นลาย · กระจก · ป้าย · ไฟท้าย)'); await new Promise((r) => setTimeout(r, 30));
   const steps = [];
+  // files over the game's point limit (they crash the game) reduced first
+  const cut = []; for (const m of car.meshes) { const [a, b] = await capFileVerts(m.parts, VERT_CAP); if (b < a) { m.dirty = true; m.isl = m.parts.map(islandsOf); cut.push(`${m.rel.replace('_2.0m', '')} ${a.toLocaleString()}→${b.toLocaleString()}`); } }
+  if (cut.length) { carMid = null; build3D(); steps.push(`🔻 ลดจุด (เกมเด้งถ้าเกิน): ${cut.join(', ')}`); }
   await toSheet(); steps.push('🎯 ' + $('status').textContent.split('·')[0].trim());
   initPlateSliders(); plateUndo = false; plateNow(); steps.push('🔖 ' + $('plate-info').textContent);
   tailAuto(); steps.push('🔴 ' + $('status').textContent.split('·')[0].trim());

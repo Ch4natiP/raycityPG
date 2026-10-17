@@ -428,3 +428,8 @@ LOD 0 / 1 too and mirrors default → base (mesh + picture) in lamp folders; Esc
 colour spots; Blender export includes holder parts with kind materials (glass, lamps) to model into.
 82_your_gls_canyon_game_ready.zip  that car after ⚡: decal sheet, plates, tail lamps (Escarabajo picture).
 Still no glass: the model's windows are open holes.
+The owner: pack 82 crashes the game on start. Its files hold 18,810 (body), 12,570 (hood), 10,995 (rear bumper)
+and 8,680 (roof) points; the game crashes at 8,000 (canyon's 6,032 loads). capFileVerts (meshoptimizer, seams
+and UVs kept) brings every file to at most ~5,000 points; ⚡ runs it first.
+83_your_gls_canyon_reduced_points.zip  pack 82 rebuilt with it: body 4,997, hood 4,947, rear bumper 4,614,
+roof 5,083 points.

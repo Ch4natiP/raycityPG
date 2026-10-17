@@ -6,7 +6,7 @@ import {
 import { GeoBuilder } from './geo.js';
 import { RoadNet } from './roadnet.js';
 import { Colliders } from './physics.js';
-import { windowTexture, shopTexture, glassTexture, asphaltTexture, paveTexture, poolTexture, signAtlas, soiAtlas, labelTexture, SIGN_TEXTS, CHINA_SIGNS } from './textures.js';
+import { windowTexture, shopTexture, glassTexture, condoTexture, TILES, asphaltTexture, paveTexture, poolTexture, signAtlas, soiAtlas, labelTexture, SIGN_TEXTS, CHINA_SIGNS } from './textures.js';
 import { makePerson, pose } from './models.js';
 import { crowdMeshes, CROWD_KINDS } from './character.js';
 
@@ -42,6 +42,7 @@ export function buildCity(scene, { shadows = true } = {}) {
     wall: new THREE.MeshLambertMaterial({ ...pairMat(windowTexture(R)), vertexColors: true }),
     shop: new THREE.MeshLambertMaterial({ ...pairMat(shopTexture()), vertexColors: true }),
     glass: new THREE.MeshStandardMaterial({ ...pairMat(glassTexture(R)), vertexColors: true, metalness: 0.55, roughness: 0.18, envMapIntensity: 1.2 }),
+    condo: new THREE.MeshStandardMaterial({ ...pairMat(condoTexture(R)), vertexColors: true, metalness: 0.15, roughness: 0.6, envMapIntensity: 0.7 }),
     pave: new THREE.MeshLambertMaterial({ map: paveTexture(R), vertexColors: true }),
     plain: new THREE.MeshLambertMaterial({ vertexColors: true }),
     awning: new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }),
@@ -63,7 +64,7 @@ export function buildCity(scene, { shadows = true } = {}) {
   // ---- ground, river ----
   const groundSize = N * BLOCK + 900;
   const asphalt = asphaltTexture(R);
-  asphalt.repeat.set(groundSize / 8, groundSize / 8);
+  asphalt.repeat.set(groundSize / TILES.asphalt, groundSize / TILES.asphalt);
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(groundSize, groundSize), new THREE.MeshLambertMaterial({ map: asphalt, color: 0xd8d8d8 }));
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
@@ -78,7 +79,7 @@ export function buildCity(scene, { shadows = true } = {}) {
 
   // ---- helpers ----
   const sidewalk = (x0, z0, x1, z1, type, color = '#b9b4aa') => {
-    B('pave', (x0 + x1) / 2, (z0 + z1) / 2).box(x0, 0, z0, x1, CURB, z1, C(color).lerp(C('#ffffff'), 0.35), { topTile: 2.4, tile: [1, 1] });
+    B('pave', (x0 + x1) / 2, (z0 + z1) / 2).box(x0, 0, z0, x1, CURB, z1, C(color).lerp(C('#ffffff'), 0.35), { topTile: TILES.pave, tile: [1, 1] });
     lots.push({ x0, z0, x1, z1, type });
   };
 
@@ -133,7 +134,7 @@ export function buildCity(scene, { shadows = true } = {}) {
       const cx = (x0 + x1) / 2;
       const cz = (z0 + z1) / 2;
       B('shop', chunkX, chunkZ).box(x0, CURB, z0, x1, 3.5, z1, C('#ffffff'), { tile: [8, 3.3], skip: { top: true }, uOffset: R() < 0.5 ? 0 : 0.5, ao: 0.35 });
-      B('wall', chunkX, chunkZ).box(x0, 3.5, z0, x1, h, z1, wall, { tile: [16, 13.6], topColor: roof, uOffset: offs(), vOffset: offs() });
+      B('wall', chunkX, chunkZ).box(x0, 3.5, z0, x1, h, z1, wall, { tile: TILES.wall, topColor: roof, uOffset: offs(), vOffset: offs() });
       if (R() < 0.35) { // water tank / rooftop shed
         const tx = cx + (R() - 0.5) * 2;
         const tz = cz + (R() - 0.5) * 2;
@@ -262,7 +263,8 @@ export function buildCity(scene, { shadows = true } = {}) {
     if (fx1 - fx0 > 6 && fz1 - fz0 > 6) {
       const tall = (district === 'สยาม' || district === 'สุขุมวิท' || district === 'สีลม' || district === 'รัชดา') && R() < 0.55;
       const h = tall ? 35 + R() * 70 : 16 + R() * 10;
-      B(tall ? 'glass' : 'wall', cx, cz).box(fx0 + 1, CURB, fz0 + 1, fx1 - 1, h, fz1 - 1, C(tall ? pick(TOWER_TINTS) : pick(WALLS)), { tile: tall ? [12, 14] : [16, 13.6], topColor: C('#8a8a8a'), uOffset: offs(), vOffset: offs(), ao: 0.3 });
+      const skin = tall ? (R() < 0.5 ? 'condo' : 'glass') : 'wall';
+      B(skin, cx, cz).box(fx0 + 1, CURB, fz0 + 1, fx1 - 1, h, fz1 - 1, C(tall ? pick(TOWER_TINTS) : pick(WALLS)), { tile: TILES[skin], topColor: C('#8a8a8a'), uOffset: offs(), vOffset: offs(), ao: 0.3 });
       col.add(fx0 + 1, fz0 + 1, fx1 - 1, fz1 - 1);
     }
     // Street life on each sidewalk.
@@ -504,7 +506,7 @@ export function buildCity(scene, { shadows = true } = {}) {
     tree(-E0 - 6, (a + b) / 2, -E0, (a + b) / 2, 1);
   }
   // corners and the river railing
-  for (const [x0, z0, x1, z1] of [[E0, -E1, E1, -E0], [E0, E0, E1, E1]]) { B('wall', x0, z0).box(x0, 0, z0, x1, 20, z1, C('#e8d5b0'), { tile: [16, 13.6], ao: 0.3 }); col.add(x0, z0, x1, z1); }
+  for (const [x0, z0, x1, z1] of [[E0, -E1, E1, -E0], [E0, E0, E1, E1]]) { B('wall', x0, z0).box(x0, 0, z0, x1, 20, z1, C('#e8d5b0'), { tile: TILES.wall, ao: 0.3 }); col.add(x0, z0, x1, z1); }
   col.add(-E1 - 30, -E1, riverX0 + 4, E1, 'water');
   B('plain', riverX0 + 4, 0).box(riverX0 + 3.6, 0, -E1, riverX0 + 4, 1.1, E1, C('#d9d9d9'));
   col.add(-E1 - 30, -E1 - 40, E1 + 40, -E1 + 4);
@@ -819,6 +821,7 @@ export function buildCity(scene, { shadows = true } = {}) {
     M.wall.emissiveIntensity = dusk * 0.7;
     M.shop.emissiveIntensity = dusk * 0.85;
     M.glass.emissiveIntensity = dusk * 0.5;
+    M.condo.emissiveIntensity = dusk * 0.6;
     lampMat.emissiveIntensity = dusk * 6;
     poolMat.opacity = dusk * 0.55;
     trainWin.emissiveIntensity = dusk * 1.4;

@@ -423,6 +423,9 @@ const phone = new Phone({
   onReset: () => { try { localStorage.removeItem(SAVE_KEY); } catch { /* blocked */ } location.reload(); },
 });
 
+// the start screen sits on the cover art when there is one
+if (window.PHOTOS?.cover) document.getElementById('intro').style.background = `linear-gradient(rgba(10,12,18,.35), rgba(10,12,18,.75)), url(${window.PHOTOS.cover}) center / cover`;
+
 document.getElementById('start').onclick = () => {
   document.getElementById('intro').classList.add('hide');
   sfx.start();

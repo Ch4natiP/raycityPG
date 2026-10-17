@@ -15,12 +15,37 @@ function tex(c, repeat = true) {
   return t;
 }
 
+// Photo textures (tools/photos.py → assets/photos.js, embedded by the build). null when absent:
+// then every surface uses the drawn texture below instead.
+const PHOTOS = (typeof window !== 'undefined' && window.PHOTOS) || {};
+export const hasPhoto = (name) => !!PHOTOS[name];
+export function photo(name) {
+  if (!PHOTOS[name]) return null;
+  const t = new THREE.Texture();
+  const img = new Image();
+  img.onload = () => { t.image = img; t.needsUpdate = true; };
+  img.src = PHOTOS[name];
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 8;
+  return t;
+}
+// metres covered by one repeat of each surface texture (photos and drawings differ)
+export const TILES = {
+  wall: hasPhoto('facade') ? [12, 10.2] : [16, 13.6],
+  glass: [12, 14],
+  condo: hasPhoto('condo') ? [15, 18] : [12, 14],
+  pave: hasPhoto('pave') ? 3 : 2.4,
+  asphalt: hasPhoto('asphalt') ? 12 : 8,
+};
+
 // Pairs of textures: what a surface looks like by day (map) and what glows at night (emissive).
 // Windows come in 4 x 4 blocks so neighbouring windows differ; buildings also get a random offset.
 const LIT = ['#ffd59a', '#ffe2b8', '#fff1d6', '#ffcf86', '#e6eeff', '#cfe0ff', '#9fc3ff'];
 
 // Shophouse upper floors: 4 bays x 4 floors, each bay 128 px = 4 m x 3.4 m.
 export function windowTexture(rand = Math.random) {
+  if (hasPhoto('facade')) return { map: photo('facade'), emissive: photo('facade_n') || blackTexture() };
   const [c, g] = canvas(512, 512);
   const [ec, eg] = canvas(512, 512);
   eg.fillStyle = '#000';
@@ -76,6 +101,14 @@ export function windowTexture(rand = Math.random) {
   return { map: tex(c), emissive: tex(ec) };
 }
 
+// Condominium towers: balconies, A/C units, laundry.
+export function condoTexture(rand = Math.random) {
+  if (hasPhoto('condo')) return { map: photo('condo'), emissive: photo('condo_n') || blackTexture() };
+  return glassTexture(rand);
+}
+
+function blackTexture() { const [c, g] = canvas(4, 4); g.fillRect(0, 0, 4, 4); return tex(c); }
+
 // Ground floor shop: left half an open shop with goods, right half a rolling shutter.
 export function shopTexture() {
   const [c, g] = canvas(256, 128);
@@ -116,11 +149,18 @@ export function shopTexture() {
   g.fillStyle = '#555';
   g.fillRect(0, 0, 4, 128);
   g.fillRect(128, 0, 4, 128);
-  return { map: tex(c), emissive: tex(ec) };
+  const t = tex(c);
+  if (hasPhoto('shutter')) { // the photographed roller shutter, drawn in once it has loaded
+    const img = new Image();
+    img.onload = () => { g.drawImage(img, 128, 0, 128, 128); g.fillStyle = '#555'; g.fillRect(128, 0, 4, 128); t.needsUpdate = true; };
+    img.src = PHOTOS.shutter;
+  }
+  return { map: t, emissive: tex(ec) };
 }
 
 // Office / condo tower curtain wall: 4 x 4 cells of 3 m x 3.5 m.
 export function glassTexture(rand = Math.random) {
+  if (hasPhoto('glass')) return { map: photo('glass'), emissive: photo('glass_n') || blackTexture() };
   const [c, g] = canvas(512, 512);
   const [ec, eg] = canvas(512, 512);
   eg.fillStyle = '#000';
@@ -157,6 +197,7 @@ export function glassTexture(rand = Math.random) {
 
 // Asphalt: grain, repair patches and oil stains. One tile = 8 m.
 export function asphaltTexture(rand = Math.random) {
+  if (hasPhoto('asphalt')) return photo('asphalt');
   const [c, g] = canvas(512, 512);
   g.fillStyle = '#4a4c50';
   g.fillRect(0, 0, 512, 512);
@@ -194,6 +235,7 @@ export function asphaltTexture(rand = Math.random) {
 
 // Sidewalk paving: 30 cm tiles, a few cracked or stained. One tile of texture = 2.4 m.
 export function paveTexture(rand = Math.random) {
+  if (hasPhoto('pave')) return photo('pave');
   const [c, g] = canvas(256, 256);
   g.fillStyle = '#8f8a80';
   g.fillRect(0, 0, 256, 256);

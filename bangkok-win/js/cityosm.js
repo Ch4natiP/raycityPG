@@ -3,7 +3,7 @@ import { GeoBuilder } from './geo.js';
 import { Colliders } from './physics.js';
 import { RoadNet } from './roadnet.js';
 import { BTS_Y, rng } from './config.js';
-import { windowTexture, shopTexture, glassTexture, asphaltTexture, paveTexture, poolTexture, signAtlas, labelTexture, SIGN_TEXTS } from './textures.js';
+import { windowTexture, shopTexture, glassTexture, condoTexture, TILES, photo, hasPhoto, asphaltTexture, paveTexture, poolTexture, signAtlas, labelTexture, SIGN_TEXTS } from './textures.js';
 import { makePerson, pose } from './models.js';
 import { crowdMeshes, CROWD_KINDS } from './character.js';
 
@@ -53,7 +53,10 @@ export function buildOSMCity(scene, data, { shadows = true } = {}) {
     wall: new THREE.MeshLambertMaterial({ ...pairMat(windowTexture(R)), vertexColors: true }),
     shop: new THREE.MeshLambertMaterial({ ...pairMat(shopTexture()), vertexColors: true }),
     glass: new THREE.MeshStandardMaterial({ ...pairMat(glassTexture(R)), vertexColors: true, metalness: 0.55, roughness: 0.18, envMapIntensity: 1.2 }),
+    condo: new THREE.MeshStandardMaterial({ ...pairMat(condoTexture(R)), vertexColors: true, metalness: 0.15, roughness: 0.6, envMapIntensity: 0.7 }),
     plain: new THREE.MeshLambertMaterial({ vertexColors: true }),
+    concrete: new THREE.MeshLambertMaterial({ map: photo('concrete'), vertexColors: true }),
+    grass: new THREE.MeshLambertMaterial({ map: photo('grass'), vertexColors: true, polygonOffset: true, polygonOffsetFactor: -0.5, polygonOffsetUnits: -0.5 }),
     awning: new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }),
     sign: new THREE.MeshBasicMaterial({ map: atlas.texture, vertexColors: true }),
     road: new THREE.MeshLambertMaterial({ map: asphalt, vertexColors: true, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
@@ -71,7 +74,7 @@ export function buildOSMCity(scene, data, { shadows = true } = {}) {
   // ground: pavement everywhere, roads drawn on top
   const pave = paveTexture(R);
   const gw = bounds.x1 - bounds.x0 + 1200; const gd = bounds.z1 - bounds.z0 + 1200;
-  pave.repeat.set(gw / 2.4, gd / 2.4);
+  pave.repeat.set(gw / TILES.pave, gd / TILES.pave);
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(gw, gd), new THREE.MeshLambertMaterial({ map: pave, color: 0xcfcac0 }));
   ground.rotation.x = -Math.PI / 2;
   ground.position.set((bounds.x0 + bounds.x1) / 2, 0, (bounds.z0 + bounds.z1) / 2);
@@ -94,7 +97,7 @@ export function buildOSMCity(scene, data, { shadows = true } = {}) {
 
   // ---- parks and water ----
   const mapPolys = [];
-  for (const g of data.green) { const pts = ptsOf(g); fillPoly('area', pts, 0.02, '#5d9b4a'); mapPolys.push({ color: '#9fcf86', pts }); }
+  for (const g of data.green) { const pts = ptsOf(g); if (hasPhoto('grass')) fillPoly('grass', pts, 0.02, '#ffffff', 5); else fillPoly('area', pts, 0.02, '#5d9b4a'); mapPolys.push({ color: '#9fcf86', pts }); }
   for (const w of data.water) { const pts = ptsOf(w); fillPoly('area', pts, 0.025, '#4f8fa8'); mapPolys.push({ color: '#79b4cc', pts }); for (let k = 0; k < pts.length; k++) { const a = pts[k]; const b = pts[(k + 1) % pts.length]; col.addSeg(a.x, a.z, b.x, b.z, 'water'); } }
   for (const c of data.canals) { const pts = ptsOf(c); ribbon('area', pts, 9, 0.025, '#4f8fa8', 0); }
 
@@ -150,7 +153,7 @@ export function buildOSMCity(scene, data, { shadows = true } = {}) {
   const white = '#e9e9e9'; const yellow = '#f2c230';
   for (const e of net.edges) {
     const nA = net.nodes[e.a]; const nB = net.nodes[e.b];
-    ribbon('road', e.pts, e.width, ROAD_Y, '#d8d8d8', 8);
+    ribbon('road', e.pts, e.width, ROAD_Y, '#d8d8d8', TILES.asphalt);
     const ta = nA.edges.length >= 3 ? nA.r + 1 : 0;
     const tb = nB.edges.length >= 3 ? nB.r + 1 : 0;
     const P = trim(e.pts, ta, tb);
@@ -193,7 +196,7 @@ export function buildOSMCity(scene, data, { shadows = true } = {}) {
     const r = Math.max(...n.edges.map((id) => net.edges[id].width)) / 2 + 0.6;
     const pts = [];
     for (let k = 0; k < 20; k++) pts.push({ x: n.x + Math.cos((k / 20) * Math.PI * 2) * r, z: n.z + Math.sin((k / 20) * Math.PI * 2) * r });
-    fillPoly('road', pts, ROAD_Y - 0.002, '#d8d8d8', 8);
+    fillPoly('road', pts, ROAD_Y - 0.002, '#d8d8d8', TILES.asphalt);
   }
 
   // what is road (for the "riding on the pavement" rule)
@@ -229,7 +232,9 @@ export function buildOSMCity(scene, data, { shadows = true } = {}) {
     }
     const tall = h >= 30;
     const low = h < 24 && A < 900;
-    const wall = C(tall ? pick(TOWER_TINTS) : kind === 4 ? '#f4f1ea' : pick(WALLS));
+    // towers: offices in glass, homes (and many others) as condominiums with balconies
+    const skin = tall ? (kind === 1 || kind === 5 || (kind === 0 && R() < 0.45) ? 'condo' : 'glass') : h >= 16 && R() < 0.5 ? 'condo' : 'wall';
+    const wall = C(skin !== 'wall' ? pick(TOWER_TINTS) : kind === 4 ? '#f4f1ea' : pick(WALLS));
     const roof = C(kind === 4 ? '#d35400' : pick(ROOFS));
     const uo = offs(); const vo = offs();
     // outward normal check: polygon centroid on the inside
@@ -252,9 +257,9 @@ export function buildOSMCity(scene, data, { shadows = true } = {}) {
       };
       if (low) {
         facing(p0, p1, 0, 3.5, 'shop', [C('#c8c8c8'), C('#c8c8c8'), C('#ffffff'), C('#ffffff')], [8, 3.3], uo + (k % 2) * 0.5, 0);
-        facing(p0, p1, 3.5, h, 'wall', wall, [16, 13.6], uo, vo);
+        facing(p0, p1, 3.5, h, 'wall', wall, TILES.wall, uo, vo);
       } else {
-        facing(p0, p1, 0, h, tall ? 'glass' : 'wall', [wall.clone().multiplyScalar(0.7), wall.clone().multiplyScalar(0.7), wall, wall], tall ? [12, 14] : [16, 13.6], uo, vo);
+        facing(p0, p1, 0, h, skin, [wall.clone().multiplyScalar(0.7), wall.clone().multiplyScalar(0.7), wall, wall], TILES[skin], uo, vo);
       }
       // shop sign + awning on walls that face a street
       if (low && len > 3.2 && len < 40) {
@@ -390,7 +395,7 @@ export function buildOSMCity(scene, data, { shadows = true } = {}) {
       const len = Math.hypot(b.x - a.x, b.z - a.z);
       for (; acc < len; acc += 25) {
         const x = a.x + (b.x - a.x) * (acc / len); const z = a.z + (b.z - a.z) * (acc / len);
-        B('plain', x, z).box(x - 0.8, 0, z - 0.8, x + 0.8, BTS_Y, z + 0.8, C('#cfcfcf'));
+        B('concrete', x, z).box(x - 0.8, 0, z - 0.8, x + 0.8, BTS_Y, z + 0.8, C(hasPhoto('concrete') ? '#ffffff' : '#cfcfcf'), { tile: [3.2, 6] });
         col.add(x - 0.8, z - 0.8, x + 0.8, z + 0.8, 'pillar');
       }
       acc -= len;
@@ -503,7 +508,7 @@ export function buildOSMCity(scene, data, { shadows = true } = {}) {
   for (const m of crowdMeshes(extras, shadows)) scene.add(m);
   for (const { kind, b } of chunks.values()) {
     if (b.empty) continue;
-    scene.add(b.mesh(M[kind], { cast: shadows && (kind === 'wall' || kind === 'glass' || kind === 'shop' || kind === 'plain'), receive: true }));
+    scene.add(b.mesh(M[kind], { cast: shadows && (kind === 'wall' || kind === 'glass' || kind === 'condo' || kind === 'shop' || kind === 'plain' || kind === 'concrete'), receive: true }));
   }
   for (const l of labels) {
     const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: labelTexture(l.text, { bg: l.bg || '#222', fg: l.fg || '#fff', w: 512, h: 112, font: 54 }), depthWrite: false, fog: false }));
@@ -526,6 +531,7 @@ export function buildOSMCity(scene, data, { shadows = true } = {}) {
     M.wall.emissiveIntensity = dusk * 0.7;
     M.shop.emissiveIntensity = dusk * 0.85;
     M.glass.emissiveIntensity = dusk * 0.5;
+    M.condo.emissiveIntensity = dusk * 0.6;
     lampMat.emissiveIntensity = dusk * 6;
     poolMat.opacity = dusk * 0.55;
     trainWin.emissiveIntensity = dusk * 1.4;

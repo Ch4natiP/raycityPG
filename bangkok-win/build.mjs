@@ -11,9 +11,12 @@ const css = fs.readFileSync('style.css', 'utf8');
 const maps = fs.existsSync('data') ? fs.readdirSync('data').filter((f) => /^city-.*\.json$/.test(f)) : [];
 const mapScript = maps.length ? `<script>window.CITY_DATA=${fs.readFileSync(`data/${maps[0]}`, 'utf8')};</script>\n` : '';
 if (maps.length) console.log(`map: data/${maps[0]}`);
+// Photo textures (tools/photos.py) ride along too.
+const photos = fs.existsSync('assets/photos.js') ? fs.readFileSync('assets/photos.js', 'utf8').replace(/<\/script/gi, '<\\/script') : '';
 const html = fs.readFileSync('index.html', 'utf8')
   .replace(/\s*<script type="importmap">[\s\S]*?<\/script>/, '')
   .replace('<link rel="stylesheet" href="style.css">', () => `<style>\n${css}</style>`)
+  .replace('<script src="assets/photos.js"></script>', () => (photos ? `<script>${photos}</script>` : ''))
   .replace('<script type="module" src="js/main.js"></script>', () => `${mapScript}<script>${js}</script>`);
 fs.writeFileSync('Bangkok-Win.html', html);
 console.log(`Bangkok-Win.html: ${(html.length / 1024).toFixed(0)} KB`);

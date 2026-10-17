@@ -433,3 +433,4 @@ and 8,680 (roof) points; the game crashes at 8,000 (canyon's 6,032 loads). capFi
 and UVs kept) brings every file to at most ~5,000 points; ⚡ runs it first.
 83_your_gls_canyon_reduced_points.zip  pack 82 rebuilt with it: body 4,997, hood 4,947, rear bumper 4,614,
 roof 5,083 points.
+Video 2026-10-17 20:53 (pack 83): loads and drives (night map); the tail lamps light red in several frames.

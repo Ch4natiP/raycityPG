@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { parseOM, writeOM, omParts } from '../om.js';
 import { makeZip, readZip } from '../zip.js';
-import { decodePNG, png, dds, chartsLayout, underTris, filmGlass, plateQuad, FILM_RECT, PLATE_RECT, applyOBJ, capFileVerts, VERT_CAP } from '../convert.js';
+import { decodePNG, png, dds, chartsLayout, underTris, filmGlass, plateQuad, FILM_RECT, PLATE_RECT, applyOBJ, capFileVerts, VERT_CAP, turnCar, measureArches, glassShell } from '../convert.js';
 import { decodeSpec, encodeSpec } from '../carSpec.js';
 
 const $ = (id) => document.getElementById(id);
@@ -756,7 +756,9 @@ function tailAuto() {
   // panel itself becomes the lamps — a copy 3 mm out along its normals, kind 3 (reverse) on its inner third,
   // kind 4 (brake) on the rest; the panel stays as the housing
   { const k3 = rl.parts.find((x) => x.flags[0] === 3); const k4 = rl.parts.find((x) => x.flags[0] === 4); const pan = rl.parts.filter((x) => x.flags[0] === 0 && x.positions.length / 3 > 8).sort((a, b) => b.positions.length - a.positions.length)[0];
-    if (k3 && k4 && pan && rl.parts.every((x) => (x.flags[0] !== 3 && x.flags[0] !== 4) || x.positions.length / 3 <= 8)) {
+    let pcy = 0; if (pan) { for (let i = 1; i < pan.positions.length; i += 3) pcy += pan.positions[i]; pcy /= pan.positions.length / 3; }
+    if (pan && pcy < 0) status('⚠ แผงไฟท้ายอยู่ครึ่งหน้ารถ (รถเพิ่งกลับด้าน?) · ไม่ได้สร้างไฟจากแผงนี้');
+    else if (k3 && k4 && pan && rl.parts.every((x) => (x.flags[0] !== 3 && x.flags[0] !== 4) || x.positions.length / 3 <= 8)) {
       const P = pan.positions; const N = pan.normals; const I = pan.indices; const sg = outwardSign(pan); let xm = 0; let xn = Infinity; for (let i = 0; i < P.length; i += 3) { xm = Math.max(xm, Math.abs(P[i])); xn = Math.min(xn, Math.abs(P[i])); } const xcut = xn + (xm - xn) * 0.35; // (inner 35 % of each side's span)
       const make = (inner) => { const map = new Map(); const Pp = []; const Nn = []; const Uu = []; const Ii = [];
         for (let t = 0; t < I.length; t += 3) { const cx = (P[I[t] * 3] + P[I[t + 1] * 3] + P[I[t + 2] * 3]) / 3; if ((Math.abs(cx) < xcut) !== inner) continue;
@@ -910,6 +912,7 @@ $('btn-lamp-panel').addEventListener('click', () => {
   status($('body-info').textContent);
 });
 $('ride-nose').addEventListener('input', () => { const v = +$('ride-nose').value; $('ride-nose-v').textContent = v ? `${v > 0 ? 'ลง' : 'ขึ้น'} ${Math.abs(v * 100).toFixed(1)} ซม.` : '0 ซม.'; });
+$('btn-turn-car').addEventListener('click', () => { if (!car.meshes.length) return; undo.push(comboSnap()); if (undo.length > 60) undo.shift(); redo.length = 0; turnCar(car.meshes); carMid = null; for (const m of car.meshes) m.isl = m.parts.map(islandsOf); build3D(); refresh(); status('กลับหน้า-หลังรถแล้ว (หมุนครึ่งรอบ) · กด ⚡ ต่อได้เลย'); });
 $('ride-shift').addEventListener('input', () => { const v = +$('ride-shift').value; $('ride-shift-v').textContent = v ? `${v < 0 ? 'ไปหน้า' : 'ไปหลัง'} ${Math.abs(v * 100).toFixed(1)} ซม.` : '0 ซม.'; });
 $('ride-drop').addEventListener('input', () => { const v = +$('ride-drop').value; $('ride-drop-v').textContent = `${v >= 0 ? 'ลง' : 'ขึ้น'} ${Math.abs(v * 100).toFixed(1)} ซม.`; });
 async function saveZip() {
@@ -1314,6 +1317,11 @@ async function readyForGame() {
   if (!car.meshes.length) { status('เปิดรถก่อน'); return; }
   status('⚡ กำลังทำให้พร้อมใส่เกม… (ย้าย UV ลงแผ่นลาย · กระจก · ป้าย · ไฟท้าย)'); await new Promise((r) => setTimeout(r, 30));
   const steps = [];
+  // wheel arches onto the game's wheels (front y −1.23, rear 1.15): the car moved along, if a little off
+  { const a = measureArches(car.meshes); if (a) { const dy = ((-1.23 - a.front) + (1.15 - a.rear)) / 2; if (Math.abs(dy) > 0.01 && Math.abs(dy) < 0.3) { for (const m of car.meshes) { for (const p of m.parts) for (let i = 1; i < p.positions.length; i += 3) p.positions[i] += dy; m.dirty = true; } steps.push(`🛞 ซุ้มล้อตรงล้อเกม (เลื่อน ${(dy * 100).toFixed(1)} ซม.)`); } } }
+  // no glass in the model (its glass part only a holder): glass made over the open windows
+  { const bm = car.meshes.find((m) => m.rel === 'body_2.0m'); const gp = bm && bm.parts.find((p) => p.flags[0] === 1);
+    if (gp && gp.positions.length / 3 <= 8 && !car.meshes.some((m) => m.parts.some((p) => p.flags[0] === 1 && p.positions.length / 3 > 8))) { const g = glassShell(car.meshes); if (g.cells) { Object.assign(gp, { positions: g.positions, normals: g.normals, uvs: new Float32Array(g.positions.length / 3 * 2), indices: g.indices }); delete gp._sg; bm.dirty = true; steps.push(`🪟 สร้างกระจกให้ (${g.cells} ช่อง)`); } } }
   // files over the game's point limit (they crash the game) reduced first
   const cut = []; for (const m of car.meshes) { const [a, b] = await capFileVerts(m.parts, VERT_CAP); if (b < a) { m.dirty = true; m.isl = m.parts.map(islandsOf); cut.push(`${m.rel.replace('_2.0m', '')} ${a.toLocaleString()}→${b.toLocaleString()}`); } }
   if (cut.length) { carMid = null; build3D(); steps.push(`🔻 ลดจุด (เกมเด้งถ้าเกิน): ${cut.join(', ')}`); }

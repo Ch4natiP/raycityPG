@@ -434,3 +434,11 @@ and UVs kept) brings every file to at most ~5,000 points; ⚡ runs it first.
 83_your_gls_canyon_reduced_points.zip  pack 82 rebuilt with it: body 4,997, hood 4,947, rear bumper 4,614,
 roof 5,083 points.
 Video 2026-10-17 20:53 (pack 83): loads and drives (night map); the tail lamps light red in several frames.
+The owner (pack 83): the car is back to front, cap 7,000 (or 8,000), make glass, the body does not fit the wheels.
+84_your_gls_turned_glass_wheels_7000.zip  from the owner's zip: turned half round (front at −y), arches put on the
+game's wheels (front −1.15 → −1.23, rear 1.25 → 1.15: moved 9 cm), 2 cm lower, every file ≤ ~6,700 points
+(cap 6,700 so the finished files stay under 7,000; 8,000 crashed in game earlier), window glass made over the open
+windows (glassShell), tail lamps from the model's own black lamp areas on the rear corners (the old "rearlight"
+panel was the front light strip; it joined the body), then ⚡ (decal sheet, glass for films, plates, lamps).
+RayCity UV: ↻ turn button; ⚡ also puts the arches on the game's wheels (moves up to 30 cm) and makes glass when
+the model has none; 🔴 refuses a lamp panel in the front half.

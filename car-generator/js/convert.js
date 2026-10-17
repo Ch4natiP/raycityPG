@@ -2459,9 +2459,10 @@ export function filmGlass(parts) {
   };
   const out = new Map(all.map((p) => [p, { P: [], N: [], U: [], I: [] }]));
   const emit = (p, poly, uvOf) => {
-    if (poly.length < 3) return; const o = out.get(p); const base = o.P.length / 3;
-    for (const v of poly) { o.P.push(...v.p); o.N.push(...v.n); o.U.push(...uvOf(v)); }
-    for (let i = 1; i + 1 < poly.length; i++) o.I.push(base, base + i, base + i + 1);
+    if (poly.length < 3) return; const o = out.get(p); o.seen = o.seen || new Map();
+    // points shared between triangles (same place, same UV) kept once: big glass stays under the point limit
+    const ids = poly.map((v) => { const uv = uvOf(v); const k = `${v.p.map((x) => x.toFixed(4)).join()},${uv.map((x) => x.toFixed(4)).join()}`; if (!o.seen.has(k)) { o.seen.set(k, o.P.length / 3); o.P.push(...v.p); o.N.push(...v.n); o.U.push(...uv); } return o.seen.get(k); });
+    for (let i = 1; i + 1 < poly.length; i++) o.I.push(ids[0], ids[i], ids[i + 1]);
   };
   const line = (z, zb, zt) => [0.119, 0.325 + 0.05 * Math.min(1, Math.max(0, (zt - z) / ((zt - zb) || 1)))];
   for (const t of tris) {
@@ -2721,7 +2722,7 @@ export function applyOBJ(meshes, text) {
 // load). capFileVerts reduces a file's big parts (meshoptimizer; UV seams kept, points keep their UVs, normals
 // and colours) until the file holds at most `cap` points. parts: omParts list (changed in place); returns
 // [before, after].
-export const VERT_CAP = 5000; // (later steps add a few hundred: plates, glass, lamps)
+export const VERT_CAP = 6700; // (owner: 7,000; 8,000 crashed in game; later steps add a few hundred: plates, glass, lamps)
 export async function capFileVerts(parts, cap = VERT_CAP) {
   await MeshoptSimplifier.ready;
   const count = () => parts.reduce((n, p) => n + p.positions.length / 3, 0);
@@ -2749,4 +2750,73 @@ export async function capFileVerts(parts, cap = VERT_CAP) {
     ratio *= 0.93;
   }
   return [before, count()];
+}
+
+// Whole car turned front ↔ back (half a turn about the vertical axis): x and y of every point and normal
+// negated. meshes: [{ rel, parts }] (all files, every LOD), changed in place.
+export function turnCar(meshes) {
+  for (const m of meshes) for (const p of m.parts) {
+    for (const A of [p.positions, p.normals]) for (let i = 0; i < A.length; i += 3) { A[i] = -A[i]; A[i + 1] = -A[i + 1]; }
+    delete p._sg; delete p._adj; m.dirty = true;
+  }
+}
+
+// Wheel arches measured on the car (the lowest side surface, |x| > 0.6, per 5 cm along the length): the front
+// and rear arch centres and tops. Returns { front, rear, frontTop, rearTop } or null.
+export function measureArches(meshes) {
+  const bins = new Map();
+  for (const m of meshes) for (const p of m.parts) { if (p.flags[0] !== 0 || p.positions.length / 3 <= 8) continue; const P = p.positions;
+    for (let i = 0; i < P.length; i += 3) { if (Math.abs(P[i]) < 0.6) continue; const b = Math.round(P[i + 1] * 20); bins.set(b, Math.min(bins.get(b) ?? 9, P[i + 2])); } }
+  const ks = [...bins.keys()].sort((a, b) => a - b); if (ks.length < 10) return null;
+  const low = Math.min(...ks.map((k) => bins.get(k)));
+  const runs = []; let cur = null;
+  for (let k = ks[0]; k <= ks[ks.length - 1]; k++) { if (!bins.has(k)) { if (cur && k === cur.end + 1) cur.end = k; continue; } // (a missing 5 cm bin keeps the run)
+    const high = bins.get(k) > low + 0.22; if (high) { if (!cur || k !== cur.end + 1) { cur = { start: k, end: k, top: 0 }; runs.push(cur); } cur.end = k; cur.top = Math.max(cur.top, bins.get(k)); } }
+  const arch = runs.filter((r) => r.end - r.start >= 6).sort((a, b) => (b.end - b.start) - (a.end - a.start)).slice(0, 2).sort((a, b) => a.start - b.start);
+  if (arch.length < 2) return null;
+  const c = (r) => (r.start + r.end) / 40;
+  return { front: c(arch[0]), rear: c(arch[1]), frontTop: arch[0].top, rearTop: arch[1].top };
+}
+
+// Window glass for a car whose model had none, from how it looks from outside: the sides seen across (x), the
+// windshield and rear window seen along (y). Per column of a 4 × 3 cm grid above the waist, the outer surface is
+// expected on a straight line from the waist row to the roof row (pillars and frames lie on it); cells where the
+// first surface met lies more than 5 cm inside that line (seats, the far side: an open window) get glass on the
+// line. Returns { positions, normals, indices, cells } for the glass part (kind 1).
+export function glassShell(meshes) {
+  const V = []; let zmin = Infinity; let zmax = -Infinity; let xm = 0;
+  for (const m of meshes) for (const p of m.parts) { if (p.flags[0] === 1 || p.positions.length / 3 <= 8) continue; const P = p.positions; const I = p.indices;
+    // triangle middles and corners both sampled, so big triangles still mark their cells
+    for (let i = 0; i < P.length; i += 3) V.push(P[i], P[i + 1], P[i + 2]);
+    for (let t = 0; t < I.length; t += 3) V.push(...[0, 1, 2].map((k) => (P[I[t] * 3 + k] + P[I[t + 1] * 3 + k] + P[I[t + 2] * 3 + k]) / 3)); }
+  for (let i = 0; i < V.length; i += 3) { zmin = Math.min(zmin, V[i + 2]); zmax = Math.max(zmax, V[i + 2]); xm = Math.max(xm, Math.abs(V[i])); }
+  const zw = zmin + (zmax - zmin) * 0.64; const DZ = 0.03; const DB = 0.04; // (window bottoms sit about 64 % up the car)
+  const P = []; const N = []; const I = []; let cells = 0; let sideLow = Infinity; const colLow = []; // (side windows' typical bottom row: where the windshield / rear window start)
+  for (const [a, s] of [[0, 1], [0, -1], [1, -1], [1, 1]]) {
+    const b = a === 0 ? 1 : 0; const grid = new Map(); let b0 = Infinity; let b1 = -Infinity;
+    for (let i = 0; i < V.length; i += 3) {
+      const z = V[i + 2]; if (z < zw - DZ * 2) continue; if (a === 1 && Math.abs(V[i]) > xm) continue;
+      const cb = Math.floor(V[i + b] / DB); const cz = Math.floor((z - zw) / DZ); const k = `${cb},${cz}`; const o = s * V[i + a];
+      if (!grid.has(k) || grid.get(k) < o) grid.set(k, o); b0 = Math.min(b0, cb); b1 = Math.max(b1, cb);
+    }
+    const node = new Map(); // glass node (cb, cz) → index
+    const at = (cb, cz, o) => { const k = `${cb},${cz}`; if (node.has(k)) return node.get(k); const q = [0, 0, zw + cz * DZ]; q[b] = cb * DB; q[a] = s * (o - 0.004); node.set(k, P.length / 3); P.push(...q); const n = [0, 0, 0]; n[a] = s; N.push(...n); return node.get(k); };
+    for (let cb = b0; cb <= b1; cb++) {
+      let top = -1; for (let cz = 0; cz < 60; cz++) if (grid.has(`${cb},${cz}`)) top = cz;
+      const r0 = a === 0 || !Number.isFinite(sideLow) ? -1 : sideLow - 1; const r1 = top - 1; if (r1 - r0 < 6) continue; // roof row just under the top; windshield / rear window from the side windows' bottom (not the hood or boot)
+      const o0 = grid.get(`${cb},${r0}`) ?? grid.get(`${cb},${r0 - 1}`); const o1 = grid.get(`${cb},${r1}`); if (o0 === undefined || o1 === undefined) continue;
+      const line = (cz) => o0 + (o1 - o0) * (cz - r0) / (r1 - r0);
+      let colMin = Infinity;
+      for (let cz = r0 + 1; cz < r1; cz++) {
+        const o = grid.get(`${cb},${cz}`); if (o !== undefined && o > line(cz) - 0.05) continue;
+        const q = [at(cb, cz, line(cz)), at(cb + 1, cz, line(cz)), at(cb + 1, cz + 1, line(cz + 1)), at(cb, cz + 1, line(cz + 1))];
+        // facing outward: winding by the side
+        if (a === 0) colMin = Math.min(colMin, cz);
+        const flip = (a === 0) === (s > 0); I.push(...(flip ? [q[0], q[1], q[2], q[0], q[2], q[3]] : [q[0], q[2], q[1], q[0], q[3], q[2]])); cells++;
+      }
+      if (a === 0 && Number.isFinite(colMin)) colLow.push(colMin);
+    }
+    if (a === 0 && s < 0 && colLow.length) { colLow.sort((x, y) => x - y); sideLow = colLow[Math.floor(colLow.length / 2)]; }
+  }
+  return { positions: Float32Array.from(P), normals: Float32Array.from(N), indices: Uint32Array.from(I), cells };
 }

@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { parseOM, writeOM, omParts } from '../om.js';
 import { makeZip, readZip } from '../zip.js';
-import { decodePNG, png, dds, chartsLayout, underTris, filmGlass, plateQuad, FILM_RECT, PLATE_RECT } from '../convert.js';
+import { decodePNG, png, dds, chartsLayout, underTris, filmGlass, plateQuad, FILM_RECT, PLATE_RECT, applyOBJ } from '../convert.js';
 import { decodeSpec } from '../carSpec.js';
 
 const $ = (id) => document.getElementById(id);
@@ -600,7 +600,7 @@ uvc.addEventListener('wheel', (e) => {
 // Blender round trip
 
 function exportOBJ() {
-  const lines = ['# RayCity car for Blender UV editing. Keep the shape; edit the UVs only.', `mtllib ${car.name}.mtl`, `usemtl mask`];
+  const lines = ['# RayCity car for Blender. Edit shape and UVs; keep each object (its name is its game part).', `mtllib ${car.name}.mtl`, `usemtl mask`];
   let vo = 1;
   car.meshes.forEach((m) => m.parts.forEach((p, pi) => {
     if (p.positions.length / 3 <= 8) return;
@@ -613,70 +613,12 @@ function exportOBJ() {
   return new TextEncoder().encode(lines.join('\n'));
 }
 async function importOBJ(text) {
-  // faces with their corner positions + uvs, by object
-  const V = []; const T = []; const faces = new Map(); let obj = '';
-  for (const line of text.split(/\r?\n/)) {
-    const w = line.trim().split(/\s+/);
-    if (w[0] === 'v') V.push([+w[1], +w[2], +w[3]]);
-    else if (w[0] === 'vt') T.push([+w[1], +w[2]]);
-    else if (w[0] === 'o' || w[0] === 'g') obj = w.slice(1).join(' ').replace(/_[A-Za-z]*\.\d+$|\.\d+$/, '');
-    else if (w[0] === 'f') {
-      const c = w.slice(1).map((s) => { const [a, b] = s.split('/'); const vi = +a < 0 ? V.length + +a : +a - 1; const ti = +b < 0 ? T.length + +b : +b - 1; return { p: V[vi], t: T[ti] || [0, 0] }; });
-      for (let k = 1; k + 1 < c.length; k++) { if (!faces.has(obj)) faces.set(obj, []); faces.get(obj).push([c[0], c[k], c[k + 1]]); }
-    }
-  }
-  pushUndo();
-  // Points matched by position within 2 mm (a grid of 2 mm cells, neighbours searched), so float
-  // rounding through Blender never splits a match.
-  const CELL = 500;
-  const cellKey = (x, y, z) => `${x},${y},${z}`;
-  let matched = 0; let missing = 0;
-  car.meshes.forEach((m) => m.parts.forEach((p, pi) => {
-    if (p.positions.length / 3 <= 8) return;
-    const name = `${m.rel.replace(/\//g, '__')}#${pi}`;
-    const list = faces.get(name) || [...faces.entries()].find(([k]) => k.startsWith(name))?.[1];
-    if (!list) { missing += p.indices.length / 3; return; }
-    const P = p.positions; const I = p.indices;
-    // canonical id per position (points split at UV seams share one), via the grid
-    const grid = new Map(); const canon = new Int32Array(P.length / 3);
-    const near = (q) => {
-      const cx = Math.round(q[0] * CELL); const cy = Math.round(q[1] * CELL); const cz = Math.round(q[2] * CELL);
-      let best = -1; let bd = 4e-6;
-      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let c = -1; c <= 1; c++) for (const i of grid.get(cellKey(cx + a, cy + b, cz + c)) || []) {
-        const d = (P[i * 3] - q[0]) ** 2 + (P[i * 3 + 2] - q[1]) ** 2 + (-P[i * 3 + 1] - q[2]) ** 2;
-        if (d < bd) { bd = d; best = i; }
-      }
-      return best < 0 ? -1 : canon[best];
-    };
-    for (let i = 0; i < P.length / 3; i++) {
-      const q = [P[i * 3], P[i * 3 + 2], -P[i * 3 + 1]];
-      const c0 = near(q);
-      canon[i] = c0 >= 0 ? c0 : i;
-      const k = cellKey(Math.round(q[0] * CELL), Math.round(q[1] * CELL), Math.round(q[2] * CELL));
-      if (!grid.has(k)) grid.set(k, []); grid.get(k).push(i);
-    }
-    const byTri = new Map();
-    for (const f of list) { const ids = f.map((c) => near(c.p)); if (ids.includes(-1)) continue; f.ids = ids; byTri.set([...ids].sort((a, b) => a - b).join('|'), f); }
-    const nP = []; const nN = []; const nUV = []; const nI = []; const keyOf = new Map();
-    for (let t = 0; t < I.length; t += 3) {
-      const v = [I[t], I[t + 1], I[t + 2]];
-      const ids = v.map((i) => canon[i]);
-      const f = byTri.get([...ids].sort((a, b) => a - b).join('|'));
-      if (f) matched++; else missing++;
-      for (let j = 0; j < 3; j++) {
-        let uv = [p.uvs[v[j] * 2], p.uvs[v[j] * 2 + 1]];
-        if (f) { const c = f[f.ids.indexOf(ids[j])]; if (c) uv = [c.t[0], 1 - c.t[1]]; }
-        const kk = `${v[j]}|${uv[0].toFixed(5)},${uv[1].toFixed(5)}`;
-        let n = keyOf.get(kk);
-        if (n === undefined) { n = nP.length / 3; keyOf.set(kk, n); nP.push(P[v[j] * 3], P[v[j] * 3 + 1], P[v[j] * 3 + 2]); nN.push(p.normals[v[j] * 3], p.normals[v[j] * 3 + 1], p.normals[v[j] * 3 + 2]); nUV.push(uv[0], uv[1]); }
-        nI.push(n);
-      }
-    }
-    p.positions = new Float32Array(nP); p.normals = new Float32Array(nN); p.uvs = new Float32Array(nUV); p.indices = Uint32Array.from(nI);
-    m.isl[pi] = islandsOf(p); m.dirty = true;
-  }));
-  selected = new Set(); refresh(); build3D();
-  status(`นำ UV จาก Blender: ตรงกัน ${matched.toLocaleString()} สามเหลี่ยม${missing ? ` · ไม่เจอ ${missing.toLocaleString()} (คง UV เดิม: อย่าแก้รูปทรงใน Blender)` : ''}`);
+  undo.push(comboSnap()); if (undo.length > 60) undo.shift(); redo.length = 0;
+  const r = applyOBJ(car.meshes, text);
+  for (const m of car.meshes) m.isl = m.parts.map(islandsOf);
+  carMid = null; build3D(); refresh();
+  status(r.parts ? `นำกลับจาก Blender แล้ว: ${r.parts} ชิ้น (${r.tris.toLocaleString()} สามเหลี่ยม) · รับทั้งรูปทรงและ UV${r.tooBig ? ` · ⚠ ${r.tooBig} ชิ้นจุดเกิน 65,535 ไม่ได้นำเข้า` : ''}${r.unknown.length ? ` · ⚠ ชื่อไม่ตรงชิ้นไหน: ${r.unknown.slice(0, 5).join(', ')}` : ''} · กด ⚡ ทำให้พร้อมใส่เกม ได้เลย`
+    : `ไม่เจอชิ้นที่ชื่อตรงกัน: ชื่อ object ใน Blender ต้องเป็นแบบ body_2.0m#0 (ที่ส่งออกจากเว็บ) · เจอ: ${r.unknown.slice(0, 5).join(', ') || 'ไม่มี object'}`);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1968,7 +1910,7 @@ $('btn-blender-out').addEventListener('click', async () => {
   status('แตก zip แล้วเปิด .obj ใน Blender (File › Import › Wavefront) · แก้เสร็จ Export เป็น .obj แล้วกด ⬆ นำกลับ');
 });
 $('btn-blender-in').addEventListener('click', () => objIn.click());
-objIn.addEventListener('change', async (e) => { const f = e.target.files[0]; if (f && car.meshes.length) await importOBJ(await f.text()); e.target.value = ''; });
+objIn.addEventListener('change', async (e) => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; if (!car.meshes.length) { status('เปิดรถ (.zip ที่ใช้ส่งออก) ก่อน แล้วค่อยกด ⬆ นำกลับ'); return; } await importOBJ(await f.text()); });
 window.addEventListener('keydown', (e) => {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
   const k = e.key.toLowerCase();

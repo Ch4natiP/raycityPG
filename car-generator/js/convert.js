@@ -2672,3 +2672,47 @@ export async function defaultPartsLikeEscarabajo(out, name, { log = () => {} } =
   if (added.length) log(`เติม default ที่ขาด: ${added.join(', ')}`);
   return out;
 }
+
+// A car's parts back from Blender (.obj exported by the pages: one object per part, named
+// "<file with / as __>#<part>"): each named part takes the object's own points, UVs and normals, so shape
+// edits come back too (the old way matched by position and lost any moved point). Blender's ".001" / "_Mesh"
+// suffixes and single / double underscores are allowed. meshes: [{ rel, parts }]; returns counts.
+export function applyOBJ(meshes, text) {
+  const V = []; const T = []; const N = []; const objs = new Map(); let cur = null; let named = false;
+  const norm = (s) => s.replace(/\.\d+$/, '').replace(/_Mesh$/i, '').replace(/\.\d+$/, '').replace(/__/g, '_').toLowerCase();
+  for (const line of text.split(/\r?\n/)) {
+    const w = line.trim().split(/\s+/);
+    if (w[0] === 'v') V.push([+w[1], +w[2], +w[3]]);
+    else if (w[0] === 'vt') T.push([+w[1], +w[2]]);
+    else if (w[0] === 'vn') N.push([+w[1], +w[2], +w[3]]);
+    else if (w[0] === 'o' || (w[0] === 'g' && !named)) { if (w[0] === 'o') named = true; const k = norm(w.slice(1).join(' ')); if (!objs.has(k)) objs.set(k, []); cur = objs.get(k); }
+    else if (w[0] === 'f' && cur) {
+      const c = w.slice(1).map((s) => { const [a, b, n] = s.split('/'); const ix = (x, L) => (x ? (+x < 0 ? L + +x : +x - 1) : -1); return [ix(a, V.length), ix(b, T.length), ix(n, N.length)]; });
+      for (let k = 1; k + 1 < c.length; k++) cur.push([c[0], c[k], c[k + 1]]);
+    }
+  }
+  let parts = 0; let tris = 0; let tooBig = 0; const used = new Set();
+  for (const m of meshes) m.parts.forEach((p, pi) => {
+    const key = norm(`${m.rel.replace(/\//g, '__')}#${pi}`); const faces = objs.get(key); if (!faces || !faces.length) return;
+    used.add(key);
+    const map = new Map(); const P = []; const NN = []; const U = []; const I = [];
+    for (const f of faces) {
+      // normal of the face for corners without one (Blender coords: y up, -z forward)
+      const [a, b, c] = f.map((x) => V[x[0]]); const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]]; const e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+      let fn = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]]; const l = Math.hypot(...fn) || 1; fn = fn.map((x) => x / l);
+      for (const [vi, ti, ni] of f) {
+        const k = `${vi}/${ti}/${ni}`;
+        if (!map.has(k)) {
+          map.set(k, P.length / 3); const q = V[vi]; const t = T[ti] || [0, 0]; const n = N[ni] || fn;
+          P.push(q[0], -q[2], q[1]); NN.push(n[0], -n[2], n[1]); U.push(t[0], 1 - t[1]); // back to RayCity: x, y back, z up
+        }
+        I.push(map.get(k));
+      }
+    }
+    if (P.length / 3 > 65535) { tooBig++; return; }
+    Object.assign(p, { positions: Float32Array.from(P), normals: Float32Array.from(NN), uvs: Float32Array.from(U), indices: Uint32Array.from(I) });
+    delete p._adj; delete p._sg; parts++; tris += I.length / 3; m.dirty = true;
+  });
+  const unknown = [...objs.keys()].filter((k) => !used.has(k) && objs.get(k).length);
+  return { parts, tris, tooBig, unknown };
+}

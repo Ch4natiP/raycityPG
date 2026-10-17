@@ -4,7 +4,7 @@
 // RayCity space: x left, y back, z up; three.js shows it as (x, z, −y).
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { loadModel, convert, bendTemplate, turnAround, GAME_WHEELS, fitToWheels, decodePNG, dds, tailColoursOnMask } from '../convert.js';
+import { loadModel, convert, bendTemplate, turnAround, GAME_WHEELS, fitToWheels, decodePNG, dds, tailColoursOnMask, applyOBJ } from '../convert.js';
 import { parseOM, writeOM, omParts } from '../om.js';
 import { makeZip, readZip } from '../zip.js';
 import { checkCar, renderChecks, innerName } from '../checkCar.js';
@@ -256,53 +256,18 @@ async function blenderOut() {
   download(await makeZip(files), `${name}_blender.zip`);
 }
 async function blenderIn(text) {
-  const V = []; const T = []; const faces = new Map(); let obj = '';
-  for (const line of text.split(/\r?\n/)) {
-    const w = line.trim().split(/\s+/);
-    if (w[0] === 'v') V.push([+w[1], +w[2], +w[3]]);
-    else if (w[0] === 'vt') T.push([+w[1], +w[2]]);
-    else if (w[0] === 'o' || w[0] === 'g') obj = w.slice(1).join(' ').replace(/\.\d+$/, '');
-    else if (w[0] === 'f') {
-      const c = w.slice(1).map((s) => { const [a, b] = s.split('/'); return { p: V[+a < 0 ? V.length + +a : +a - 1], t: T[+b < 0 ? T.length + +b : +b - 1] || [0, 0] }; });
-      for (let k = 1; k + 1 < c.length; k++) { if (!faces.has(obj)) faces.set(obj, []); faces.get(obj).push([c[0], c[k], c[k + 1]]); }
-    }
-  }
-  const CELL = 500; let matched = 0; let missing = 0;
-  for (const m of meshesOf(state.out)) {
-    let changed = false;
-    m.parts.forEach((p, pi) => {
-      if (p.positions.length / 3 <= 8) return;
-      const nm = `${m.rel.replace(/\//g, '__')}#${pi}`;
-      const list = faces.get(nm) || [...faces.entries()].find(([k]) => k.startsWith(nm))?.[1];
-      if (!list) { missing += p.indices.length / 3; return; }
-      const P = p.positions; const grid = new Map(); const canon = new Int32Array(P.length / 3);
-      const key = (x, y, z) => `${x},${y},${z}`;
-      const near = (q) => { const cx = Math.round(q[0] * CELL); const cy = Math.round(q[1] * CELL); const cz = Math.round(q[2] * CELL); let best = -1; let bd = 4e-6; for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let c = -1; c <= 1; c++) for (const i of grid.get(key(cx + a, cy + b, cz + c)) || []) { const d = (P[i * 3] - q[0]) ** 2 + (P[i * 3 + 2] - q[1]) ** 2 + (-P[i * 3 + 1] - q[2]) ** 2; if (d < bd) { bd = d; best = i; } } return best < 0 ? -1 : canon[best]; };
-      for (let i = 0; i < P.length / 3; i++) { const q = [P[i * 3], P[i * 3 + 2], -P[i * 3 + 1]]; const c0 = near(q); canon[i] = c0 >= 0 ? c0 : i; const k = key(Math.round(q[0] * CELL), Math.round(q[1] * CELL), Math.round(q[2] * CELL)); if (!grid.has(k)) grid.set(k, []); grid.get(k).push(i); }
-      const byTri = new Map();
-      for (const f of list) { const ids = f.map((c) => near(c.p)); if (ids.includes(-1)) continue; f.ids = ids; byTri.set([...ids].sort((a, b) => a - b).join('|'), f); }
-      const nP = []; const nN = []; const nUV = []; const nI = []; const keyOf = new Map();
-      for (let t = 0; t < p.indices.length; t += 3) {
-        const v = [p.indices[t], p.indices[t + 1], p.indices[t + 2]]; const ids = v.map((i) => canon[i]);
-        const f = byTri.get([...ids].sort((a, b) => a - b).join('|')); if (f) matched++; else missing++;
-        for (let j = 0; j < 3; j++) {
-          let uv = [p.uvs[v[j] * 2], p.uvs[v[j] * 2 + 1]];
-          if (f) { const c = f[f.ids.indexOf(ids[j])]; if (c) uv = [c.t[0], 1 - c.t[1]]; }
-          const kk = `${v[j]}|${uv[0].toFixed(5)},${uv[1].toFixed(5)}`;
-          let n = keyOf.get(kk);
-          if (n === undefined) { n = nP.length / 3; keyOf.set(kk, n); nP.push(P[v[j] * 3], P[v[j] * 3 + 1], P[v[j] * 3 + 2]); nN.push(p.normals[v[j] * 3], p.normals[v[j] * 3 + 1], p.normals[v[j] * 3 + 2]); nUV.push(uv[0], uv[1]); }
-          nI.push(n);
-        }
-      }
-      p.positions = new Float32Array(nP); p.normals = new Float32Array(nN); p.uvs = new Float32Array(nUV); p.indices = Uint32Array.from(nI); changed = true;
-    });
-    if (!changed) continue;
+  // each part takes its Blender object's own shape and UVs (applyOBJ); LOD / variant copies follow
+  const meshes = meshesOf(state.out); const r = applyOBJ(meshes, text);
+  for (const m of meshes) {
+    if (!m.dirty) continue;
     const bytes = writeOM(m.om, m.parts.map((q) => ({ ...q, kind: q.flags[0] })));
-    for (const [rel, b] of state.out) if (b.length === m.orig.length && b.every((x, i) => x === m.orig[i])) state.out.set(rel, bytes);
+    const dir = (x) => (x.includes('/') ? x.split('/')[0] : '');
+    for (const [rel, b] of state.out) if (dir(rel) === dir(m.rel) && b.length === m.orig.length && b.every((x, i) => x === m.orig[i])) state.out.set(rel, bytes);
   }
-  $('build-log').textContent = `นำ UV จาก Blender: ตรงกัน ${matched.toLocaleString()} สามเหลี่ยม${missing ? ` · ไม่เจอ ${missing.toLocaleString()} (คง UV เดิม)` : ''}`;
+  $('build-log').textContent = r.parts ? `นำกลับจาก Blender: ${r.parts} ชิ้น (${r.tris.toLocaleString()} สามเหลี่ยม) · รับทั้งรูปทรงและ UV${r.tooBig ? ` · ⚠ ${r.tooBig} ชิ้นจุดเกิน 65,535` : ''}${r.unknown.length ? ` · ⚠ ชื่อไม่ตรง: ${r.unknown.slice(0, 5).join(', ')}` : ''} · กด 🎮 ได้เลย`
+    : `ไม่เจอชิ้นที่ชื่อตรงกัน (ชื่อ object ต้องเป็นแบบ body_2.0m#0 ที่ส่งออกจากเว็บ) · เจอ: ${r.unknown.slice(0, 5).join(', ') || 'ไม่มี'}`;
   renderChecks($('checks'), await checkCar(state.out, state.outName, state.template));
-  await showCar(); setTab('uv');
+  await showCar(); setTab('car');
 }
 
 // ---------------------------------------------------------------------------------------------

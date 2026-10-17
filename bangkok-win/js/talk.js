@@ -181,7 +181,7 @@ export class Talk {
     if (this.jobs.active) return this.say('มีคนนั่งอยู่แล้วนี่ ไว้คราวหน้านะ', [['ครับ', () => this.close()]]);
     w.quote ??= this.jobs.quote(w, this.walker);
     const q = w.quote;
-    const hello = w.customer ? `${w.customer.call} (${w.customer.job})` : pick(['พี่ๆ ว่างไหม', 'ไปไหมคะ', 'วินๆ ไปหน่อยครับ']);
+    const hello = w.customer ? `${w.customer.call} (${w.customer.job})` : pick(['พี่ๆ ว่างไหม', 'ไปไหมพี่', 'วินๆ ไปหน่อย']);
     this.say(`${hello} ไป${q.dest.name} ${baht(q.fare)} ได้ไหม`, [
       ['ได้เลย เดี๋ยวพี่ไปเอารถ', () => { w.agreed = true; this.say('โอเค รอตรงนี้นะ', [['👍', () => this.close()]]); }],
       ['ขอเพิ่มอีกหน่อยนะ (ต่อราคา)', () => this.haggle(w)],

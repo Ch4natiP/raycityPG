@@ -11,17 +11,26 @@ const els = osm.elements || [];
 const nodesById = new Map();
 for (const el of els) if (el.type === 'node') nodesById.set(el.id, el);
 
-// ---- projection: metres east (x) and south (z) of the middle of the data ----
+// ---- the area: what the query asked for ----
+// Overpass returns whole ways, so long roads and rail lines run on for kilometres outside the box.
+// The nodes it returns on their own (signals, shops, stations) all lie inside it: they set the area,
+// and everything else is clipped to it (plus a small margin).
 let latMin = Infinity; let latMax = -Infinity; let lonMin = Infinity; let lonMax = -Infinity;
-for (const el of els) {
-  const pts = el.type === 'node' ? [el] : el.geometry || [];
-  for (const p of pts) { if (!p) continue; latMin = Math.min(latMin, p.lat); latMax = Math.max(latMax, p.lat); lonMin = Math.min(lonMin, p.lon); lonMax = Math.max(lonMax, p.lon); }
-}
+const grow = (p) => { latMin = Math.min(latMin, p.lat); latMax = Math.max(latMax, p.lat); lonMin = Math.min(lonMin, p.lon); lonMax = Math.max(lonMax, p.lon); };
+const lone = els.filter((el) => el.type === 'node');
+if (lone.length >= 20) lone.forEach(grow);
+else for (const el of els) for (const p of el.type === 'node' ? [el] : el.geometry || []) if (p) grow(p);
 const lat0 = (latMin + latMax) / 2;
 const lon0 = (lonMin + lonMax) / 2;
 const MX = 111320 * Math.cos((lat0 * Math.PI) / 180);
 const MZ = 110574;
 const P = (lat, lon) => ({ x: (lon - lon0) * MX, z: -(lat - lat0) * MZ });
+const MARGIN = 40; // metres
+const HX = ((lonMax - lonMin) / 2) * MX + MARGIN;
+const HZ = ((latMax - latMin) / 2) * MZ + MARGIN;
+const inside = (p) => Math.abs(p.x) <= HX && Math.abs(p.z) <= HZ;
+// split a line (array of items) into the runs that lie inside the area
+const runs = (items, at) => { const out = []; let cur = []; for (const it of items) { const p = at(it); if (p && inside(p)) cur.push(it); else { if (cur.length >= 2) out.push(cur); cur = []; } } if (cur.length >= 2) out.push(cur); return out; };
 const r1 = (v) => Math.round(v * 10) / 10;
 
 const names = [];
@@ -42,6 +51,13 @@ const roadWays = els.filter((el) => el.type === 'way' && ROAD[el.tags?.highway] 
 // skip elevated expressways (they are toll roads above the streets)
 const ground = roadWays.filter((w) => !(w.tags.highway === 'motorway' || (w.tags.bridge === 'yes' && Number(w.tags.layer || 1) >= 2)));
 
+const clipped = [];
+for (const w of ground) {
+  const idx = w.nodes.map((id, k) => k);
+  const at = (k) => { const n = nodesById.get(w.nodes[k]); if (n) return P(n.lat, n.lon); const g = w.geometry?.[k]; return g ? P(g.lat, g.lon) : null; };
+  for (const r of runs(idx, at)) clipped.push({ ...w, nodes: r.map((k) => w.nodes[k]), geometry: w.geometry ? r.map((k) => w.geometry[k]) : undefined });
+}
+ground.length = 0; ground.push(...clipped);
 const use = new Map();
 for (const w of ground) w.nodes.forEach((id, k) => { use.set(id, (use.get(id) || 0) + (k === 0 || k === w.nodes.length - 1 ? 2 : 1)); });
 const coord = (id, w, k) => { const n = nodesById.get(id); if (n) return P(n.lat, n.lon); const g = w.geometry?.[k]; return g ? P(g.lat, g.lon) : null; };
@@ -136,6 +152,7 @@ for (const w of els) {
   if (Number(w.tags.layer) < 0 || w.tags['building:part']) continue;
   let pts = ring(w);
   if (pts.length < 3) continue;
+  if (!inside({ x: pts.reduce((t, q) => t + q.x, 0) / pts.length, z: pts.reduce((t, q) => t + q.z, 0) / pts.length })) continue;
   if (area(pts) < 0) pts = pts.reverse(); // counter-clockwise (seen from above with z south)
   const A = Math.abs(area(pts));
   if (A < 12) continue;
@@ -151,24 +168,30 @@ const water = [];
 for (const w of els) {
   if (w.type !== 'way' || !w.tags) continue;
   const t = w.tags;
-  if (/^(park|garden|pitch)$/.test(t.leisure || '') || /^(grass|recreation_ground|cemetery)$/.test(t.landuse || '')) { const pts = ring(w); if (pts.length >= 3) green.push(flat(pts)); }
-  if (t.natural === 'water') { const pts = ring(w); if (pts.length >= 3) water.push(flat(pts)); }
+  const clampIn = (pts) => (pts.some(inside) ? pts.map((p) => ({ x: Math.max(-HX, Math.min(HX, p.x)), z: Math.max(-HZ, Math.min(HZ, p.z)) })) : []);
+  if (/^(park|garden|pitch)$/.test(t.leisure || '') || /^(grass|recreation_ground|cemetery)$/.test(t.landuse || '')) { const pts = clampIn(ring(w)); if (pts.length >= 3) green.push(flat(pts)); }
+  if (t.natural === 'water') { const pts = clampIn(ring(w)); if (pts.length >= 3) water.push(flat(pts)); }
 }
-const canals = els.filter((w) => w.type === 'way' && /^(canal|river)$/.test(w.tags?.waterway || '')).map((w) => flat((w.geometry || []).filter(Boolean).map((q) => P(q.lat, q.lon))));
+const lineRuns = (w) => runs((w.geometry || []).filter(Boolean).map((q) => P(q.lat, q.lon)), (p) => p);
+const canals = els.filter((w) => w.type === 'way' && /^(canal|river)$/.test(w.tags?.waterway || '')).flatMap((w) => lineRuns(w).map(flat));
 
 // ---- BTS viaduct (elevated light rail) and stations ----
-const rail = els.filter((w) => w.type === 'way' && /^(light_rail|monorail)$/.test(w.tags?.railway || '') && (w.tags.bridge || Number(w.tags.layer) >= 1) && !/MRT|subway/i.test(w.tags.name || '')).map((w) => [nm(thaiName(w.tags)), ...flat((w.geometry || []).filter(Boolean).map((q) => P(q.lat, q.lon)))]);
+// BTS is often tagged railway=subway on a viaduct; keep any rail line that is up in the air (MRT runs underground)
+const rail = els.filter((w) => w.type === 'way' && /^(light_rail|monorail|subway|rail)$/.test(w.tags?.railway || '') && (w.tags.bridge || Number(w.tags.layer) >= 1) && Number(w.tags.layer || 1) > 0).flatMap((w) => lineRuns(w).map((r) => [nm(thaiName(w.tags)), ...flat(r)]));
 const stations = [];
 const seenSt = new Set();
 for (const el of els) {
   if (el.type !== 'node' || !el.tags) continue;
   const t = el.tags;
-  if (!(t.railway === 'station' || t.railway === 'halt' || t.public_transport === 'station')) continue;
+  if (!(t.railway === 'station' || t.railway === 'halt')) continue; // (bus and boat piers are public_transport=station too)
   const name = thaiName(t);
   if (!name || seenSt.has(name)) continue;
   seenSt.add(name);
   const p = P(el.lat, el.lon);
-  const sys = /BTS/i.test(t.network || t.operator || t.name || '') || t.station === 'light_rail' ? 'BTS' : /MRT|subway/i.test(t.network || t.operator || '') || t.station === 'subway' ? 'MRT' : 'rail';
+  // BTS and MRT stations are both often tagged station=subway; the operator tells them apart
+  const who = `${t.network || ''} ${t.operator || ''} ${t.name || ''}`;
+  const sys = /BTS|ระบบขนส่งมวลชนกรุงเทพ|บีทีเอส/i.test(who) || t.station === 'light_rail' ? 'BTS'
+    : /MRT|ทางด่วนและรถไฟฟ้า|รถไฟฟ้ามหานคร|BEM/i.test(who) || t.station === 'subway' ? 'MRT' : 'rail';
   stations.push([r1(p.x), r1(p.z), nm(name), sys]);
 }
 
@@ -189,6 +212,7 @@ for (const el of els) {
   let p;
   if (el.type === 'node') p = P(el.lat, el.lon);
   else if (el.geometry?.length) { const pts = el.geometry.filter(Boolean).map((q) => P(q.lat, q.lon)); p = { x: pts.reduce((s, q) => s + q.x, 0) / pts.length, z: pts.reduce((s, q) => s + q.z, 0) / pts.length }; } else continue;
+  if (!inside(p)) continue;
   pois.push([r1(p.x), r1(p.z), nm(thaiName(t)), LANDMARK(t) ? 1 : 0]);
 }
 const places = els.filter((el) => el.type === 'node' && /^(suburb|quarter|neighbourhood)$/.test(el.tags?.place || '')).map((el) => { const p = P(el.lat, el.lon); return [r1(p.x), r1(p.z), nm(thaiName(el.tags))]; });

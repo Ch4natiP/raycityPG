@@ -461,10 +461,16 @@ export function buildOSMCity(scene, data, { shadows = true } = {}) {
   for (let k = pois.length - 1; k >= 0; k--) if (pois.slice(0, k).some((q) => q.name === pois[k].name && Math.hypot(q.x - pois[k].x, q.z - pois[k].z) < 25)) pois.splice(k, 1);
 
   // ---- win stands: at the busiest corners, near BTS stations first ----
-  const standAt = pois.filter((p) => p.station).concat(net.nodes.filter((n) => n.signal).map((n) => ({ x: n.x, z: n.z, name: '' })));
+  // then signalled junctions, then soi mouths (a soi meeting a main road): in Bangkok there is a win on almost every one
+  const soiMouths = net.nodes.filter((n) => { const es = n.edges.map((id) => net.edges[id]); return es.some((e) => e.main) && es.some((e) => !e.main); });
+  const standAt = pois.filter((p) => p.station)
+    .concat(net.nodes.filter((n) => n.signal).map((n) => ({ x: n.x, z: n.z, name: '' })))
+    .concat(soiMouths.map((n) => ({ x: n.x, z: n.z, name: '' })));
+  const span = (Math.max(...data.nodes.map((n) => n[0])) - Math.min(...data.nodes.map((n) => n[0]))) * (Math.max(...data.nodes.map((n) => n[1])) - Math.min(...data.nodes.map((n) => n[1])));
+  const maxStands = Math.max(6, Math.min(30, Math.round(span / 350000))); // about one per 0.35 km²
   for (const sp of standAt) {
-    if (stands.length >= 6) break;
-    if (stands.some((s) => Math.hypot(s.x - sp.x, s.z - sp.z) < 250)) continue;
+    if (stands.length >= maxStands) break;
+    if (stands.some((s) => Math.hypot(s.x - sp.x, s.z - sp.z) < 300)) continue;
     const near = net.nearest(sp.x + 15, sp.z + 15, 60);
     if (!near || near.e.len < 30) continue;
     const t = Math.max(8, Math.min(near.e.len - 8, near.t));

@@ -442,3 +442,8 @@ windows (glassShell), tail lamps from the model's own black lamp areas on the re
 panel was the front light strip; it joined the body), then ⚡ (decal sheet, glass for films, plates, lamps).
 RayCity UV: ↻ turn button; ⚡ also puts the arches on the game's wheels (moves up to 30 cm) and makes glass when
 the model has none; 🔴 refuses a lamp panel in the front half.
+The owner: pack 84 crashes. Known-good: pack 80 (file ≤ 7,087 points / 18,918 indices, part ≤ 5,915, car 21,936 /
+59,691), pack 83 (5,083 / 18,051, car 23,015 / 66,066). Pack 84 went past all of them (part 6,539, file indices
+25,887, car 31,408 / 93,192). capFileVerts now also caps indices (17,000 per file) with points at 5,400.
+85_your_gls_84_smaller.zip  pack 84 rebuilt under those: file ≤ 5,219 points / 14,628 indices, part ≤ 4,186,
+car 20,036 / 54,420 — all below pack 80.

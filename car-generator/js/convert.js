@@ -2722,16 +2722,18 @@ export function applyOBJ(meshes, text) {
 // load). capFileVerts reduces a file's big parts (meshoptimizer; UV seams kept, points keep their UVs, normals
 // and colours) until the file holds at most `cap` points. parts: omParts list (changed in place); returns
 // [before, after].
-export const VERT_CAP = 6700; // (owner: 7,000; 8,000 crashed in game; later steps add a few hundred: plates, glass, lamps)
-export async function capFileVerts(parts, cap = VERT_CAP) {
+export const VERT_CAP = 5400; // per file, points (owner asked 7,000: 6,719 crashed; 5,083 and canyon's 7,087 / part 5,915 load)
+export const IDX_CAP = 17000; // per file, indices (18,918 and 18,051 load; 25,887 crashed)
+export async function capFileVerts(parts, cap = VERT_CAP, icap = IDX_CAP) {
   await MeshoptSimplifier.ready;
   const count = () => parts.reduce((n, p) => n + p.positions.length / 3, 0);
-  const before = count(); if (before <= cap) return [before, before];
+  const idx = () => parts.reduce((n, p) => n + p.indices.length, 0);
+  const before = count(); if (before <= cap && idx() <= icap) return [before, before];
   const fixed = parts.filter((p) => p.positions.length / 3 <= 64).reduce((n, p) => n + p.positions.length / 3, 0);
   const big = parts.filter((p) => p.positions.length / 3 > 64);
   const total = big.reduce((n, p) => n + p.positions.length / 3, 0);
   const orig = big.map((p) => ({ positions: p.positions, normals: p.normals, uvs: p.uvs, indices: p.indices }));
-  let ratio = (cap - fixed) / total;
+  let ratio = Math.min((cap - fixed) / total, icap / idx());
   for (let round = 0; round < 12; round++) {
     big.forEach((p, k) => {
       const o = orig[k]; const nv = o.positions.length / 3; const want = Math.max(24, Math.floor(nv * ratio));
@@ -2746,7 +2748,7 @@ export async function capFileVerts(parts, cap = VERT_CAP) {
       for (let i = 0; i < nv; i++) if (map[i] >= 0) { P.set(o.positions.subarray(i * 3, i * 3 + 3), map[i] * 3); N.set(o.normals.subarray(i * 3, i * 3 + 3), map[i] * 3); U.set(o.uvs.subarray(i * 2, i * 2 + 2), map[i] * 2); }
       Object.assign(p, { positions: P, normals: N, uvs: U, indices: Uint32Array.from(best, (i) => map[i]) }); delete p._adj; delete p._sg;
     });
-    if (count() <= cap) break;
+    if (count() <= cap && idx() <= icap) break;
     ratio *= 0.93;
   }
   return [before, count()];

@@ -29,9 +29,23 @@ function resize() { renderer.setSize(window.innerWidth, window.innerHeight, fals
 window.addEventListener('resize', resize); resize();
 
 // ---------------------------------------------------------------------------------------------
-// Track: a closed loop (centre line), drawn into the ground texture; checkpoints along it
+// Tracks. The practice loop (drawn into a ground texture), or one of the game's own race routes (track/*.0m)
+// laid over the region's road network (etc/traffic/road_*.bin), both pulled out by tools/extract-city.mjs into
+// js/drive/rc-city.js. RayCity world (x, y, z up) → three (x, z, −y), shifted so the start sits at the origin.
+// TRACK holds the centre line as Vector2(x, z), HEIGHT its road height; LOOP false = a sprint to the finish.
 
-const TRACK = (() => {
+const world = new THREE.Group(); scene.add(world);
+let TRACK = []; let HEIGHT = []; let LOOP = true; let LAPS = 0; let ROAD_W = 14; let BOUND = 317;
+let nearRoad = () => Infinity; // distance to the closest other road (city roads)
+let blocks = []; let blockGrid = new Map(); // building footprints [x0, z0, x1, z1] for collisions
+const unpack = (a) => { const o = []; let x = 0; let y = 0; let z = 0; for (let i = 0; i < a.length; i += 3) { x += a[i]; y += a[i + 1]; z += a[i + 2]; o.push([x / 10, y / 10, z / 10]); } return o; };
+function clearWorld() {
+  world.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) [o.material].flat().forEach((m) => { if (m.map) m.map.dispose(); m.dispose(); }); });
+  world.clear(); blocks = []; blockGrid = new Map(); nearRoad = () => Infinity;
+}
+
+function buildPractice() {
+  clearWorld();
   const pts = []; const N = 240;
   for (let i = 0; i < N; i++) {
     const a = (i / N) * Math.PI * 2;
@@ -39,10 +53,7 @@ const TRACK = (() => {
     const r = 150 + 28 * Math.sin(a * 3) + 14 * Math.cos(a * 5);
     pts.push(new THREE.Vector2(Math.cos(a) * r * 1.25, Math.sin(a) * r * 0.8));
   }
-  return pts;
-})();
-const ROAD_W = 14; const WORLD = 640;
-{
+  TRACK = pts; HEIGHT = pts.map(() => 0); LOOP = true; LAPS = 0; ROAD_W = 14; const WORLD = 640; BOUND = WORLD / 2 - 3;
   const S = 2048; const cv = document.createElement('canvas'); cv.width = cv.height = S; const g = cv.getContext('2d');
   const toPx = (p) => [(p.x / WORLD + 0.5) * S, (p.y / WORLD + 0.5) * S];
   g.fillStyle = '#4c6b34'; g.fillRect(0, 0, S, S);
@@ -58,23 +69,143 @@ const ROAD_W = 14; const WORLD = 640;
   for (let k = -6; k < 6; k++) for (let j = 0; j < 2; j++) { g.fillStyle = (k + j) % 2 ? '#111' : '#fff'; const c = a.clone().addScaledVector(n, k * (ROAD_W / 12) + ROAD_W / 24).addScaledVector(d, j * 1.2); const [x, y] = toPx(c); g.fillRect(x - w(0.6), y - w(0.6), w(1.2), w(1.2)); }
   const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(WORLD, WORLD), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95 }));
-  ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+  ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; world.add(ground);
   // tyre walls / cones on the outside of the bends, a few buildings
   const cone = new THREE.Mesh(new THREE.ConeGeometry(0.35, 0.9, 10), new THREE.MeshStandardMaterial({ color: '#ff7a1a' }));
-  TRACK.forEach((p, i) => { if (i % 4) return; const q = TRACK[(i + 1) % TRACK.length]; const dd = new THREE.Vector2().subVectors(q, p).normalize(); for (const s of [-1, 1]) { const c = cone.clone(); const o = p.clone().addScaledVector(new THREE.Vector2(-dd.y, dd.x), s * (ROAD_W / 2 + 2)); c.position.set(o.x, 0.45, o.y); c.castShadow = true; scene.add(c); } });
+  TRACK.forEach((p, i) => { if (i % 4) return; const q = TRACK[(i + 1) % TRACK.length]; const dd = new THREE.Vector2().subVectors(q, p).normalize(); for (const s of [-1, 1]) { const c = cone.clone(); const o = p.clone().addScaledVector(new THREE.Vector2(-dd.y, dd.x), s * (ROAD_W / 2 + 2)); c.position.set(o.x, 0.45, o.y); c.castShadow = true; world.add(c); } });
   const box = new THREE.BoxGeometry(1, 1, 1);
   // buildings well away from the road (inside the loop and around it)
-  for (let i = 0, n = 0; i < 2000 && n < 70; i++) { const x = (Math.random() - 0.5) * (WORLD - 40); const z = (Math.random() - 0.5) * (WORLD - 40); const sx = 10 + Math.random() * 14; const sz = 10 + Math.random() * 14; if (onTrack(x, z).dist < ROAD_W / 2 + 6 + Math.max(sx, sz) * 0.75) continue; const h = 8 + Math.random() * 40; const m = new THREE.Mesh(box, new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(0.6, 0.08, 0.35 + Math.random() * 0.3) })); m.scale.set(sx, h, sz); m.position.set(x, h / 2, z); m.castShadow = true; scene.add(m); n++; }
+  for (let i = 0, n = 0; i < 2000 && n < 70; i++) { const x = (Math.random() - 0.5) * (WORLD - 40); const z = (Math.random() - 0.5) * (WORLD - 40); const sx = 10 + Math.random() * 14; const sz = 10 + Math.random() * 14; if (onTrack(x, z, true).dist < ROAD_W / 2 + 6 + Math.max(sx, sz) * 0.75) continue; const h = 8 + Math.random() * 40; const m = new THREE.Mesh(box, new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(0.6, 0.08, 0.35 + Math.random() * 0.3) })); m.scale.set(sx, h, sz); m.position.set(x, h / 2, z); m.castShadow = true; world.add(m); addBlock(x - sx / 2, z - sz / 2, x + sx / 2, z + sz / 2); n++; }
+  $('track-info').textContent = 'สนามฝึก · วงปิด ≈ 1.2 กม.';
 }
-// nearest distance to the track's centre line and the index of its segment
-function onTrack(x, z) {
-  let best = Infinity; let bi = 0;
-  for (let i = 0; i < TRACK.length; i++) {
-    const a = TRACK[i]; const b = TRACK[(i + 1) % TRACK.length]; const abx = b.x - a.x; const aby = b.y - a.y;
-    const t = Math.max(0, Math.min(1, ((x - a.x) * abx + (z - a.y) * aby) / (abx * abx + aby * aby)));
-    const dx = a.x + abx * t - x; const dy = a.y + aby * t - z; const d = dx * dx + dy * dy; if (d < best) { best = d; bi = i; }
+
+// segments of polylines in a 40 m grid, for the nearest-distance queries
+function segGrid(lines) {
+  const G = new Map(); const C = 40;
+  for (const l of lines) for (let i = 0; i + 1 < l.length; i++) {
+    const a = l[i]; const b = l[i + 1];
+    for (let gx = Math.floor(Math.min(a[0], b[0]) / C); gx <= Math.floor(Math.max(a[0], b[0]) / C); gx++)
+      for (let gz = Math.floor(Math.min(a[1], b[1]) / C); gz <= Math.floor(Math.max(a[1], b[1]) / C); gz++) {
+        const k = `${gx},${gz}`; let c = G.get(k); if (!c) G.set(k, (c = [])); c.push(a[0], a[1], b[0], b[1]);
+      }
   }
-  return { dist: Math.sqrt(best), seg: bi };
+  return (x, z) => {
+    let best = Infinity; const gx = Math.floor(x / C); const gz = Math.floor(z / C);
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+      const c = G.get(`${gx + i},${gz + j}`); if (!c) continue;
+      for (let k = 0; k < c.length; k += 4) {
+        const ax = c[k]; const az = c[k + 1]; const dx = c[k + 2] - ax; const dz = c[k + 3] - az;
+        const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz || 1)));
+        const ex = ax + dx * t - x; const ez = az + dz * t - z; best = Math.min(best, ex * ex + ez * ez);
+      }
+    }
+    return Math.sqrt(best);
+  };
+}
+function addBlock(x0, z0, x1, z1) {
+  const b = [x0, z0, x1, z1]; blocks.push(b);
+  for (let gx = Math.floor(x0 / 40); gx <= Math.floor(x1 / 40); gx++) for (let gz = Math.floor(z0 / 40); gz <= Math.floor(z1 / 40); gz++) {
+    const k = `${gx},${gz}`; let c = blockGrid.get(k); if (!c) blockGrid.set(k, (c = [])); c.push(b);
+  }
+}
+function hitBlock(x, z, r) {
+  for (const b of blockGrid.get(`${Math.floor(x / 40)},${Math.floor(z / 40)}`) || []) if (x > b[0] - r && x < b[2] + r && z > b[1] - r && z < b[3] + r) return b;
+  return null;
+}
+// a flat ribbon along a polyline (points [x, z, y]), width w, raised by lift
+function ribbon(lines, w, lift, pos, idx) {
+  for (const l of lines) {
+    if (l.length < 2) continue; const base = pos.length / 3;
+    for (let i = 0; i < l.length; i++) {
+      const a = l[Math.max(0, i - 1)]; const b = l[Math.min(l.length - 1, i + 1)];
+      let dx = b[0] - a[0]; let dz = b[1] - a[1]; const L = Math.hypot(dx, dz) || 1; dx /= L; dz /= L;
+      pos.push(l[i][0] - dz * w / 2, l[i][2] + lift, l[i][1] + dx * w / 2, l[i][0] + dz * w / 2, l[i][2] + lift, l[i][1] - dx * w / 2);
+      if (i) { const v = base + i * 2; idx.push(v - 2, v, v - 1, v - 1, v, v + 1); }
+    }
+  }
+}
+function ribbonMesh(lines, w, lift, mat) {
+  const pos = []; const idx = []; ribbon(lines, w, lift, pos, idx);
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals();
+  const m = new THREE.Mesh(geo, mat); m.receiveShadow = true; world.add(m); return m;
+}
+
+const REGION = { kr: 'โซล', n1: 'เมืองใหม่ (n1)' };
+let CITY = null;
+async function loadCity() {
+  if (!window.RC_CITY) return null;
+  const bin = Uint8Array.from(atob(window.RC_CITY), (c) => c.charCodeAt(0));
+  return JSON.parse(await new Response(new Blob([bin]).stream().pipeThrough(new DecompressionStream('gzip'))).text());
+}
+function buildCity(t) {
+  clearWorld();
+  const raw = unpack(t.path); const [ox, oy, oz] = raw[0];
+  const W = (q) => [q[0] - ox, -(q[1] - oy), q[2] - oz]; // → [x, z, height]
+  const route = raw.map(W);
+  TRACK = route.map((q) => new THREE.Vector2(q[0], q[1])); HEIGHT = route.map((q) => q[2]);
+  LOOP = t.loop; LAPS = t.laps; ROAD_W = 12;
+  let x0 = Infinity; let z0 = Infinity; let x1 = -Infinity; let z1 = -Infinity; let hmin = Infinity;
+  for (const q of route) { x0 = Math.min(x0, q[0]); z0 = Math.min(z0, q[1]); x1 = Math.max(x1, q[0]); z1 = Math.max(z1, q[1]); hmin = Math.min(hmin, q[2]); }
+  const M = 400; BOUND = Math.max(Math.abs(x0), Math.abs(x1), Math.abs(z0), Math.abs(z1)) + M;
+  // the region's roads around the route
+  const lines = (CITY.roads[t.region] || []).map((l) => unpack(l).map(W)).filter((l) => l.some((q) => q[0] > x0 - M && q[0] < x1 + M && q[1] > z0 - M && q[1] < z1 + M));
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshStandardMaterial({ color: '#56604c', roughness: 1 }));
+  ground.rotation.x = -Math.PI / 2; ground.scale.set(x1 - x0 + 2 * M + 800, z1 - z0 + 2 * M + 800, 1);
+  ground.position.set((x0 + x1) / 2, Math.min(hmin, 0) - 0.4, (z0 + z1) / 2); ground.receiveShadow = true; world.add(ground);
+  ribbonMesh(lines, 8, 0.02, new THREE.MeshStandardMaterial({ color: '#4a4d53', roughness: 0.95 }));
+  ribbonMesh([route], ROAD_W + 1.2, 0.04, new THREE.MeshStandardMaterial({ color: '#e8e8e8', roughness: 0.9 }));
+  ribbonMesh([route], ROAD_W, 0.06, new THREE.MeshStandardMaterial({ color: '#34373c', roughness: 0.9 }));
+  const roadD = segGrid(lines); const routeD = segGrid([route]);
+  nearRoad = roadD;
+  // start and finish lines (chequered), arrows at the checkpoints
+  const chk = (() => { const c = document.createElement('canvas'); c.width = 12; c.height = 2; const g = c.getContext('2d'); for (let i = 0; i < 12; i++) for (let j = 0; j < 2; j++) { g.fillStyle = (i + j) % 2 ? '#111' : '#fff'; g.fillRect(i, j, 1, 1); } const tx = new THREE.CanvasTexture(c); tx.magFilter = THREE.NearestFilter; return tx; })();
+  const line = (i) => {
+    const a = route[Math.min(i, route.length - 2)]; const b = route[Math.min(i, route.length - 2) + 1]; const p = route[i];
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(ROAD_W, 2.4), new THREE.MeshStandardMaterial({ map: chk }));
+    m.rotation.order = 'YXZ'; m.rotation.set(-Math.PI / 2, Math.atan2(b[0] - a[0], b[1] - a[1]), 0); m.position.set(p[0], p[2] + 0.08, p[1]); world.add(m);
+  };
+  line(0); if (!LOOP) line(route.length - 1);
+  // buildings: blocks along the route that keep clear of every road
+  const box = new THREE.BoxGeometry(1, 1, 1); box.translate(0, 0.5, 0);
+  const list = []; let acc = 0;
+  for (let i = 0; i + 1 < route.length; i++) {
+    const a = route[i]; const b = route[i + 1]; const L = Math.hypot(b[0] - a[0], b[1] - a[1]); const dx = (b[0] - a[0]) / (L || 1); const dz = (b[1] - a[1]) / (L || 1);
+    for (acc += L; acc > 18; acc -= 18) {
+      const t0 = 1 - acc / L; const px = a[0] + (b[0] - a[0]) * t0; const pz = a[1] + (b[1] - a[1]) * t0; const ph = a[2] + (b[2] - a[2]) * t0;
+      for (const s of [-1, 1]) for (let row = 0; row < 3; row++) {
+        const sx = 10 + Math.random() * 18; const sz = 10 + Math.random() * 18; const r = Math.max(sx, sz) * 0.72;
+        const off = ROAD_W / 2 + 8 + r + row * 34 + Math.random() * 10; const x = px - dz * off * s; const z = pz + dx * off * s;
+        if (routeD(x, z) < ROAD_W / 2 + 4 + r || roadD(x, z) < 7 + r || hitBlock(x, z, r)) continue;
+        const h = 6 + Math.random() * Math.random() * 60; list.push([x, z, sx, sz, h, ph]); addBlock(x - sx / 2, z - sz / 2, x + sx / 2, z + sz / 2);
+      }
+    }
+  }
+  const inst = new THREE.InstancedMesh(box, new THREE.MeshStandardMaterial({ roughness: 0.85 }), list.length);
+  const mtx = new THREE.Matrix4(); const col = new THREE.Color();
+  const base = Math.min(hmin, 0) - 0.4;
+  list.forEach(([x, z, sx, sz, h, ph], i) => { mtx.makeScale(sx, h + ph - base, sz).setPosition(x, base, z); inst.setMatrixAt(i, mtx); inst.setColorAt(i, col.setHSL(0.58 + Math.random() * 0.08, 0.06 + Math.random() * 0.08, 0.32 + Math.random() * 0.36)); });
+  inst.castShadow = true; inst.receiveShadow = true; world.add(inst);
+  const km = (t.length || 0) / 1000;
+  $('track-info').textContent = `${t.name} · ${REGION[t.region] || t.region} · ${km ? `${km.toFixed(1)} กม. · ` : ''}${LOOP ? `วงปิด${LAPS ? ` ${LAPS} รอบ` : ''}` : 'วิ่งถึงเส้นชัย'} · ถนนรอบ ๆ ${lines.length.toLocaleString()} เส้น`;
+}
+
+// nearest distance to the track's centre line, its segment and the road height there; searched around the
+// last segment (routes cross themselves), all of it when far off
+let lastSeg = 0;
+function onTrack(x, z, all = false) {
+  const n = TRACK.length; const segs = LOOP ? n : n - 1;
+  const scan = (from, to) => {
+    let best = Infinity; let bi = 0; let bt = 0;
+    for (let s = from; s < to; s++) {
+      const i = ((s % segs) + segs) % segs; const a = TRACK[i]; const b = TRACK[(i + 1) % n]; const abx = b.x - a.x; const aby = b.y - a.y;
+      const t = Math.max(0, Math.min(1, ((x - a.x) * abx + (z - a.y) * aby) / (abx * abx + aby * aby || 1)));
+      const dx = a.x + abx * t - x; const dy = a.y + aby * t - z; const d = dx * dx + dy * dy; if (d < best) { best = d; bi = i; bt = t; }
+    }
+    return { dist: Math.sqrt(best), seg: bi, h: HEIGHT[bi] + (HEIGHT[(bi + 1) % n] - HEIGHT[bi]) * bt };
+  };
+  let r = all || segs < 120 ? scan(0, segs) : LOOP ? scan(lastSeg - 40, lastSeg + 40) : scan(Math.max(0, lastSeg - 40), Math.min(segs, lastSeg + 40));
+  if (r.dist > 30 && !all && segs >= 120) r = scan(0, segs);
+  return r;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -165,10 +296,11 @@ $('file-car').addEventListener('change', async (e) => {
 // Driving: arcade model — velocity kept apart from the heading, the side slip bled off by tyre grip
 // (much less on the handbrake: drifts), engine / brakes / drag, slower off the road
 
-const S = { x: 0, z: 0, h: 0, vx: 0, vz: 0, steer: 0, wheelSpin: 0 };
+const S = { x: 0, z: 0, y: 0, h: 0, vx: 0, vz: 0, steer: 0, wheelSpin: 0 };
 function reset() {
-  const a = TRACK[0]; const b = TRACK[1]; Object.assign(S, { x: a.x, z: a.y, h: Math.atan2(b.x - a.x, b.y - a.y), vx: 0, vz: 0, steer: 0 });
-  lap.n = 0; lap.t0 = performance.now(); lap.next = 1; lap.started = false;
+  const a = TRACK[0]; const b = TRACK[1]; Object.assign(S, { x: a.x, z: a.y, y: HEIGHT[0], h: Math.atan2(b.x - a.x, b.y - a.y), vx: 0, vz: 0, steer: 0 });
+  // a sprint's clock runs from the start; a loop's from the first time over the line
+  lastSeg = 0; lap.n = 0; lap.t0 = performance.now(); lap.next = 1; lap.started = !LOOP; lap.done = false;
 }
 const keys = new Set();
 const KEYMAP = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', Space: 'hand' };
@@ -176,13 +308,14 @@ window.addEventListener('keydown', (e) => { if (KEYMAP[e.code]) { keys.add(KEYMA
 window.addEventListener('keyup', (e) => { if (KEYMAP[e.code]) keys.delete(KEYMAP[e.code]); });
 document.querySelectorAll('#touch button').forEach((b) => { const k = b.dataset.k; b.addEventListener('pointerdown', (e) => { e.preventDefault(); keys.add(k); }); for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(ev, () => keys.delete(k)); });
 let camMode = 0;
-const lap = { n: 0, t0: 0, best: Infinity, next: 1, started: false };
+const lap = { n: 0, t0: 0, best: Infinity, next: 1, started: false, done: false, time: 0 };
 const fmt = (ms) => `${Math.floor(ms / 60000)}:${((ms % 60000) / 1000).toFixed(2).padStart(5, '0')}`;
 
 function step(dt) {
   const fx = Math.sin(S.h); const fz = Math.cos(S.h);
   let vf = S.vx * fx + S.vz * fz; let vs = S.vx * fz - S.vz * fx; // forward / side speed
-  const off = onTrack(S.x, S.z).dist > ROAD_W / 2 + 1;
+  const tr = onTrack(S.x, S.z); lastSeg = tr.seg;
+  const off = tr.dist > ROAD_W / 2 + 1 && nearRoad(S.x, S.z) > 5;
   const up = keys.has('up'); const down = keys.has('down'); const hand = keys.has('hand');
   let braking = false; let reversing = false;
   if (up) vf += (vf < 0 ? 18 : 9.5 * Math.max(0.15, 1 - vf / 62)) * dt;
@@ -201,16 +334,31 @@ function step(dt) {
   const nfx = Math.sin(S.h); const nfz = Math.cos(S.h);
   S.vx = nfx * vf + nfz * vs; S.vz = nfz * vf - nfx * vs;
   S.x += S.vx * dt; S.z += S.vz * dt;
-  const lim = WORLD / 2 - 3; S.x = Math.max(-lim, Math.min(lim, S.x)); S.z = Math.max(-lim, Math.min(lim, S.z));
+  // buildings: back out of the wall, losing most of the speed into it
+  const hit = hitBlock(S.x, S.z, 1.1);
+  if (hit) {
+    S.x -= S.vx * dt; S.z -= S.vz * dt;
+    const nx = S.x < hit[0] ? -1 : S.x > hit[2] ? 1 : 0; const nz = nx ? 0 : S.z < hit[1] ? -1 : 1;
+    const vn = S.vx * nx + S.vz * nz; if (vn < 0) { S.vx -= vn * nx * 1.3; S.vz -= vn * nz * 1.3; }
+    S.vx *= 0.6; S.vz *= 0.6;
+  }
+  S.x = Math.max(-BOUND, Math.min(BOUND, S.x)); S.z = Math.max(-BOUND, Math.min(BOUND, S.z));
+  S.y += (tr.h - S.y) * Math.min(1, dt * 10);
   S.wheelSpin += (vf / 0.27) * dt;
   // lamps like the game's: brake red while slowing down going forward, reverse white going backwards
   for (const m of lamps.brake) m.emissiveIntensity = braking ? 2.2 : 0.15;
   for (const m of lamps.reverse) m.emissiveIntensity = reversing ? 1.8 : 0;
-  // laps: checkpoints every 30 segments, in order
-  const seg = onTrack(S.x, S.z).seg; const CP = 30; const cp = Math.floor(seg / CP);
-  if (cp === lap.next % (TRACK.length / CP)) {
-    if (lap.next % (TRACK.length / CP) === 0) { const t = performance.now() - lap.t0; if (lap.started) { lap.n++; lap.best = Math.min(lap.best, t); } lap.started = true; lap.t0 = performance.now(); }
+  // laps: 8 checkpoints along the line, in order; a sprint ends past the last one at the finish
+  const segs = LOOP ? TRACK.length : TRACK.length - 1; const NCP = 8; const cp = Math.min(NCP - 1, Math.floor((tr.seg * NCP) / segs));
+  if (!lap.done && LOOP && cp === lap.next % NCP) {
+    if (lap.next % NCP === 0) {
+      const t = performance.now() - lap.t0; if (lap.started) { lap.n++; lap.best = Math.min(lap.best, t); }
+      if (LAPS && lap.n >= LAPS) { lap.done = true; lap.time = t; } else { lap.started = true; lap.t0 = performance.now(); }
+    }
     lap.next++;
+  } else if (!lap.done && !LOOP) {
+    if (cp === lap.next && lap.next < NCP) lap.next++;
+    if (lap.next >= NCP && tr.seg >= segs - 1 && tr.dist < ROAD_W) { lap.done = true; lap.time = performance.now() - lap.t0; lap.n = 1; lap.best = Math.min(lap.best, lap.time); }
   }
   return { vf, slip: Math.abs(vs) };
 }
@@ -220,23 +368,36 @@ let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   let r = { vf: 0 }; for (let i = 0; i < 4; i++) r = step(dt / 4);
-  car.position.set(S.x, 0, S.z); car.rotation.y = S.h;
+  car.position.set(S.x, S.y, S.z); car.rotation.y = S.h;
   for (const w of wheels) { w.w.rotation.x = S.wheelSpin; if (w.front) w.pivot.rotation.y = S.steer; }
   const fx = Math.sin(S.h); const fz = Math.cos(S.h);
-  if (camMode === 0) { camPos.lerp(new THREE.Vector3(S.x - fx * 6.5, 2.4, S.z - fz * 6.5), Math.min(1, dt * 6)); camLook.set(S.x + fx * 3, 0.8, S.z + fz * 3); }
-  else { camPos.set(S.x + fx * 0.2, 1.25, S.z + fz * 0.2); camLook.set(S.x + fx * 10, 1.0, S.z + fz * 10); }
+  if (camMode === 0) { camPos.lerp(new THREE.Vector3(S.x - fx * 6.5, S.y + 2.4, S.z - fz * 6.5), Math.min(1, dt * 6)); camLook.set(S.x + fx * 3, S.y + 0.8, S.z + fz * 3); }
+  else { camPos.set(S.x + fx * 0.2, S.y + 1.25, S.z + fz * 0.2); camLook.set(S.x + fx * 10, S.y + 1.0, S.z + fz * 10); }
   cam.position.copy(camPos); cam.lookAt(camLook);
-  sun.position.set(S.x - 60, 120, S.z + 40); sun.target.position.set(S.x, 0, S.z);
+  sun.position.set(S.x - 60, S.y + 120, S.z + 40); sun.target.position.set(S.x, S.y, S.z);
   $('kmh').textContent = Math.round(Math.abs(r.vf) * 3.6);
-  $('lap-n').textContent = lap.n; $('lap-t').textContent = lap.started ? fmt(now - lap.t0) : '0:00.00'; $('lap-best').textContent = Number.isFinite(lap.best) ? fmt(lap.best) : '-';
+  $('lap-n').textContent = LOOP ? `${lap.n}${LAPS ? `/${LAPS}` : ''}` : lap.done ? 'ถึงเส้นชัย' : '-';
+  $('lap-t').textContent = lap.done ? fmt(lap.time) : lap.started ? fmt(now - lap.t0) : '0:00.00'; $('lap-best').textContent = Number.isFinite(lap.best) ? fmt(lap.best) : '-';
   renderer.render(scene, cam);
   requestAnimationFrame(frame);
 }
 
 (async () => {
+  buildPractice();
+  CITY = await loadCity().catch(() => null);
+  if (CITY) {
+    const sel = $('track'); const groups = {};
+    CITY.tracks.forEach((t, i) => {
+      const r = REGION[t.region] ? t.region : 'other';
+      if (!groups[r]) { groups[r] = document.createElement('optgroup'); groups[r].label = REGION[r] || 'อื่น ๆ (ไม่มีแผนที่ถนน)'; }
+      const o = document.createElement('option'); o.value = i; o.textContent = `${t.name}${t.length ? ` · ${(t.length / 1000).toFixed(1)} กม.` : ''}${t.loop ? ' · วง' : ''}${t.hidden ? ' · (ซ่อน)' : ''}`; groups[r].append(o);
+    });
+    for (const r of ['kr', 'n1', 'other']) if (groups[r]) sel.append(groups[r]);
+    sel.addEventListener('change', () => { if (sel.value === 'practice') buildPractice(); else buildCity(CITY.tracks[+sel.value]); reset(); camPos.set(S.x, S.y + 3, S.z - 8); sel.blur(); });
+  }
   const esc = await escarabajo();
   if (esc) await loadCar(esc, 'Escarabajo (ในตัว)');
-  reset(); camPos.set(S.x, 3, S.z - 8);
+  reset(); camPos.set(S.x, S.y + 3, S.z - 8);
   requestAnimationFrame(frame);
-  window.drive = { S, keys, lap, car };
+  window.drive = { S, keys, lap, car, get track() { return { pts: TRACK, loop: LOOP, seg: lastSeg } } };
 })();

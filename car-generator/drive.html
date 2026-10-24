@@ -31,6 +31,10 @@
         <span>สี</span><input id="c1" type="color" value="#e8e8e8" title="สี 1"><input id="c2" type="color" value="#2a6bd8" title="สี 2"><input id="c3" type="color" value="#d63a2f" title="สี 3"></div>
       <div id="car-info" class="hint">รถ: Escarabajo (ในตัว)</div>
     </div>
+    <div class="box">
+      <div class="row"><span>สนาม</span><select id="track" style="max-width: 260px"><option value="practice">สนามฝึก (วงปิด)</option></select></div>
+      <div id="track-info" class="hint"></div>
+    </div>
     <div class="box hint">W/↑ เร่ง · S/↓ เบรก/ถอย · A D/← → เลี้ยว · Space เบรกมือ (ดริฟต์) · R กลับจุดเริ่ม · C เปลี่ยนกล้อง</div>
   </div>
   <div id="lap" class="box"><div>รอบ <b id="lap-n">0</b></div><div>เวลา <span id="lap-t">0:00.00</span></div><div class="hint">ดีสุด <span id="lap-best">-</span></div></div>
@@ -40,6 +44,7 @@
     { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
   </script>
   <script src="js/embedded-cars.js"></script>
+  <script src="js/drive/rc-city.js"></script>
   <script type="module" src="js/drive/drive.js"></script>
 </body>
 </html>

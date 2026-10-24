@@ -75,6 +75,19 @@ fs.writeFileSync('RayCity-Easy.html', ehtml);
   console.log(`RayCity-Easy.html: ${(ehtml.length / 1024).toFixed(0)} KB`);
 }
 
+// RayCity Drive (drive.html): the racing prototype; the template car (Escarabajo) to drive at once.
+{
+  const r = await build({ entryPoints: ['js/drive/drive.js'], bundle: true, minify: true, format: 'iife', write: false, legalComments: 'none' });
+  const djs = r.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
+  let dhtml = fs.readFileSync('drive.html', 'utf8')
+    .replace(/\s*<script type="importmap">[\s\S]*?<\/script>/, '')
+    .replace('<script src="js/embedded-cars.js"></script>', '')
+    .replace('<script type="module" src="js/drive/drive.js"></script>', () => `<script>${embedTemplates()}</script>\n<script>${djs}</script>`);
+  dhtml = withHelper(dhtml);
+  fs.writeFileSync('RayCity-Drive.html', dhtml);
+  console.log(`RayCity-Drive.html: ${(dhtml.length / 1024).toFixed(0)} KB`);
+}
+
 // RayCity.html: every page in one file, one tab each (the pages as they are, opened in the tab on first use).
 {
   const pages = [
@@ -82,6 +95,7 @@ fs.writeFileSync('RayCity-Easy.html', ehtml);
     ['uv', '🖌 ลงสี / UV', 'RayCity-UV.html'],
     ['studio', '🛠 ปั้น / แก้รถ', 'RayCity-Studio.html'],
     ['gen', '📁 เปิด / ตรวจรถ · รถในเกม', 'RayCity-Car-Generator.html'],
+    ['drive', '🏁 ขับลองบนเว็บ', 'RayCity-Drive.html'],
   ];
   const blobs = pages.map(([id, , file]) => `<script type="text/plain" id="page-${id}">${zlib.gzipSync(fs.readFileSync(file), { level: 9 }).toString('base64')}</script>`).join('\n');
   const shtml2 = `<!doctype html>

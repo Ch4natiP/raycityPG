@@ -33,7 +33,9 @@ export function createCity(scene, data) {
   const crownGeo = new THREE.IcosahedronGeometry(1.9, 1).translate(0, 3.4, 0);
   const trunkMat = new THREE.MeshStandardMaterial({ color: '#5a4030', roughness: 1 });
   const crownMat = new THREE.MeshStandardMaterial({ vertexColors: false, roughness: 0.9 });
+  const lineMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, polygonOffset: true, polygonOffsetFactor: -2 });
   const minimapTiles = new Map(); // 'A_B' → canvas, coloured like the game's minimap
+  const segs = new Map(); // traffic lane segments [ax, ay, bx, by, ...] by 25 m cell, RayCity metres
 
   async function load() {
     const roads = data.roads.kr || [];
@@ -46,13 +48,14 @@ export function createCity(scene, data) {
       tiles.set(`${+m[1]}_${+m[2]}`, { A: +m[1], B: +m[2], cls, bitmap: bm, angle: 0 });
     }
     // each tile's main road direction (mod 90°), weighted by length, for turning its buildings
-    const hist = new Map();
+    const hist = new Map(); segs.clear();
     for (const l of roads) {
       let x = 0; let y = 0; let px = null; let py = null;
       for (let i = 0; i < l.length; i += 3) {
         x += l[i] / 10; y += l[i + 1] / 10;
         if (px !== null) {
           const k = `${1000 + 2 * Math.floor(x / TILE)}_${1000 + 2 * Math.floor(y / TILE)}`; const L = Math.hypot(x - px, y - py);
+          if (L > 0.5) { const sk = `${Math.floor((x + px) / 2 / 25)},${Math.floor((y + py) / 2 / 25)}`; let c = segs.get(sk); if (!c) segs.set(sk, (c = [])); c.push(px, py, x, y); }
           if (L > 1) { let h = hist.get(k); if (!h) hist.set(k, (h = new Float32Array(18))); const a = ((Math.atan2(y - py, x - px) % (Math.PI / 2)) + Math.PI / 2) % (Math.PI / 2); h[Math.min(17, Math.floor((a / (Math.PI / 2)) * 18))] += L; }
         }
         px = x; py = y;
@@ -87,9 +90,66 @@ export function createCity(scene, data) {
       else c = [96 + n * 0.6, 99 + n * 0.6, 106 + n * 0.6]; // asphalt
       d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; d[i + 3] = 255;
     }
+    // white edge lines where the asphalt meets the kerb (asphalt pixels with pavement or grass 1 px away)
+    const asph = new Uint8Array(S * S); for (let i = 0; i < S * S; i++) asph[i] = d[i * 4] < 120 && d[i * 4 + 2] > d[i * 4 + 1] - 4 ? 1 : 0;
+    for (let y = 1; y < S - 1; y++) for (let x = 1; x < S - 1; x++) {
+      const i = y * S + x; if (!asph[i] || (asph[i - 1] && asph[i + 1] && asph[i - S] && asph[i + S])) continue;
+      d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = 225;
+    }
     g.putImageData(im, 0, 0);
     const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
     return tex;
+  }
+
+  // an opposite traffic lane within 1.6 m of (x, y)? (direction dx, dy)
+  function oppositeNear(x, y, dx, dy) {
+    const c = segs.get(`${Math.floor(x / 25)},${Math.floor(y / 25)}`); if (!c) return false;
+    for (let k = 0; k < c.length; k += 4) {
+      const ex = c[k + 2] - c[k]; const ey = c[k + 3] - c[k + 1]; const L = Math.hypot(ex, ey) || 1; if ((ex * dx + ey * dy) / L > -0.5) continue;
+      const tt = Math.max(0, Math.min(1, ((x - c[k]) * ex + (y - c[k + 1]) * ey) / (L * L))); if (Math.hypot(c[k] + ex * tt - x, c[k + 1] + ey * tt - y) < 1.6) return true;
+    }
+    return false;
+  }
+  // a lane crossing (x, y) within 10 m at an angle: an intersection, where no lines are painted
+  function crossing(x, y, dx, dy) {
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+      const c = segs.get(`${Math.floor(x / 25) + i},${Math.floor(y / 25) + j}`); if (!c) continue;
+      for (let k = 0; k < c.length; k += 4) {
+        const ex = c[k + 2] - c[k]; const ey = c[k + 3] - c[k + 1]; const L = Math.hypot(ex, ey) || 1; if (Math.abs((ex * dx + ey * dy) / L) > 0.87) continue;
+        const tt = Math.max(0, Math.min(1, ((x - c[k]) * ex + (y - c[k + 1]) * ey) / (L * L))); if (Math.hypot(c[k] + ex * tt - x, c[k + 1] + ey * tt - y) < 10) return true;
+      }
+    }
+    return false;
+  }
+  // lane lines from the game's traffic lanes (lane centres) as flat strips just over the ground: 1.75 m to a
+  // lane's left lies either the centre line (an opposite lane 3.5 m over: solid yellow) or the line to the next
+  // lane (white dashes, 3 m every 8 m); only over asphalt
+  function markings(t, W) {
+    const x0 = (t.A - 1000) * 512; const y0 = (t.B - 1000) * 512; const pos = []; const col = [];
+    const quad = (ax, ay, bx, by, w, c) => {
+      const L = Math.hypot(bx - ax, by - ay); const nx = (-(by - ay) / L) * w / 2; const ny = ((bx - ax) / L) * w / 2;
+      const q = [[ax + nx, ay + ny], [bx + nx, by + ny], [bx - nx, by - ny], [ax - nx, ay - ny]].map(([x, y]) => W(x, y));
+      for (const k of [0, 2, 1, 0, 3, 2]) { pos.push(q[k][0], 0.03, q[k][1]); col.push(...c); }
+    };
+    const Y = [0.93, 0.72, 0.12]; const Wt = [0.92, 0.92, 0.92];
+    for (let cy = Math.floor(y0 / 25); cy < Math.floor((y0 + TILE) / 25); cy++) for (let cx = Math.floor(x0 / 25); cx < Math.floor((x0 + TILE) / 25); cx++) {
+      const c = segs.get(`${cx},${cy}`); if (!c) continue;
+      for (let k = 0; k < c.length; k += 4) {
+        const ax = c[k]; const ay = c[k + 1]; const bx = c[k + 2]; const by = c[k + 3]; const L = Math.hypot(bx - ax, by - ay); if (L < 1) continue;
+        const dx = (bx - ax) / L; const dy = (by - ay) / L; const lx = -dy * 1.75; const ly = dx * 1.75;
+        const mx = (ax + bx) / 2; const my = (ay + by) / 2;
+        if (classRC(mx + lx, my + ly) !== 3) continue;
+        const yellow = oppositeNear(mx + lx * 2, my + ly * 2, dx, dy);
+        for (let s0 = 0; s0 < L; s0 += yellow ? 4 : 8) {
+          const s1 = Math.min(L, s0 + (yellow ? 4 : 3)); const px = ax + dx * s0 + lx; const py = ay + dy * s0 + ly;
+          if (classRC(px, py) === 3 && !crossing(px, py, dx, dy)) quad(px, py, ax + dx * s1 + lx, ay + dy * s1 + ly, yellow ? 0.18 : 0.15, yellow ? Y : Wt);
+        }
+      }
+    }
+    if (!pos.length) return null;
+    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    const nrm = new Float32Array(pos.length); for (let i = 1; i < nrm.length; i += 3) nrm[i] = 1; geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+    const m = new THREE.Mesh(geo, lineMat); m.receiveShadow = true; m.renderOrder = 1; return m;
   }
 
   function buildTile(t) {
@@ -98,6 +158,7 @@ export function createCity(scene, data) {
     const W = (x, y) => [x - ox, -(y - oy)];
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(TILE, TILE), new THREE.MeshStandardMaterial({ map: groundTexture(t), roughness: 0.95 }));
     ground.rotation.x = -Math.PI / 2; const [gx, gz] = W(x0 + TILE / 2, y0 + TILE / 2); ground.position.set(gx, 0, gz); ground.receiveShadow = true; g.add(ground);
+    const lines = markings(t, W); if (lines) g.add(lines);
     // buildings: footprints turned like the tile's roads, kept where the map is block all round them
     const r = rng(t.A * 104729 + t.B * 31); const ca = Math.cos(t.angle); const sa = Math.sin(t.angle);
     const pos = []; const col = []; const uv = []; const side = []; const roof = [];
@@ -170,7 +231,7 @@ export function createCity(scene, data) {
     t.built = { group: g, grid };
   }
   function dropTile(t) {
-    t.built.group.traverse((o) => { if (o.geometry && o.geometry !== trunkGeo && o.geometry !== crownGeo) o.geometry.dispose(); if (o.material && !Array.isArray(o.material) && o.material.map && o.material.map !== facade) { o.material.map.dispose(); o.material.dispose(); } });
+    t.built.group.traverse((o) => { if (o.geometry && o.geometry !== trunkGeo && o.geometry !== crownGeo) o.geometry.dispose(); if (o.material && !Array.isArray(o.material) && o.material !== lineMat && o.material.map && o.material.map !== facade) { o.material.map.dispose(); o.material.dispose(); } });
     group.remove(t.built.group); t.built = null;
   }
 

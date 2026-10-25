@@ -469,7 +469,8 @@ function frame(now) {
   for (const w of wheels) { w.w.rotation.x = S.wheelSpin; if (w.front) w.pivot.rotation.y = S.steer; }
   const fx = Math.sin(S.h); const fz = Math.cos(S.h);
   if (camMode === 0) { camPos.lerp(new THREE.Vector3(S.x - fx * CAMD.d, S.y + CAMD.h, S.z - fz * CAMD.d), Math.min(1, dt * 6)); camLook.set(S.x + fx * 3, S.y + 0.8, S.z + fz * 3); }
-  else { camPos.set(S.x + fx * 0.2, S.y + 1.25, S.z + fz * 0.2); camLook.set(S.x + fx * 10, S.y + 1.0, S.z + fz * 10); }
+  else if (camMode === 1) { camPos.set(S.x + fx * 0.2, S.y + 1.25, S.z + fz * 0.2); camLook.set(S.x + fx * 10, S.y + 1.0, S.z + fz * 10); }
+  else { camPos.set(S.x - fx * 0.01, S.y + 120, S.z - fz * 0.01); camLook.set(S.x, S.y, S.z); } // (overhead, for checking the map: drive.cam(2))
   cam.position.copy(camPos); cam.lookAt(camLook);
   sun.position.set(S.x - 70, S.y + 60, S.z - 50); sun.target.position.set(S.x, S.y, S.z);
   sky.position.copy(cam.position);
@@ -525,5 +526,5 @@ function frame(now) {
   });
   reset(); camPos.set(S.x, S.y + 3, S.z - 8);
   requestAnimationFrame(frame);
-  window.drive = { S, keys, lap, car, city: () => city, traffic: () => traffic, SP, get track() { return { pts: TRACK, loop: LOOP, seg: lastSeg } } };
+  window.drive = { S, keys, lap, car, cam: (m) => { camMode = m; }, city: () => city, traffic: () => traffic, SP, get track() { return { pts: TRACK, loop: LOOP, seg: lastSeg } } };
 })();

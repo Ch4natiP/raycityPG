@@ -78,7 +78,8 @@
     <div class="row"><button id="btn-panel">⚙ รถ · สนาม</button></div>
     <div id="panel" class="hide">
       <div class="box">
-        <div class="row"><button id="btn-car">📂 เปิดรถ (.zip)</button><input id="file-car" type="file" accept=".zip" hidden>
+        <div class="row"><span>รถในเกม</span><select id="car-pick" style="max-width: 220px" hidden></select></div>
+        <div class="row" style="margin-top: 6px"><button id="btn-car">📂 เปิดรถ (.zip)</button><input id="file-car" type="file" accept=".zip" hidden><button id="btn-paint" title="สุ่มสีจากสีในเกม">🎨</button>
           <span>สี</span><input id="c1" type="color" value="#e8e8e8" title="สี 1"><input id="c2" type="color" value="#2a6bd8" title="สี 2"><input id="c3" type="color" value="#d63a2f" title="สี 3"></div>
         <div id="car-info" class="hint">รถ: Escarabajo (ในตัว)</div>
       </div>
@@ -103,6 +104,7 @@
   </script>
   <script src="js/embedded-cars.js"></script>
   <script src="js/drive/rc-city.js"></script>
+  <script src="js/drive/rc-cars.js"></script>
   <script type="module" src="js/drive/drive.js"></script>
 </body>
 </html>

@@ -5,6 +5,8 @@ import * as THREE from 'three';
 import { parseOM, omParts } from '../om.js';
 import { readZip } from '../zip.js';
 import { createCity } from './city.js';
+import { loadGarage, compactParts, handling } from './garage.js';
+import { createTraffic } from './traffic.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -56,14 +58,14 @@ window.addEventListener('resize', resize); resize();
 const world = new THREE.Group(); scene.add(world);
 let TRACK = []; let HEIGHT = []; let LOOP = true; let LAPS = 0; let ROAD_W = 14; let BOUND = 317;
 let nearRoad = () => Infinity; // distance to the closest other road (city roads)
-let city = null; let tilesOn = false; // the minimap city (js/drive/city.js), when the world is built from it
+let city = null; let tilesOn = false; let traffic = null; // the minimap city (js/drive/city.js), when the world is built from it
 let SPAWN = null; // free roam: where R puts the car back
 let blocks = []; let blockGrid = new Map(); // building footprints [x0, z0, x1, z1] for collisions
 const unpack = (a) => { const o = []; let x = 0; let y = 0; let z = 0; for (let i = 0; i < a.length; i += 3) { x += a[i]; y += a[i + 1]; z += a[i + 2]; o.push([x / 10, y / 10, z / 10]); } return o; };
 function clearWorld() {
   world.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) [o.material].flat().forEach((m) => { if (m.map) m.map.dispose(); m.dispose(); }); });
   world.clear(); blocks = []; blockGrid = new Map(); nearRoad = () => Infinity;
-  if (city) city.clear(); tilesOn = false; SPAWN = null; TRACK = []; HEIGHT = [];
+  if (city) city.clear(); if (traffic) traffic.clear(); tilesOn = false; SPAWN = null; TRACK = []; HEIGHT = [];
 }
 
 // free roam in the city, like the game's field: the minimap city around the car, no race
@@ -291,45 +293,77 @@ async function loadCar(list, label) {
   const root = body.path.replace(/body_2\.0m$/i, '');
   files = new Map(list.filter((e) => e.path.startsWith(root)).map((e) => [e.path.slice(root.length), e.data]));
   const name = ([...files.keys()].find((r) => !r.includes('/') && /_base\.png$/i.test(r)) || '').replace(/_base\.png$/i, '');
+  const parts = [];
+  for (const rel of [...files.keys()].filter((r) => r === 'body_2.0m' || /^[^/]+\/default_2\.0m$/.test(r))) {
+    const b = files.get(rel);
+    try { parts.push(...omParts(parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)))); } catch { /* not a mesh we read */ }
+  }
+  const spec = GARAGE && GARAGE.cars.find((c) => c.name === name);
+  await buildCar(parts, files.get(`${name}_base.png`), files.get(`${name}_color.png`), label, spec ? spec.wheels : null, spec ? spec.spec : {});
+}
+// one of the game's cars (js/drive/rc-cars.js)
+async function loadGameCar(c) {
+  await buildCar(compactParts(GARAGE.file(c.files.mesh)), GARAGE.file(c.files.base), GARAGE.file(c.files.color), c.name, c.wheels, c.spec);
+}
+let HANDLING = handling(); const CAMD = { d: 6.5, h: 2.4 };
+async function buildCar(parts, maskBytes, colorBytes, label, wheelPos, spec) {
   car.clear(); lamps.brake = []; lamps.reverse = []; lamps.head = [];
   paintTex = new THREE.CanvasTexture(document.createElement('canvas')); paintTex.flipY = false; paintTex.colorSpace = THREE.SRGBColorSpace;
-  maskImg = files.has(`${name}_base.png`) ? await imageData(files.get(`${name}_base.png`)) : null;
-  colorImg = files.has(`${name}_color.png`) ? await imageData(files.get(`${name}_color.png`)) : null;
+  maskImg = maskBytes ? await imageData(maskBytes) : null;
+  colorImg = colorBytes ? await imageData(colorBytes) : null;
   if (!maskImg) { maskImg = new ImageData(new Uint8ClampedArray([255, 0, 0, 255]), 1, 1); }
   repaint();
   const paint = new THREE.MeshStandardMaterial({ map: paintTex, roughness: 0.35, metalness: 0.2 });
   const glass = new THREE.MeshStandardMaterial({ color: '#1d2a3a', transparent: true, opacity: 0.55, roughness: 0.05, metalness: 0.6 });
   const shell = new THREE.Group(); shell.rotation.x = -Math.PI / 2; car.add(shell);
   let tris = 0;
-  for (const rel of [...files.keys()].filter((r) => r === 'body_2.0m' || /^[^/]+\/default_2\.0m$/.test(r))) {
-    const b = files.get(rel); let parts;
-    try { parts = omParts(parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength))); } catch { continue; }
-    for (const p of parts) {
-      if (p.positions.length / 3 <= 8 || !p.indices.length) continue;
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(p.positions), 3));
-      geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(p.normals), 3));
-      geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(p.uvs), 2));
-      geo.setIndex(new THREE.BufferAttribute(Uint32Array.from(p.indices), 1));
-      const k = p.flags[0]; let mat = paint;
-      if (k === 1) mat = glass;
-      else if (k === 2) { mat = new THREE.MeshStandardMaterial({ color: '#f4f1e6', emissive: '#fff6d8', emissiveIntensity: 0.6 }); lamps.head.push(mat); }
-      else if (k === 3) { mat = new THREE.MeshStandardMaterial({ color: '#555', emissive: '#ffffff', emissiveIntensity: 0, transparent: true, opacity: 0.9 }); lamps.reverse.push(mat); }
-      else if (k === 4) { mat = new THREE.MeshStandardMaterial({ color: '#5a0a0a', emissive: '#ff1a1a', emissiveIntensity: 0.15 }); lamps.brake.push(mat); }
-      const mesh = new THREE.Mesh(geo, mat); mesh.castShadow = k !== 1; mesh.renderOrder = k === 1 ? 2 : 0; shell.add(mesh); tris += p.indices.length / 3;
-    }
+  for (const p of parts) {
+    if (p.positions.length / 3 <= 8 || !p.indices.length) continue;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(p.positions), 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(p.normals), 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(p.uvs), 2));
+    geo.setIndex(new THREE.BufferAttribute(Uint32Array.from(p.indices), 1));
+    const k = p.flags[0]; let mat = paint;
+    if (k === 1) mat = glass;
+    else if (k === 2) { mat = new THREE.MeshStandardMaterial({ color: '#f4f1e6', emissive: '#fff6d8', emissiveIntensity: 0.6 }); lamps.head.push(mat); }
+    else if (k === 3) { mat = new THREE.MeshStandardMaterial({ color: '#555', emissive: '#ffffff', emissiveIntensity: 0, transparent: true, opacity: 0.9 }); lamps.reverse.push(mat); }
+    else if (k === 4) { mat = new THREE.MeshStandardMaterial({ color: '#5a0a0a', emissive: '#ff1a1a', emissiveIntensity: 0.15 }); lamps.brake.push(mat); }
+    const mesh = new THREE.Mesh(geo, mat); mesh.castShadow = k !== 1; mesh.renderOrder = k === 1 ? 2 : 0; shell.add(mesh); tris += p.indices.length / 3;
   }
-  // the game's wheels (front y −1.23, rear 1.15, radius 0.27)
+  // wheels under the car's arches (gtv98's when unknown): the game's common wheel, or plain tyres
   wheels.length = 0;
-  const tyre = new THREE.CylinderGeometry(0.27, 0.27, 0.2, 20); tyre.rotateZ(Math.PI / 2);
-  const tMat = new THREE.MeshStandardMaterial({ color: '#151515', roughness: 0.9 }); const rim = new THREE.MeshStandardMaterial({ color: '#b9bec7', metalness: 0.8, roughness: 0.3 });
-  for (const [x, y] of [[0.72, -1.23], [-0.72, -1.23], [0.72, 1.15], [-0.72, 1.15]]) {
-    const pivot = new THREE.Group(); pivot.position.set(x, 0.27, -y);
-    const w = new THREE.Mesh(tyre, tMat); w.castShadow = true; const r = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.21, 10).rotateZ(Math.PI / 2), rim); w.add(r);
-    pivot.add(w); car.add(pivot); wheels.push({ pivot, w, front: y < 0 });
+  const wp = wheelPos || { front: -1.23, rear: 1.15, x: 0.72 }; const R = 0.31;
+  const make = wheelMaker(R);
+  for (const [x, y] of [[wp.x, wp.front], [-wp.x, wp.front], [wp.x, wp.rear], [-wp.x, wp.rear]]) {
+    const pivot = new THREE.Group(); pivot.position.set(x, R, -y);
+    const w = make(x > 0); pivot.add(w); car.add(pivot); wheels.push({ pivot, w, front: y < 0 });
   }
-  $('car-info').textContent = `รถ: ${label} · ${tris.toLocaleString()} สามเหลี่ยม · ไฟเบรก ${lamps.brake.length} · ไฟถอย ${lamps.reverse.length}`;
+  HANDLING = handling(spec);
+  // chase camera back and up by the car's size (a bus needs more room than a coupe)
+  const box = new THREE.Box3().setFromObject(car); const sz = box.getSize(new THREE.Vector3());
+  CAMD.d = Math.max(6.5, sz.z * 1.45); CAMD.h = Math.max(2.4, sz.y * 1.5);
+  $('car-info').textContent = `รถ: ${label} · ${tris.toLocaleString()} สามเหลี่ยม · ไฟเบรก ${lamps.brake.length} · ไฟถอย ${lamps.reverse.length}${spec && spec.BD_Mass ? ` · ${spec.BD_Mass} กก.` : ''}`;
 }
+let wheelGeo = null; let wheelMat = null;
+function wheelMaker(R) {
+  if (GARAGE && GARAGE.wheel && !wheelGeo) {
+    const q = compactParts(GARAGE.file(GARAGE.wheel.mesh))[0];
+    wheelGeo = new THREE.BufferGeometry();
+    // RayCity (x axle, y, z up) → three (x, z, −y); the game's wheel is 0.34 m in radius
+    const P = new Float32Array(q.positions.length); const N = new Float32Array(q.normals.length);
+    for (let i = 0; i < P.length; i += 3) { P[i] = q.positions[i]; P[i + 1] = q.positions[i + 2]; P[i + 2] = -q.positions[i + 1]; N[i] = q.normals[i]; N[i + 1] = q.normals[i + 2]; N[i + 2] = -q.normals[i + 1]; }
+    wheelGeo.setAttribute('position', new THREE.BufferAttribute(P, 3)); wheelGeo.setAttribute('normal', new THREE.BufferAttribute(N, 3));
+    wheelGeo.setAttribute('uv', new THREE.BufferAttribute(q.uvs, 2)); wheelGeo.setIndex(new THREE.BufferAttribute(q.indices, 1));
+    wheelMat = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.6, metalness: 0.3, side: THREE.DoubleSide });
+    if (GARAGE.wheel.tex) createImageBitmap(new Blob([GARAGE.file(GARAGE.wheel.tex)])).then((bm) => { const t = new THREE.Texture(bm); t.flipY = false; t.colorSpace = THREE.SRGBColorSpace; t.needsUpdate = true; wheelMat.map = t; wheelMat.needsUpdate = true; });
+  }
+  if (wheelGeo) return (right) => { const m = new THREE.Mesh(wheelGeo, wheelMat); const s = R / 0.34; m.scale.set(right ? s : -s, s, s); m.castShadow = true; return m; };
+  const tyre = new THREE.CylinderGeometry(R, R, 0.2, 20); tyre.rotateZ(Math.PI / 2);
+  const tMat = new THREE.MeshStandardMaterial({ color: '#151515', roughness: 0.9 }); const rim = new THREE.MeshStandardMaterial({ color: '#b9bec7', metalness: 0.8, roughness: 0.3 });
+  return () => { const w = new THREE.Mesh(tyre, tMat); w.castShadow = true; w.add(new THREE.Mesh(new THREE.CylinderGeometry(R * 0.63, R * 0.63, 0.21, 10).rotateZ(Math.PI / 2), rim)); return w; };
+}
+let GARAGE = null;
 const wheels = [];
 async function escarabajo() {
   const b64 = (window.RC_TEMPLATES || {}).escarabajo; if (!b64) return null;
@@ -377,7 +411,8 @@ function step(dt) {
   SP.v = Math.max(0, Math.min(SP.max, SP.v + (boost ? -2200 : 500) * dt));
   const up = keys.has('up'); const down = keys.has('down'); const hand = keys.has('hand');
   let braking = false; let reversing = false;
-  if (up) vf += (vf < 0 ? 18 : (boost ? 16 : 9.5) * Math.max(0.15, 1 - vf / (boost ? 80 : 62))) * dt;
+  const H = HANDLING; const top = H.top * (boost ? 1.3 : 1);
+  if (up) vf += (vf < 0 ? 18 : (boost ? 9.5 + 6.5 * H.boost : 9.5) * H.accel * Math.max(0.15, 1 - vf / top)) * dt;
   if (down) { if (vf > 0.5) { vf = Math.max(0, vf - 16 * dt); braking = true; } else { vf = Math.max(-12, vf - 6 * dt); reversing = vf < -0.2; } }
   if (!up && !down) vf -= Math.sign(vf) * Math.min(Math.abs(vf), (1.2 + (off ? 6 : 0)) * dt);
   vf -= vf * Math.abs(vf) * (off ? 0.012 : 0.0016) * dt * 10;
@@ -388,13 +423,14 @@ function step(dt) {
   const lock = 0.55 / (1 + Math.abs(vf) / 18);
   S.steer += (want * lock - S.steer) * Math.min(1, dt * 8);
   S.h += (vf / 2.38) * Math.tan(S.steer) * dt * (hand ? 1.35 : 1);
-  const grip = hand ? 1.2 : off ? 4 : 9;
+  const grip = (hand ? 1.2 : off ? 4 : 9) * HANDLING.grip;
   vs -= vs * Math.min(1, grip * dt);
   const nfx = Math.sin(S.h); const nfz = Math.cos(S.h);
   S.vx = nfx * vf + nfz * vs; S.vz = nfz * vf - nfx * vs;
   S.x += S.vx * dt; S.z += S.vz * dt;
   // buildings: back out of the wall, losing most of the speed into it
-  const hb = hitBlock(S.x, S.z, 1.1); const hc = !hb && tilesOn ? city.hit(S.x, S.z, 1.1) : null;
+  const hb = hitBlock(S.x, S.z, 1.1); let hc = !hb && tilesOn ? city.hit(S.x, S.z, 1.1) : null;
+  if (!hb && !hc && tilesOn && traffic) hc = traffic.hit(S.x, S.z, 1.0, ...city.origin);
   if (hb || hc) {
     S.x -= S.vx * dt; S.z -= S.vz * dt;
     let nx; let nz;
@@ -432,12 +468,12 @@ function frame(now) {
   car.position.set(S.x, S.y, S.z); car.rotation.y = S.h;
   for (const w of wheels) { w.w.rotation.x = S.wheelSpin; if (w.front) w.pivot.rotation.y = S.steer; }
   const fx = Math.sin(S.h); const fz = Math.cos(S.h);
-  if (camMode === 0) { camPos.lerp(new THREE.Vector3(S.x - fx * 6.5, S.y + 2.4, S.z - fz * 6.5), Math.min(1, dt * 6)); camLook.set(S.x + fx * 3, S.y + 0.8, S.z + fz * 3); }
+  if (camMode === 0) { camPos.lerp(new THREE.Vector3(S.x - fx * CAMD.d, S.y + CAMD.h, S.z - fz * CAMD.d), Math.min(1, dt * 6)); camLook.set(S.x + fx * 3, S.y + 0.8, S.z + fz * 3); }
   else { camPos.set(S.x + fx * 0.2, S.y + 1.25, S.z + fz * 0.2); camLook.set(S.x + fx * 10, S.y + 1.0, S.z + fz * 10); }
   cam.position.copy(camPos); cam.lookAt(camLook);
   sun.position.set(S.x - 70, S.y + 60, S.z - 50); sun.target.position.set(S.x, S.y, S.z);
   sky.position.copy(cam.position);
-  if (tilesOn) city.update(S.x, S.z);
+  if (tilesOn) { city.update(S.x, S.z); if (traffic) { const [ox, oy] = city.origin; traffic.update(dt, S.x + ox, oy - S.z, ox, oy, S); } }
   // HUD: speed, SP, the round minimap
   const kmh = Math.round(Math.abs(r.vf) * 3.6);
   $('kmh').textContent = kmh; $('gear').textContent = r.vf < -0.2 ? 'R' : kmh < 3 ? 'N' : Math.min(6, 1 + Math.floor(kmh / 38));
@@ -470,9 +506,24 @@ function frame(now) {
     for (const r of ['kr', 'n1', 'other']) if (groups[r]) sel.append(groups[r]);
     sel.addEventListener('change', () => { if (sel.value === 'practice') buildPractice(); else if (sel.value === 'city') buildFree(); else buildCity(CITY.tracks[+sel.value]); reset(); camPos.set(S.x, S.y + 3, S.z - 8); sel.blur(); });
   }
-  const esc = await escarabajo();
-  if (esc) await loadCar(esc, 'Escarabajo (ในตัว)');
+  GARAGE = await loadGarage().catch(() => null);
+  const first = GARAGE && (GARAGE.cars.find((c) => c.name === 'escarabajo') || GARAGE.cars[0]);
+  if (first) {
+    const pick = $('car-pick');
+    GARAGE.cars.forEach((c, i) => { const o = document.createElement('option'); o.value = i; o.textContent = c.name + (c.spec.BD_Mass ? ` · ${c.spec.BD_Mass} กก.` : ''); pick.append(o); });
+    pick.value = GARAGE.cars.indexOf(first); pick.hidden = false;
+    pick.addEventListener('change', async () => { await loadGameCar(GARAGE.cars[+pick.value]); pick.blur(); });
+    await loadGameCar(first);
+  } else { const esc = await escarabajo(); if (esc) await loadCar(esc, 'Escarabajo (ในตัว)'); }
+  // traffic on the Seoul lanes, in the game's cars
+  if (GARAGE && city && city.count && CITY.roads.kr) traffic = createTraffic(scene, GARAGE, CITY.roads.kr.map((l) => unpack(l)), wheelMaker(0.31));
+  // the game's paints for the three colours
+  $('btn-paint').addEventListener('click', (e) => {
+    const P = GARAGE && GARAGE.paints.length ? GARAGE.paints : ['#e8e8e8', '#2a6bd8', '#d63a2f', '#111111', '#f2c230'];
+    for (const id of ['c1', 'c2', 'c3']) $(id).value = P[Math.floor(Math.random() * P.length)];
+    repaint(); e.currentTarget.blur();
+  });
   reset(); camPos.set(S.x, S.y + 3, S.z - 8);
   requestAnimationFrame(frame);
-  window.drive = { S, keys, lap, car, city: () => city, SP, get track() { return { pts: TRACK, loop: LOOP, seg: lastSeg } } };
+  window.drive = { S, keys, lap, car, city: () => city, traffic: () => traffic, SP, get track() { return { pts: TRACK, loop: LOOP, seg: lastSeg } } };
 })();

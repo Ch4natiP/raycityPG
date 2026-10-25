@@ -177,6 +177,7 @@ export function createCity(scene, data) {
   return {
     load,
     get count() { return tiles.size; },
+    get origin() { return [ox, oy]; },
     classAt,
     setOrigin(x, y) { for (const t of tiles.values()) if (t.built) dropTile(t); ox = x; oy = y; },
     clear() { for (const t of tiles.values()) if (t.built) dropTile(t); },

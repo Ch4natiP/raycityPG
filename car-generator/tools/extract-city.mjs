@@ -11,6 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { parseOM, omParts } from '../js/om.js';
 
 const game = process.argv[2];
 if (!game || !fs.existsSync(path.join(game, 'track'))) { console.error('usage: node tools/extract-city.mjs <game folder>'); process.exit(1); }
@@ -158,6 +159,83 @@ for (const region of ['kr', 'n1']) {
   }
 }
 console.log(`look: ${Object.keys(look.tiles).length} minimap tiles, sky ${look.sky ? 'yes' : 'no'}, fog ${JSON.stringify(look.fog)}`);
+
+// --- the game's cars (car/<name>/): the meshes Drive draws (body_2.0m, */default_2.0m), the paint mask and colour
+// layer, and from car/carinfo/<name>.xml the numbers that differ between cars (mass, torque, drag); written to
+// js/drive/rc-cars.js beside the city: window.RC_CARS = base64 of gzip([u32 index length][index JSON][file bytes]),
+// each file in the index as [offset, length] into the bytes
+const cars = []; const blobs = []; let blobAt = 0;
+const put = (buf) => { blobs.push(buf); blobAt += buf.length; return [blobAt - buf.length, buf.length]; };
+// one part in the compact block: u8 flags[3], u16 n, u32 ni, i16 position[3n] (/4000 m), i8 normal[3n] (/127),
+// i16 uv[2n] (/8000), u16 index[ni]
+function compactPart(q) {
+  const n = q.positions.length / 3; const h = Buffer.alloc(9); h[0] = q.flags[0]; h[1] = q.flags[1]; h[2] = q.flags[2]; h.writeUInt16LE(n, 3); h.writeUInt32LE(q.indices.length, 5);
+  const P = Buffer.alloc(n * 6); const N = Buffer.alloc(n * 3); const U = Buffer.alloc(n * 4); const I = Buffer.alloc(q.indices.length * 2);
+  const cl = (v, m) => Math.max(-m, Math.min(m, Math.round(v)));
+  for (let i = 0; i < n * 3; i++) { P.writeInt16LE(cl(q.positions[i] * 4000, 32767), i * 2); N.writeInt8(cl(q.normals[i] * 127, 127), i); }
+  for (let i = 0; i < n * 2; i++) U.writeInt16LE(cl(q.uvs[i] * 8000, 32767), i * 2);
+  for (let i = 0; i < q.indices.length; i++) I.writeUInt16LE(q.indices[i], i * 2);
+  return Buffer.concat([h, P, N, U, I]);
+}
+const cdir = path.join(game, 'car');
+for (const name of fs.existsSync(cdir) ? fs.readdirSync(cdir).sort() : []) {
+  const d = path.join(cdir, name); if (!fs.existsSync(path.join(d, 'body_2.0m'))) continue;
+  // the meshes as one compact block of parts (compactPart); parts of 8 vertices or less left out (stand-ins)
+  const chunks = []; const bins = new Map(); let xmax = 0;
+  for (const rel of ['body_2.0m', ...fs.readdirSync(d).filter((sub) => fs.existsSync(path.join(d, sub, 'default_2.0m'))).map((sub) => `${sub}/default_2.0m`)]) {
+    const b = fs.readFileSync(path.join(d, rel)); let parts;
+    try { parts = omParts(parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.length))); } catch { continue; }
+    for (const q of parts) {
+      const n = q.positions.length / 3; if (n <= 8 || !q.indices.length || q.uvs.length < n * 2) continue;
+      chunks.push(compactPart(q));
+      if (q.flags[0] === 0) for (let i = 0; i < n * 3; i += 3) { xmax = Math.max(xmax, Math.abs(q.positions[i])); if (Math.abs(q.positions[i]) >= 0.6) { const k = Math.round(q.positions[i + 1] * 20); bins.set(k, Math.min(bins.get(k) ?? 9, q.positions[i + 2])); } }
+    }
+  }
+  const files = { mesh: put(Buffer.concat(chunks)) };
+  // wheels under the arches (as measureArches in js/convert.js: the side's lowest surface rises over a wheel)
+  let wheels = null;
+  {
+    const ks = [...bins.keys()].sort((a, b) => a - b);
+    if (ks.length > 10) {
+      const low = Math.min(...ks.map((k) => bins.get(k))); const runs = []; let cur = null;
+      for (let k = ks[0]; k <= ks[ks.length - 1]; k++) {
+        if (!bins.has(k)) { if (cur && k === cur.end + 1) cur.end = k; continue; }
+        if (bins.get(k) > low + 0.22) { if (!cur || k !== cur.end + 1) { cur = { start: k, end: k }; runs.push(cur); } cur.end = k; }
+      }
+      const a = runs.filter((r) => r.end - r.start >= 6).sort((x, y) => (y.end - y.start) - (x.end - x.start)).slice(0, 2).sort((x, y) => x.start - y.start);
+      if (a.length === 2) wheels = { front: +((a[0].start + a[0].end) / 40).toFixed(3), rear: +((a[1].start + a[1].end) / 40).toFixed(3), x: +(xmax - 0.16).toFixed(3) };
+    }
+  }
+  for (const f of fs.readdirSync(d)) if (/_(base|color)\.png$/i.test(f)) files[f.replace(/^.*_(base|color)\.png$/i, '$1')] = put(fs.readFileSync(path.join(d, f)));
+  const spec = {}; const sf = path.join(cdir, 'carinfo', `${name}.xml`);
+  if (fs.existsSync(sf)) {
+    const t = fs.readFileSync(sf).toString('utf16le');
+    for (const k of ['BD_Mass', 'EG_Torque', 'EG_Drag', 'TI_Mu', 'BT_Power', 'BT_Duration', 'MS_TractionRadius']) { const m = new RegExp(`<${k}>\\s*([\\d.]+)`).exec(t); if (m) spec[k] = +m[1]; }
+  }
+  cars.push({ name, spec, wheels, files });
+}
+// the common wheel every car starts with (car/1.common/wheel/default_2.0m, default.png)
+let wheel = null;
+{
+  const wd = path.join(cdir, '1.common', 'wheel'); const f = path.join(wd, 'default_2.0m');
+  if (fs.existsSync(f)) {
+    const b = fs.readFileSync(f); const parts = omParts(parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.length)));
+    wheel = { mesh: put(Buffer.concat(parts.map(compactPart))), tex: fs.existsSync(path.join(wd, 'default.png')) ? put(fs.readFileSync(path.join(wd, 'default.png'))) : null };
+  }
+}
+// the game's paints (paint3/*.xml <color>a r g b</color>) for the colour swatches
+const paints = [];
+const pdir = path.join(game, 'paint3');
+for (const f of fs.existsSync(pdir) ? fs.readdirSync(pdir).sort() : []) {
+  if (!/\.xml$/i.test(f)) continue; const b = fs.readFileSync(path.join(pdir, f)); const t = b[0] === 0xff ? b.toString('utf16le') : b.toString('utf8');
+  const m = /<color>\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/.exec(t); if (m && /<type>\s*0\s*</.test(t)) paints.push(`#${[m[2], m[3], m[4]].map((v) => (+v).toString(16).padStart(2, '0')).join('')}`);
+}
+{
+  const index = Buffer.from(JSON.stringify({ cars, wheel, paints: [...new Set(paints)] })); const len = Buffer.alloc(4); len.writeUInt32LE(index.length);
+  const b64 = zlib.gzipSync(Buffer.concat([len, index, ...blobs]), { level: 9 }).toString('base64');
+  fs.writeFileSync(new URL('../js/drive/rc-cars.js', import.meta.url), `window.RC_CARS = '${b64}';\n`);
+  console.log(`${cars.length} cars, ${new Set(paints).size} paints; rc-cars.js ${(b64.length / 1024).toFixed(0)} KB`);
+}
 
 const json = JSON.stringify({ tracks, roads, look });
 const b64 = zlib.gzipSync(json, { level: 9 }).toString('base64');

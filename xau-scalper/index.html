@@ -58,6 +58,9 @@
   .pill[data-state="live"] .dot { background: var(--bull); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bull) 25%, transparent); }
   .pill[data-state="connecting"] .dot { background: var(--gold); }
   .pill[data-state="error"] .dot { background: var(--bear); }
+  #srcBadge { font-size: 13px; padding: 4px 12px; }
+  #srcBadge[data-kind="sim"] { border-color: var(--gold); color: var(--gold); }
+  #srcBadge[data-kind="real"] { border-color: var(--bull); color: var(--bull); }
 
   /* Controls */
   .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 14px; border-radius: 8px; font-weight: 600;
@@ -185,6 +188,7 @@
         </div>
         <div class="num text-xs muted">Bid <span id="pxBid">—</span> · Ask <span id="pxAsk">—</span> · Spread <span id="pxSpread">—</span></div>
       </div>
+      <span id="srcBadge" class="pill" data-kind="sim">ราคาจำลอง</span>
       <span id="feedPill" class="pill" data-state="off"><span class="dot"></span><span id="feedPillText">ยังไม่เชื่อมต่อ</span></span>
       <label class="switch" for="autoToggle">
         <input type="checkbox" id="autoToggle">
@@ -875,27 +879,60 @@ class SimulatedFeed extends PriceFeed {
   stop() { super.stop(); clearInterval(this.timer); }
 }
 
+/* Binance public market data has several hosts; some networks block one but not another. */
+const Binance = {
+  rest: ['https://data-api.binance.vision', 'https://api.binance.com', 'https://api1.binance.com', 'https://api2.binance.com', 'https://api3.binance.com'],
+  ws: ['wss://data-stream.binance.vision/ws', 'wss://stream.binance.com:9443/ws', 'wss://stream.binance.com:443/ws'],
+  /** GET a REST path, trying each host until one answers; remembers the one that worked. */
+  async get(path) {
+    let lastErr;
+    for (const base of this.rest) {
+      try {
+        const res = await fetch(base + path);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        this.rest = [base, ...this.rest.filter(b => b !== base)];
+        return data;
+      } catch (err) { lastErr = err; if (Env.sandboxed()) break; }
+    }
+    throw lastErr;
+  },
+};
+
+/* Detects when the page runs where outbound connections are blocked (e.g. a sandboxed artifact preview). */
+const Env = {
+  cspBlocked: false,
+  sandboxed() { return this.cspBlocked; },
+  netHelp() {
+    return this.cspBlocked
+      ? 'หน้านี้ไม่อนุญาตให้ต่ออินเทอร์เน็ตออกไปข้างนอก ให้ดาวน์โหลดไฟล์ index.html ไปเปิดในเครื่องแทน'
+      : 'เครือข่ายนี้ต่อ Binance ไม่ได้ ลองเน็ตมือถือหรือ VPN หรือใช้ไฟล์ CSV จาก MT5';
+  },
+};
+document.addEventListener('securitypolicyviolation', (e) => {
+  if (/connect-src|default-src/.test(e.effectiveDirective || e.violatedDirective || '')) Env.cspBlocked = true;
+});
+
 class BinanceFeed extends PriceFeed {
-  constructor({ symbol }) { super('Binance'); this.symbol = symbol.toUpperCase(); }
+  constructor({ symbol }) { super('Binance'); this.symbol = symbol.toUpperCase(); this.wsIdx = 0; }
   async loadHistory() {
     const out = {};
-    await Promise.all(SERIES.map(async tf => {
-      const url = `https://api.binance.com/api/v3/klines?symbol=${this.symbol}&interval=${tf.key}&limit=${Math.min(tf.max, 1000)}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`klines ${tf.label}: HTTP ${res.status}`);
-      out[tf.key] = (await res.json()).map(k => ({ t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4] }));
-    }));
+    for (const tf of SERIES) {
+      const rows = await Binance.get(`/api/v3/klines?symbol=${this.symbol}&interval=${tf.key}&limit=${Math.min(tf.max, 1000)}`);
+      out[tf.key] = rows.map(k => ({ t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4] }));
+    }
     return out;
   }
   start() { this.stopped = false; this.open(); }
   open() {
-    this.status('connecting', `กำลังเชื่อมต่อ ${this.symbol}`);
-    const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${this.symbol.toLowerCase()}@bookTicker`);
+    const host = Binance.ws[this.wsIdx % Binance.ws.length];
+    this.status('connecting', `กำลังเชื่อมต่อ ${this.symbol} (${host.replace(/^wss:\/\/|\/ws$/g, '')})`);
+    const ws = new WebSocket(`${host}/${this.symbol.toLowerCase()}@bookTicker`);
     this.ws = ws;
     ws.onopen = () => { this.failures = 0; this.status('live', `Binance ${this.symbol} @bookTicker`); };
     ws.onmessage = (e) => { const d = JSON.parse(e.data); this.tick(+d.b, +d.a); };
     ws.onerror = () => ws.close();
-    ws.onclose = () => this.retry(() => this.open());
+    ws.onclose = () => { this.wsIdx++; this.retry(() => this.open()); };   // next attempt uses the next host
   }
   stop() { super.stop(); clearTimeout(this.retryTimer); if (this.ws) { this.ws.onclose = null; this.ws.close(); } }
 }
@@ -1208,9 +1245,7 @@ const DataSrc = {
     const end = Date.now(), out = [];
     let start = end - months * 30 * 86400000;
     while (start < end) {
-      const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol.toUpperCase()}&interval=5m&startTime=${start}&limit=1000`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const rows = await res.json();
+      const rows = await Binance.get(`/api/v3/klines?symbol=${symbol.toUpperCase()}&interval=5m&startTime=${start}&limit=1000`);
       if (!rows.length) break;
       for (const k of rows) out.push({ t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4] });
       start = rows[rows.length - 1][0] + M5;
@@ -1456,7 +1491,10 @@ const App = {
         if (history) this.md.seed(history);
       } catch (err) {
         if (this.feed !== feed) return;
-        return this.fallbackToSim(`โหลดข้อมูลย้อนหลังไม่ได้ (${err.message})`);
+        await new Promise(r => setTimeout(r, 50));       // let the CSP violation event land first
+        if (Env.sandboxed()) return this.fallbackToSim(`ต่อ ${feed.name} ไม่ได้ · ${Env.netHelp()}`);
+        // History is optional: keep going with the live stream and build candles from its ticks.
+        toast(`โหลดข้อมูลย้อนหลังไม่ได้ (${err.message}) · จะลองรับราคาสดอย่างเดียว`, 'bad');
       }
     }
     feed.start();
@@ -1465,12 +1503,12 @@ const App = {
 
   onFeedStatus(feed, { state, msg }) {
     if (this.feed !== feed) return;
-    if (state === 'fatal') return this.fallbackToSim(`${feed.name} ใช้งานไม่ได้`);
+    if (state === 'fatal') return this.fallbackToSim(`${feed.name} ใช้งานไม่ได้ · ${feed.name === 'Binance' ? Env.netHelp() : 'ตรวจค่าที่กรอกอีกครั้ง'}`);
     UI.setFeedStatus(state, `${feed.name} · ${msg}`);
   },
 
   fallbackToSim(reason) {
-    toast(`${reason} — กลับไปใช้ราคาจำลอง`, 'bad');
+    toast(`${reason} · ตอนนี้กลับไปใช้ราคาจำลอง`, 'bad');
     this.s.feed.source = 'sim';
     UI.syncFeedForm();
     this.markDirty();
@@ -1597,7 +1635,7 @@ const App = {
       if (!initial) toast(`Backtest เสร็จ ${st.n} ไม้`);
     } catch (err) {
       UI.btStatus(`ทำ Backtest ไม่สำเร็จ: ${err.message}`);
-      if (this.s.bt.source === 'binance') toast('ดาวน์โหลดจาก Binance ไม่ได้ ลองเปิดไฟล์นี้ในเครื่อง หรือใช้ไฟล์ CSV', 'bad');
+      if (this.s.bt.source === 'binance') toast(`ดาวน์โหลดจาก Binance ไม่ได้ · ${Env.netHelp()}`, 'bad');
     } finally { this.bt.busy = false; UI.btBusy(false); }
   },
 
@@ -2059,6 +2097,10 @@ const UI = {
   setFeedStatus(state, text) {
     $('feedPill').dataset.state = state;
     $('feedPillText').textContent = state === 'live' ? 'LIVE · ' + (App.feed ? App.feed.name : '') : state === 'connecting' ? 'กำลังเชื่อมต่อ' : state === 'error' ? 'ผิดพลาด' : 'ปิด';
+    const name = App.feed ? App.feed.name : 'Simulator', real = state === 'live' && name !== 'Simulator';
+    const badge = $('srcBadge');
+    badge.dataset.kind = real ? 'real' : 'sim';
+    badge.textContent = !real ? 'ราคาจำลอง' : name === 'Binance' ? `ราคาจริง · ${App.feed.symbol} (ใกล้เคียงทอง)` : name === 'MetaApi' ? `ราคาจริง · ${App.feed.symbol} จากโบรก` : 'ราคาจริง · Custom';
     this.feedText = text;
     this.renderFeedInfo();
   },

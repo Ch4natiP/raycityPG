@@ -103,7 +103,7 @@ for (const f of fs.existsSync(tdir) ? fs.readdirSync(tdir) : []) {
 // the sunset sky (etc/skydome/sunset/cm_sky09.dds, halved) and the sunset fog (etc/env/sunset.xml)
 function dds(b) {
   const h = b.readUInt32LE(12); const w = b.readUInt32LE(16); const cc = b.toString('latin1', 84, 88);
-  const bs = cc === 'DXT1' ? 8 : 16; const out = Buffer.alloc(w * h * 4); let o = 128;
+  const bs = cc === 'DXT1' ? 8 : 16; const out = Buffer.alloc(w * h * 4); let o = 128; const dxt5 = cc === 'DXT5';
   const c565 = (c) => [((c >> 11) & 31) * 255 / 31, ((c >> 5) & 63) * 255 / 63, (c & 31) * 255 / 31];
   for (let by = 0; by < h; by += 4) for (let bx = 0; bx < w; bx += 4, o += bs) {
     const cb = o + (bs === 16 ? 8 : 0); const a = b.readUInt16LE(cb); const c = b.readUInt16LE(cb + 2);
@@ -113,7 +113,11 @@ function dds(b) {
     for (let i = 0; i < 16; i++) {
       const x = bx + (i & 3); const y = by + (i >> 2); if (x >= w || y >= h) continue; const q = (y * w + x) * 4; const k = (bits >> (2 * i)) & 3;
       out[q] = pal[k][0]; out[q + 1] = pal[k][1]; out[q + 2] = pal[k][2];
-      out[q + 3] = bs === 16 ? ((b[o + (i >> 1)] >> ((i & 1) * 4)) & 15) * 17 : (a <= c && k === 3 ? 0 : 255);
+      if (dxt5) {
+        const a0 = b[o]; const a1 = b[o + 1]; const bitsA = b.readUIntLE(o + 2, 6); const ka = Math.floor(bitsA / 2 ** (3 * i)) & 7;
+        const al = ka === 0 ? a0 : ka === 1 ? a1 : a0 > a1 ? ((8 - ka) * a0 + (ka - 1) * a1) / 7 : ka === 6 ? 0 : ka === 7 ? 255 : ((6 - ka) * a0 + (ka - 1) * a1) / 5;
+        out[q + 3] = al;
+      } else out[q + 3] = bs === 16 ? ((b[o + (i >> 1)] >> ((i & 1) * 4)) & 15) * 17 : (a <= c && k === 3 ? 0 : 255);
     }
   }
   return { w, h, data: out };
@@ -122,7 +126,16 @@ function png(w, h, ch, data) {
   const crcT = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
   const crc = (buf) => { let c = 0xffffffff; for (const x of buf) c = crcT[(c ^ x) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
   const chunk = (t, d) => { const l = Buffer.alloc(4); l.writeUInt32BE(d.length); const td = Buffer.concat([Buffer.from(t), d]); const c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([l, td, c]); };
-  const raw = Buffer.alloc((w * ch + 1) * h); for (let y = 0; y < h; y++) data.copy(raw, y * (w * ch + 1) + 1, y * w * ch, (y + 1) * w * ch);
+  // every row Paeth-filtered (type 4): far smaller for pictures than unfiltered rows
+  const raw = Buffer.alloc((w * ch + 1) * h); const rs = w * ch;
+  const paeth = (a, b, c) => { const p = a + b - c; const pa = Math.abs(p - a); const pb = Math.abs(p - b); const pc = Math.abs(p - c); return pa <= pb && pa <= pc ? a : pb <= pc ? b : c; };
+  for (let y = 0; y < h; y++) {
+    raw[y * (rs + 1)] = 4;
+    for (let x = 0; x < rs; x++) {
+      const i = y * rs + x; const a = x >= ch ? data[i - ch] : 0; const b = y ? data[i - rs] : 0; const c = x >= ch && y ? data[i - rs - ch] : 0;
+      raw[y * (rs + 1) + 1 + x] = (data[i] - paeth(a, b, c)) & 255;
+    }
+  }
   const hd = Buffer.alloc(13); hd.writeUInt32BE(w, 0); hd.writeUInt32BE(h, 4); hd[8] = 8; hd[9] = { 1: 0, 3: 2, 4: 6 }[ch];
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', hd), chunk('IDAT', zlib.deflateSync(raw, { level: 9 })), chunk('IEND', Buffer.alloc(0))]);
 }
@@ -223,6 +236,53 @@ let wheel = null;
     wheel = { mesh: put(Buffer.concat(parts.map(compactPart))), tex: fs.existsSync(path.join(wd, 'default.png')) ? put(fs.readFileSync(path.join(wd, 'default.png'))) : null };
   }
 }
+// people (person/person/person.xml: model + skin), the scene-style .0m (aa 27 blocks: u16 id, u16 n, u8 1,
+// n positions, u8 normals?, n normals, u8 colours?, [4n], u8 uv sets, u8, uv sets × n uvs, u16 ni, indices) and
+// the skin (person/tex/<tex>.dds, down to 128 px); named characters all, the street crowd a dozen
+const people = [];
+{
+  const pd = path.join(game, 'person'); const lx = path.join(pd, 'person', 'person.xml');
+  const ci = (dir, name) => { if (!fs.existsSync(dir)) return null; const f = fs.readdirSync(dir).find((x) => x.toLowerCase() === name.toLowerCase()); return f ? path.join(dir, f) : null; };
+  const scene = (b) => {
+    const out = []; let j = b.indexOf(Buffer.from([0xaa, 0x27]));
+    while (j !== -1) {
+      let next = j + 1;
+      try {
+        const n = b.readUInt16LE(j + 4);
+        if (b[j + 6] === 1 && n >= 3) {
+          let o = j + 7; const P = []; for (let i = 0; i < n * 3; i++) P.push(b.readFloatLE(o + i * 4)); o += 12 * n;
+          let N = null; if (b[o] === 1) { N = []; for (let i = 0; i < n * 3; i++) N.push(b.readFloatLE(o + 1 + i * 4)); o += 1 + 12 * n; } else o += 1;
+          o += b[o] === 1 ? 1 + 4 * n : 1;
+          const sets = b[o]; o += 2; const U = []; for (let i = 0; i < n * 2; i++) U.push(b.readFloatLE(o + i * 4)); o += 8 * n * Math.max(1, sets);
+          const ni = b.readUInt16LE(o); const I = []; for (let i = 0; i < ni; i++) I.push(b.readUInt16LE(o + 2 + i * 2));
+          if (ni % 3 === 0 && ni && Math.max(...I) < n) { out.push({ positions: P, normals: N || P.map(() => 0), uvs: U, indices: I, flags: [0, 0, 0] }); next = o + 2 + 2 * ni; }
+        }
+      } catch { /* not a mesh block */ }
+      j = b.indexOf(Buffer.from([0xaa, 0x27]), next);
+    }
+    return out;
+  };
+  const skin = (f) => {
+    // box-filtered down to 128 px on the long side
+    const { w, h, data } = dds(fs.readFileSync(f)); const F = Math.max(1, Math.ceil(Math.max(w, h) / 128)); const W = Math.max(1, Math.floor(w / F)); const H = Math.max(1, Math.floor(h / F)); const o = Buffer.alloc(W * H * 4);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) for (let k = 0; k < 4; k++) { let sum = 0; for (let dy = 0; dy < F; dy++) for (let dx = 0; dx < F; dx++) sum += data[((y * F + dy) * w + x * F + dx) * 4 + k]; o[(y * W + x) * 4 + k] = sum / (F * F); }
+    let opaque = true; for (let i = 3; i < o.length && opaque; i += 4) opaque = o[i] > 250;
+    if (!opaque) return png(W, H, 4, o);
+    const rgb = Buffer.alloc(W * H * 3); for (let i = 0; i < W * H; i++) o.copy(rgb, i * 3, i * 4, i * 4 + 3);
+    return png(W, H, 3, rgb);
+  };
+  if (fs.existsSync(lx)) {
+    const t = fs.readFileSync(lx).toString('utf16le'); const seen = new Set(); const models = new Map(); let crowd = 0;
+    for (const m of t.matchAll(/<person id='(\d+)'\s+name='([^']*)'\s+model='([^']*)'\s+tex='([^']*)'/g)) {
+      const [, , name, model, tex] = m; const generic = /^(man_|woman_|child)/i.test(model);
+      if (/zom|penguin|santa|bigzom/i.test(model) || seen.has(`${model}|${tex}`) || (generic && crowd >= 12)) continue;
+      const mf = ci(path.join(pd, 'model'), `${model}.0m`); const tf = ci(path.join(pd, 'tex'), `${tex}.dds`); if (!mf || !tf) continue;
+      if (!models.has(model.toLowerCase())) { const parts = scene(fs.readFileSync(mf)); if (!parts.length) continue; models.set(model.toLowerCase(), put(Buffer.concat(parts.map(compactPart)))); }
+      seen.add(`${model}|${tex}`); if (generic) crowd++;
+      people.push({ model: model.toLowerCase(), name, named: !generic, mesh: models.get(model.toLowerCase()), skin: put(skin(tf)) });
+    }
+  }
+}
 // the game's paints (paint3/*.xml <color>a r g b</color>) for the colour swatches
 const paints = [];
 const pdir = path.join(game, 'paint3');
@@ -231,10 +291,10 @@ for (const f of fs.existsSync(pdir) ? fs.readdirSync(pdir).sort() : []) {
   const m = /<color>\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/.exec(t); if (m && /<type>\s*0\s*</.test(t)) paints.push(`#${[m[2], m[3], m[4]].map((v) => (+v).toString(16).padStart(2, '0')).join('')}`);
 }
 {
-  const index = Buffer.from(JSON.stringify({ cars, wheel, paints: [...new Set(paints)] })); const len = Buffer.alloc(4); len.writeUInt32LE(index.length);
+  const index = Buffer.from(JSON.stringify({ cars, wheel, people, paints: [...new Set(paints)] })); const len = Buffer.alloc(4); len.writeUInt32LE(index.length);
   const b64 = zlib.gzipSync(Buffer.concat([len, index, ...blobs]), { level: 9 }).toString('base64');
   fs.writeFileSync(new URL('../js/drive/rc-cars.js', import.meta.url), `window.RC_CARS = '${b64}';\n`);
-  console.log(`${cars.length} cars, ${new Set(paints).size} paints; rc-cars.js ${(b64.length / 1024).toFixed(0)} KB`);
+  console.log(`${cars.length} cars, ${people.length} people, ${new Set(paints).size} paints; rc-cars.js ${(b64.length / 1024).toFixed(0)} KB`);
 }
 
 const json = JSON.stringify({ tracks, roads, look });

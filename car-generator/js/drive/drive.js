@@ -7,6 +7,7 @@ import { readZip } from '../zip.js';
 import { createCity } from './city.js';
 import { loadGarage, compactParts, handling } from './garage.js';
 import { createTraffic } from './traffic.js';
+import { createPeople } from './people.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -58,14 +59,14 @@ window.addEventListener('resize', resize); resize();
 const world = new THREE.Group(); scene.add(world);
 let TRACK = []; let HEIGHT = []; let LOOP = true; let LAPS = 0; let ROAD_W = 14; let BOUND = 317;
 let nearRoad = () => Infinity; // distance to the closest other road (city roads)
-let city = null; let tilesOn = false; let traffic = null; // the minimap city (js/drive/city.js), when the world is built from it
+let city = null; let tilesOn = false; let traffic = null; let people = null; // the minimap city (js/drive/city.js), when the world is built from it
 let SPAWN = null; // free roam: where R puts the car back
 let blocks = []; let blockGrid = new Map(); // building footprints [x0, z0, x1, z1] for collisions
 const unpack = (a) => { const o = []; let x = 0; let y = 0; let z = 0; for (let i = 0; i < a.length; i += 3) { x += a[i]; y += a[i + 1]; z += a[i + 2]; o.push([x / 10, y / 10, z / 10]); } return o; };
 function clearWorld() {
   world.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) [o.material].flat().forEach((m) => { if (m.map) m.map.dispose(); m.dispose(); }); });
   world.clear(); blocks = []; blockGrid = new Map(); nearRoad = () => Infinity;
-  if (city) city.clear(); if (traffic) traffic.clear(); tilesOn = false; SPAWN = null; TRACK = []; HEIGHT = [];
+  if (city) city.clear(); if (traffic) traffic.clear(); if (people) people.clear(); tilesOn = false; SPAWN = null; TRACK = []; HEIGHT = [];
 }
 
 // free roam in the city, like the game's field: the minimap city around the car, no race
@@ -431,6 +432,7 @@ function step(dt) {
   // buildings: back out of the wall, losing most of the speed into it
   const hb = hitBlock(S.x, S.z, 1.1); let hc = !hb && tilesOn ? city.hit(S.x, S.z, 1.1) : null;
   if (!hb && !hc && tilesOn && traffic) hc = traffic.hit(S.x, S.z, 1.0, ...city.origin);
+  if (!hb && !hc && tilesOn && people) hc = people.hit(S.x, S.z, 0.9);
   if (hb || hc) {
     S.x -= S.vx * dt; S.z -= S.vz * dt;
     let nx; let nz;
@@ -474,7 +476,7 @@ function frame(now) {
   cam.position.copy(camPos); cam.lookAt(camLook);
   sun.position.set(S.x - 70, S.y + 60, S.z - 50); sun.target.position.set(S.x, S.y, S.z);
   sky.position.copy(cam.position);
-  if (tilesOn) { city.update(S.x, S.z); if (traffic) { const [ox, oy] = city.origin; traffic.update(dt, S.x + ox, oy - S.z, ox, oy, S); } }
+  if (tilesOn) { city.update(S.x, S.z); if (people) people.update(S.x, S.z); if (traffic) { const [ox, oy] = city.origin; traffic.update(dt, S.x + ox, oy - S.z, ox, oy, S); } }
   // HUD: speed, SP, the round minimap
   const kmh = Math.round(Math.abs(r.vf) * 3.6);
   $('kmh').textContent = kmh; $('gear').textContent = r.vf < -0.2 ? 'R' : kmh < 3 ? 'N' : Math.min(6, 1 + Math.floor(kmh / 38));
@@ -517,6 +519,7 @@ function frame(now) {
     await loadGameCar(first);
   } else { const esc = await escarabajo(); if (esc) await loadCar(esc, 'Escarabajo (ในตัว)'); }
   // traffic on the Seoul lanes, in the game's cars
+  if (GARAGE && city && city.count) people = createPeople(scene, GARAGE, city);
   if (GARAGE && city && city.count && CITY.roads.kr) traffic = createTraffic(scene, GARAGE, CITY.roads.kr.map((l) => unpack(l)), wheelMaker(0.31));
   // the game's paints for the three colours
   $('btn-paint').addEventListener('click', (e) => {

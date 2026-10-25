@@ -139,6 +139,28 @@
   .toast.good { border-left-color: var(--bull); } .toast.bad { border-left-color: var(--bear); }
   @keyframes toast-in { from { transform: translateY(6px); opacity: .4; } to { transform: none; opacity: 1; } }
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+  /* Stop Hunt & Backtest */
+  .plan { border: 1px solid var(--line); border-radius: 10px; padding: 14px; background: var(--panel-2); display: flex; flex-direction: column; gap: 10px; }
+  .plan[data-side="BUY"] { border-left: 3px solid var(--bull); }
+  .plan[data-side="SELL"] { border-left: 3px solid var(--bear); }
+  .plan ul { margin: 0; padding-left: 18px; font-size: 12px; color: var(--muted); }
+  .qbar { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+  .qbar > span { display: block; height: 100%; background: var(--gold); }
+  .verdict { border: 1px solid var(--line); border-left: 4px solid var(--flat); border-radius: 10px; padding: 14px 16px; background: var(--panel-2); }
+  .verdict[data-level="pass"] { border-left-color: var(--bull); }
+  .verdict[data-level="weak"] { border-left-color: var(--gold); }
+  .verdict[data-level="fail"] { border-left-color: var(--bear); }
+  .verdict h3 { font-family: var(--font-display); font-size: 18px; margin: 0 0 4px; }
+  .verdict ul { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
+  .bt-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .bt-stats > div { background: var(--panel); padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .bt-stats .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 17px; font-weight: 600; }
+  .bt-stats .s { font-size: 11px; color: var(--muted); }
+  .sessions { display: flex; flex-wrap: wrap; gap: 12px; }
+  .sessions label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+  input[type="checkbox"].plain { accent-color: var(--gold); width: 16px; height: 16px; }
+  input[type="file"] { font-size: 12px; color: var(--muted); max-width: 100%; }
+
   details > summary { cursor: pointer; }
   code { font-family: var(--font-mono); font-size: 12px; background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
 </style>
@@ -307,6 +329,13 @@
 
         <div class="flex flex-col gap-3 border-t pt-4" style="border-color:var(--line)">
           <div class="eyebrow">กติกาบอท</div>
+          <label class="field" for="set-strategy">กลยุทธ์ที่บอทใช้เข้าออเดอร์
+            <select id="set-strategy" data-setting="strategy">
+              <option value="mtf">MTF Momentum (Matrix 1D/1H/1M/1S)</option>
+              <option value="hunt">Stop Hunt Protocol (M5, วางออเดอร์รอ)</option>
+              <option value="both">ใช้ทั้งสองกลยุทธ์</option>
+            </select>
+          </label>
           <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <label class="field" for="set-entryThreshold">เกณฑ์เข้า (|score|)<input type="number" id="set-entryThreshold" data-setting="entryThreshold" min="5" max="95" step="1"></label>
             <label class="field" for="set-maxPositions">ออเดอร์พร้อมกันสูงสุด<input type="number" id="set-maxPositions" data-setting="maxPositions" min="1" max="10" step="1"></label>
@@ -345,6 +374,148 @@
         </table>
       </div>
       <div id="posEmpty" class="empty">ไม่มีออเดอร์เปิดอยู่ · เปิด Auto Bot หรือกด BUY / SELL</div>
+      <div class="flex items-center justify-between gap-3 border-t pt-3" style="border-color:var(--line)">
+        <div>
+          <h2 class="display text-base font-semibold m-0">Pending Orders</h2>
+          <div class="muted text-xs">ออเดอร์ที่วางรอไว้ ราคาวิ่งมาถึงเมื่อไรก็เข้าเอง หมดอายุแล้วยกเลิกเอง</div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="data">
+          <thead><tr><th>ประเภท</th><th>ราคาเข้า</th><th>SL</th><th>TP</th><th>ห่างจากราคา</th><th>หมดอายุ</th><th></th></tr></thead>
+          <tbody id="pendBody"></tbody>
+        </table>
+      </div>
+      <div id="pendEmpty" class="empty">ไม่มีออเดอร์รอ</div>
+    </div>
+  </section>
+
+  <!-- ============ STOP HUNT PROTOCOL ============ -->
+  <section class="grid grid-cols-1 xl:grid-cols-5 gap-4">
+    <div class="panel xl:col-span-2 flex flex-col gap-4">
+      <div class="panel-head !mb-0">
+        <div>
+          <h2>Stop Hunt Scanner · M5</h2>
+          <div class="muted text-xs">ตรวจทุกครั้งที่แท่ง M5 ปิด: ราคาทะลุ High/Low เดิมไปกวาด SL แล้วปิดกลับเข้ากรอบ</div>
+        </div>
+        <span id="huntPill" class="pill">—</span>
+      </div>
+      <dl class="kv">
+        <dt>Liquidity High (<span id="hlLook">48</span> แท่ง)</dt><dd id="hlHigh">—</dd>
+        <dt>Liquidity Low</dt><dd id="hlLow">—</dd>
+        <dt>ATR 14 (M5)</dt><dd id="hlAtr">—</dd>
+        <dt>แท่ง M5 ถัดไปปิดใน</dt><dd id="hlNext">—</dd>
+      </dl>
+      <div id="huntPlan"></div>
+    </div>
+
+    <div class="panel xl:col-span-3">
+      <div class="panel-head">
+        <div>
+          <h2>กติกา Stop Hunt Protocol</h2>
+          <div class="muted text-xs">ใช้ชุดเดียวกันทั้งสแกนสดและ Backtest ผลสดจึงเทียบกับผลย้อนหลังได้ตรงๆ</div>
+        </div>
+      </div>
+      <div class="flex flex-col gap-4">
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <label class="field" for="hunt-lookback">กรอบ Liquidity (แท่ง)<input type="number" id="hunt-lookback" data-hunt="lookback" min="6" max="500" step="1"></label>
+          <label class="field" for="hunt-minPierceAtr">ทะลุขั้นต่ำ (× ATR)<input type="number" id="hunt-minPierceAtr" data-hunt="minPierceAtr" min="0" max="5" step="0.05"></label>
+          <label class="field" for="hunt-maxPierceAtr">ทะลุสูงสุด (× ATR)<input type="number" id="hunt-maxPierceAtr" data-hunt="maxPierceAtr" min="0.1" max="10" step="0.1"></label>
+          <label class="field" for="hunt-wickPct">ไส้เทียนขั้นต่ำ (สัดส่วนแท่ง)<input type="number" id="hunt-wickPct" data-hunt="wickPct" min="0.1" max="0.95" step="0.05"></label>
+          <label class="field" for="hunt-entryMode">วิธีเข้า
+            <select id="hunt-entryMode" data-hunt="entryMode">
+              <option value="limit">Limit รอราคาย่อ (Pending)</option>
+              <option value="market">Market เข้าทันทีแท่งถัดไป</option>
+            </select>
+          </label>
+          <label class="field" for="hunt-retracePct">จุดรอ Limit (% ของไส้)<input type="number" id="hunt-retracePct" data-hunt="retracePct" min="0" max="0.95" step="0.05"></label>
+          <label class="field" for="hunt-expiryBars">Pending หมดอายุ (แท่ง)<input type="number" id="hunt-expiryBars" data-hunt="expiryBars" min="1" max="100" step="1"></label>
+          <label class="field" for="hunt-slBufferAtr">SL เลยไส้ (× ATR)<input type="number" id="hunt-slBufferAtr" data-hunt="slBufferAtr" min="0" max="3" step="0.05"></label>
+          <label class="field" for="hunt-tpR">TP (เท่าของ SL)<input type="number" id="hunt-tpR" data-hunt="tpR" min="0.2" max="10" step="0.1"></label>
+          <label class="field" for="hunt-maxHoldBars">ถือนานสุด (แท่ง)<input type="number" id="hunt-maxHoldBars" data-hunt="maxHoldBars" min="1" max="1000" step="1"></label>
+          <label class="field" for="hunt-trendFilter">กรองเทรนด์ EMA 200
+            <select id="hunt-trendFilter" data-hunt="trendFilter">
+              <option value="off">ไม่กรอง</option>
+              <option value="with">เข้าตามเทรนด์เท่านั้น</option>
+            </select>
+          </label>
+          <label class="field" for="hunt-minQuality">คะแนนคุณภาพขั้นต่ำ<input type="number" id="hunt-minQuality" data-hunt="minQuality" min="0" max="100" step="5"></label>
+        </div>
+        <div class="flex flex-col gap-2">
+          <div class="eyebrow">ช่วงเวลาที่เทรด (UTC)</div>
+          <div class="sessions">
+            <label for="hs-asia"><input type="checkbox" class="plain" id="hs-asia" data-hunt-session="asia">Asia 00–07</label>
+            <label for="hs-london"><input type="checkbox" class="plain" id="hs-london" data-hunt-session="london">London 07–13</label>
+            <label for="hs-ny"><input type="checkbox" class="plain" id="hs-ny" data-hunt-session="ny">New York 13–21</label>
+            <label for="hs-late"><input type="checkbox" class="plain" id="hs-late" data-hunt-session="late">ปลายวัน 21–24</label>
+          </div>
+        </div>
+        <label class="switch" for="hunt-useTrail"><input type="checkbox" id="hunt-useTrail" data-hunt="useTrail"><span class="track"></span>ใช้ Trailing / Break-even กับออเดอร์ Stop Hunt (ปิดไว้ = เหมือน Backtest ทุกประการ)</label>
+        <p class="muted text-xs m-0">คะแนนคุณภาพ 0–100 มาจาก ความยาวไส้ 30 · ระยะทะลุที่พอดี 25 · ปิดกลับเข้ากรอบลึกแค่ไหน 20 · ไปทางเดียวกับ EMA 200 15 · อายุของระดับราคา 10</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ BACKTEST ============ -->
+  <section class="panel flex flex-col gap-4">
+    <div class="panel-head !mb-0">
+      <div>
+        <h2>Backtest &amp; Optimizer</h2>
+        <div class="muted text-xs">ทดสอบกติกาข้างบนกับข้อมูลย้อนหลัง หัก spread ทั้งขาเข้าและขาออก ถ้าแท่งเดียวโดนทั้ง SL และ TP นับว่าโดน SL</div>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <button type="button" class="btn" id="btnBtRun">Backtest ค่าปัจจุบัน</button>
+        <button type="button" class="btn btn-gold" id="btnBtOpt">หาค่าที่ดีที่สุดให้ (Optimize)</button>
+      </div>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+      <label class="field" for="bt-source">ข้อมูล
+        <select id="bt-source" data-bt="source">
+          <option value="synthetic">ข้อมูลสุ่ม (ตรวจระบบ)</option>
+          <option value="binance">Binance M5 (ดาวน์โหลด)</option>
+          <option value="csv">ไฟล์ CSV จาก MT4/MT5</option>
+        </select>
+      </label>
+      <label class="field" for="bt-symbol" data-bt-for="binance">Symbol Binance<input type="text" id="bt-symbol" data-bt="symbol"></label>
+      <label class="field" for="bt-months" data-bt-for="binance">ย้อนหลัง
+        <select id="bt-months" data-bt="months"><option value="1">1 เดือน</option><option value="3">3 เดือน</option><option value="6">6 เดือน</option><option value="12">12 เดือน</option></select>
+      </label>
+      <label class="field col-span-2" for="bt-file" data-bt-for="csv">ไฟล์ CSV (Date, Time, Open, High, Low, Close)<input type="file" id="bt-file" accept=".csv,.txt"></label>
+      <label class="field" for="bt-instrument">ตราสาร (ตั้ง spread)
+        <select id="bt-instrument" data-bt="instrument"></select>
+      </label>
+      <label class="field" for="bt-spread">Spread (หน่วยราคา)<input type="number" id="bt-spread" data-bt="spread" min="0" step="0.00001"></label>
+      <label class="field" for="bt-commission">ค่าคอมต่อรอบ (หน่วยราคา)<input type="number" id="bt-commission" data-bt="commission" min="0" step="0.00001"></label>
+      <label class="field" for="bt-splitPct">ช่วงหาค่า (% แรกของข้อมูล)<input type="number" id="bt-splitPct" data-bt="splitPct" min="40" max="90" step="5"></label>
+    </div>
+    <div id="btStatus" class="text-xs muted num" role="status">—</div>
+    <div id="btVerdict" class="verdict" data-level="none"><h3>ยังไม่มีผล</h3><div class="muted text-sm">กด Backtest หรือ Optimize</div></div>
+    <div id="btStats" class="bt-stats"></div>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div class="lg:col-span-2 min-w-0">
+        <div class="eyebrow mb-2">Equity เมื่อเสี่ยง <span id="btRiskLbl">2</span>% ต่อไม้ (ทบต้น)</div>
+        <div class="chart-box"><canvas id="btChart" aria-label="กราฟผล Backtest"></canvas></div>
+      </div>
+      <div class="flex flex-col gap-4 min-w-0">
+        <div>
+          <div class="eyebrow mb-2">แยกตามช่วงเวลา</div>
+          <div class="table-wrap"><table class="data"><thead><tr><th>Session</th><th>ไม้</th><th>Win</th><th>เฉลี่ย R</th></tr></thead><tbody id="btSessBody"></tbody></table></div>
+        </div>
+        <div>
+          <div class="eyebrow mb-2">รายเดือน</div>
+          <div class="table-wrap"><table class="data"><thead><tr><th>เดือน</th><th>ไม้</th><th>Win</th><th>รวม R</th></tr></thead><tbody id="btMonthBody"></tbody></table></div>
+        </div>
+      </div>
+    </div>
+    <div id="optWrap" hidden>
+      <div class="eyebrow mb-2">5 ชุดค่าที่ดีที่สุดจากช่วงหาค่า แล้วนำไปทดสอบช่วงที่ไม่เคยเห็น (Out-of-sample)</div>
+      <div class="table-wrap">
+        <table class="data">
+          <thead><tr><th>กติกา</th><th>ไม้ (หาค่า)</th><th>เฉลี่ย R (หาค่า)</th><th>ไม้ (ทดสอบ)</th><th>Win (ทดสอบ)</th><th>เฉลี่ย R (ทดสอบ)</th><th>PF (ทดสอบ)</th><th></th></tr></thead>
+          <tbody id="optBody"></tbody>
+        </table>
+      </div>
+      <div id="optRobust" class="text-xs muted mt-2"></div>
     </div>
   </section>
 
@@ -479,11 +650,35 @@ const TF = [
   { key: '1m', label: '1M', name: 'รายนาที',    ms: 60000,    weight: 0.35, seedVol: 1.6,  max: 300 },
   { key: '1s', label: '1S', name: 'รายวินาที',  ms: 1000,     weight: 0.25, seedVol: 0.22, max: 300 },
 ];
-const TF_BY_KEY = Object.fromEntries(TF.map(t => [t.key, t]));
+// Every candle series MarketData keeps: the four matrix frames plus M5 for the Stop Hunt scanner.
+const SERIES = [...TF, { key: '5m', label: 'M5', ms: 300000, seedVol: 2.6, max: 400 }];
+const M5 = 300000;
+
+const SESSIONS = [
+  { key: 'asia', label: 'Asia', from: 0, to: 7 },
+  { key: 'london', label: 'London', from: 7, to: 13 },
+  { key: 'ny', label: 'New York', from: 13, to: 21 },
+  { key: 'late', label: 'ปลายวัน', from: 21, to: 24 },
+];
+
+// Typical spreads in price units, used to preset the backtest cost.
+const INSTRUMENTS = {
+  XAUUSD:   { label: 'XAUUSD ทองคำ', spread: 0.25 },
+  PAXGUSDT: { label: 'PAXG/USDT', spread: 0.5 },
+  GBPJPY:   { label: 'GBPJPY', spread: 0.03 },
+  EURJPY:   { label: 'EURJPY', spread: 0.02 },
+  CADJPY:   { label: 'CADJPY', spread: 0.025 },
+  EURGBP:   { label: 'EURGBP', spread: 0.00015 },
+  AUDNZD:   { label: 'AUDNZD', spread: 0.0003 },
+  EURAUD:   { label: 'EURAUD', spread: 0.0003 },
+  GBPCAD:   { label: 'GBPCAD', spread: 0.0004 },
+  CUSTOM:   { label: 'กำหนดเอง', spread: null },
+};
 
 const DEFAULT_SETTINGS = {
   riskPct: 2, rr: 1.5, slAtrMult: 1.5, minSl: 0.6,
   trailEnabled: true, trailActivatePct: 50, trailDistPct: 40, breakEven: true, letRun: false,
+  strategy: 'mtf',
   entryThreshold: 35, maxPositions: 1, cooldownSec: 5,
   dailyTargetPct: 10, stopAtTarget: false, dailyMaxLossPct: 15,
   startCapitalThb: 500, thbPerUsd: 33, leverage: 1000, spread: 0.20,
@@ -494,6 +689,14 @@ const DEFAULT_SETTINGS = {
     metaApiAccount: '', metaApiRegion: 'new-york', metaApiSymbol: 'XAUUSD',
     wsUrl: '', wsSubscribe: '', wsBidPath: '', wsAskPath: '', wsPricePath: 'p',
   },
+  hunt: {
+    lookback: 48, minPierceAtr: 0.05, maxPierceAtr: 1.5, wickPct: 0.5,
+    entryMode: 'limit', retracePct: 0.5, expiryBars: 6,
+    slBufferAtr: 0.2, tpR: 1.5, maxHoldBars: 48,
+    trendFilter: 'off', minQuality: 0, useTrail: false,
+    sessions: { asia: true, london: true, ny: true, late: true },
+  },
+  bt: { source: 'synthetic', symbol: 'PAXGUSDT', months: 3, instrument: 'XAUUSD', spread: 0.25, commission: 0, splitPct: 70 },
 };
 
 /* =====================================================================
@@ -512,6 +715,10 @@ const dayKey = (t) => { const d = new Date(t); return `${d.getFullYear()}-${Stri
 const timeStr = (t) => new Date(t).toLocaleTimeString('th-TH', { hour12: false });
 const dateTimeStr = (t) => new Date(t).toLocaleString('th-TH', { hour12: false, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const priceDigits = (v) => (Math.abs(v) < 20 ? 5 : Math.abs(v) < 500 ? 3 : 2);
+const pfmt = (v) => fmt(v, priceDigits(v));
+const sessionOf = (t) => { const h = new Date(t).getUTCHours(); return SESSIONS.find(s => h >= s.from && h < s.to).key; };
+const yieldUI = () => new Promise(r => setTimeout(r, 0));
 
 function toast(msg, kind = '') {
   const el = document.createElement('div');
@@ -570,18 +777,18 @@ const Ind = {
 class MarketData {
   constructor() { this.reset(); }
   reset() {
-    this.series = Object.fromEntries(TF.map(t => [t.key, []]));
+    this.series = Object.fromEntries(SERIES.map(t => [t.key, []]));
     this.bid = 0; this.ask = 0; this.mid = 0; this.lastTs = 0; this.ticks = 0;
     this.synthetic = false; this.ready = false;
   }
   /** history: { '1d': [{t,o,h,l,c}], ... } from a feed that supports it */
   seed(history) {
-    for (const tf of TF) if (history[tf.key]) this.series[tf.key] = history[tf.key].slice(-tf.max);
+    for (const tf of SERIES) if (history[tf.key]) this.series[tf.key] = history[tf.key].slice(-tf.max);
     this.ready = true;
   }
   /** Builds a random-walk history ending at `price`, used when a feed has no history endpoint. */
   seedSynthetic(price, now = Date.now()) {
-    for (const tf of TF) {
+    for (const tf of SERIES) {
       const n = tf.max, closes = [price];
       const drift = randn() * tf.seedVol * 0.08;
       let p = price;
@@ -596,12 +803,12 @@ class MarketData {
     }
     this.synthetic = true; this.ready = true;
   }
-  /** Returns true when a new 1-second candle opened (used as the bot's evaluation clock). */
+  /** Returns the keys of series that opened a new candle on this tick ('1s' drives the bot clock, '5m' the scanner). */
   onTick({ bid, ask, ts }) {
     const mid = (bid + ask) / 2;
     Object.assign(this, { bid, ask, mid, lastTs: ts }); this.ticks++;
-    let newSecond = false;
-    for (const tf of TF) {
+    const opened = [];
+    for (const tf of SERIES) {
       const arr = this.series[tf.key];
       const bucket = Math.floor(ts / tf.ms) * tf.ms;
       const last = arr[arr.length - 1];
@@ -611,10 +818,10 @@ class MarketData {
         const o = last ? last.c : mid;
         arr.push({ t: bucket, o, h: Math.max(o, mid), l: Math.min(o, mid), c: mid });
         if (arr.length > tf.max) arr.shift();
-        if (tf.key === '1s') newSecond = true;
+        if (last) opened.push(tf.key);
       }
     }
-    return newSecond;
+    return opened;
   }
   dayOpen() { const d = this.series['1d']; return d.length ? d[d.length - 1].o : 0; }
 }
@@ -672,8 +879,8 @@ class BinanceFeed extends PriceFeed {
   constructor({ symbol }) { super('Binance'); this.symbol = symbol.toUpperCase(); }
   async loadHistory() {
     const out = {};
-    await Promise.all(TF.map(async tf => {
-      const url = `https://api.binance.com/api/v3/klines?symbol=${this.symbol}&interval=${tf.key}&limit=${tf.max}`;
+    await Promise.all(SERIES.map(async tf => {
+      const url = `https://api.binance.com/api/v3/klines?symbol=${this.symbol}&interval=${tf.key}&limit=${Math.min(tf.max, 1000)}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`klines ${tf.label}: HTTP ${res.status}`);
       out[tf.key] = (await res.json()).map(k => ({ t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4] }));
@@ -800,6 +1007,266 @@ const Risk = {
 };
 
 /* =====================================================================
+ * 7b. STOP HUNT PROTOCOL — liquidity sweep then close back inside the range.
+ *     The same detect() runs on live M5 candles and inside the backtester.
+ * ===================================================================== */
+const Hunt = {
+  /** Precomputes ATR(14), EMA(200) and the rolling High/Low of the previous `lookback` bars (O(n) deques). */
+  prepare(bars, p) {
+    const n = bars.length, L = p.lookback;
+    const atr = new Float64Array(n), ema = new Float64Array(n);
+    const hi = new Float64Array(n).fill(NaN), lo = new Float64Array(n).fill(NaN);
+    const hiIdx = new Int32Array(n), loIdx = new Int32Array(n);
+    let a = 0, e = n ? bars[0].c : 0;
+    const k = 2 / 201;
+    for (let i = 0; i < n; i++) {
+      if (i > 0) {
+        const b = bars[i], pv = bars[i - 1];
+        const tr = Math.max(b.h - b.l, Math.abs(b.h - pv.c), Math.abs(b.l - pv.c));
+        a = i <= 14 ? (a * (i - 1) + tr) / i : (a * 13 + tr) / 14;
+        e = b.c * k + e * (1 - k);
+      }
+      atr[i] = i >= 14 ? a : 0; ema[i] = e;
+    }
+    const qh = new Int32Array(n), ql = new Int32Array(n);
+    let h1 = 0, t1 = 0, h2 = 0, t2 = 0;
+    for (let i = 0; i < n; i++) {
+      if (i >= L) {                                   // window for bar i is [i-L, i-1]
+        while (qh[h1] < i - L) h1++;
+        while (ql[h2] < i - L) h2++;
+        hi[i] = bars[qh[h1]].h; hiIdx[i] = qh[h1];
+        lo[i] = bars[ql[h2]].l; loIdx[i] = ql[h2];
+      }
+      while (t1 > h1 && bars[qh[t1 - 1]].h <= bars[i].h) t1--; qh[t1++] = i;
+      while (t2 > h2 && bars[ql[t2 - 1]].l >= bars[i].l) t2--; ql[t2++] = i;
+    }
+    return { atr, ema, hi, lo, hiIdx, loIdx };
+  },
+
+  /** Checks the closed bar i. Returns a setup with entry/SL levels and a 0–100 quality score, or null. */
+  detect(bars, i, ctx, p) {
+    const b = bars[i], a = ctx.atr[i];
+    if (!a || Number.isNaN(ctx.hi[i]) || !p.sessions[sessionOf(b.t)]) return null;
+    const range = b.h - b.l;
+    if (range <= 0) return null;
+    const H = ctx.hi[i], L = ctx.lo[i];
+    const upWick = (b.h - Math.max(b.o, b.c)) / range, dnWick = (Math.min(b.o, b.c) - b.l) / range;
+    const sellOk = b.h - H >= p.minPierceAtr * a && b.h - H <= p.maxPierceAtr * a && b.c < H && upWick >= p.wickPct;
+    const buyOk = L - b.l >= p.minPierceAtr * a && L - b.l <= p.maxPierceAtr * a && b.c > L && dnWick >= p.wickPct;
+    let side, level, pierce, wick, back, age;
+    if (sellOk && (!buyOk || upWick >= dnWick)) { side = 'SELL'; level = H; pierce = b.h - H; wick = upWick; back = H - b.c; age = i - ctx.hiIdx[i]; }
+    else if (buyOk) { side = 'BUY'; level = L; pierce = L - b.l; wick = dnWick; back = b.c - L; age = i - ctx.loIdx[i]; }
+    else return null;
+
+    const trendWith = side === 'SELL' ? b.c < ctx.ema[i] : b.c > ctx.ema[i];
+    if (p.trendFilter === 'with' && !trendWith) return null;
+    const pr = pierce / a;
+    const quality = Math.round(
+      clamp((wick - 0.3) / 0.5, 0, 1) * 30 +
+      (pr <= 0.6 ? 25 : clamp(1 - (pr - 0.6) / 0.9, 0, 1) * 25) +
+      clamp(back / a, 0, 1) * 20 +
+      (trendWith ? 15 : 0) +
+      clamp(age / 12, 0, 1) * 10);
+    if (quality < p.minQuality) return null;
+
+    const sl = side === 'SELL' ? b.h + p.slBufferAtr * a : b.l - p.slBufferAtr * a;
+    const limit = side === 'SELL' ? b.c + p.retracePct * (b.h - b.c) : b.c - p.retracePct * (b.c - b.l);
+    return {
+      i, t: b.t, side, level, sl, limit, atr: a, quality, trendWith,
+      reasons: [
+        `กวาด ${side === 'SELL' ? 'High' : 'Low'} ของ ${p.lookback} แท่งก่อนหน้าที่ ${pfmt(level)} ทะลุไป ${fmt(pr, 2)} ATR`,
+        `ไส้เทียน ${fmt(wick * 100, 0)}% ของแท่ง แล้วปิดกลับเข้ากรอบ ${fmt(back / a, 2)} ATR`,
+        trendWith ? 'ไปทางเดียวกับเทรนด์ EMA 200' : 'สวนเทรนด์ EMA 200 (คะแนนลดลง)',
+        `ระดับราคานี้ตั้งมาแล้ว ${age} แท่ง · Session ${SESSIONS.find(s => s.key === sessionOf(b.t)).label}`,
+      ],
+    };
+  },
+};
+
+/* =====================================================================
+ * 7c. BACKTESTER — bar-by-bar, deliberately pessimistic:
+ *     bid-based bars, BUY pays the spread on entry, SELL on exit;
+ *     SL wins when SL and TP are both inside one bar; no TP on the fill bar;
+ *     gaps through SL exit at the open.
+ * ===================================================================== */
+const Backtest = {
+  run(bars, p, cost, from = 0, to = bars.length, ctx = Hunt.prepare(bars, p)) {
+    const sp = cost.spread, com = cost.commission, trades = [];
+    let st = null;
+    const close = (i, exit, reason) => {
+      const R = (st.dir * (exit - st.entry) - com) / st.slDist;
+      trades.push({ t: bars[st.fillIdx].t, side: st.side, entry: st.entry, exit, sl: st.sl, tp: st.tp, R, reason, q: st.q, session: sessionOf(bars[st.sigIdx].t), held: i - st.fillIdx + 1 });
+      st = null;
+    };
+    const checkExit = (i, allowTp) => {
+      const b = bars[i], gap = i > st.fillIdx;
+      if (st.dir === 1) {
+        if (gap && b.o <= st.sl) return close(i, b.o, 'SL');
+        if (b.l <= st.sl) return close(i, st.sl, 'SL');
+        if (allowTp && b.h >= st.tp) return close(i, st.tp, 'TP');
+      } else {
+        if (gap && b.o + sp >= st.sl) return close(i, b.o + sp, 'SL');
+        if (b.h + sp >= st.sl) return close(i, st.sl, 'SL');
+        if (allowTp && b.l + sp <= st.tp) return close(i, st.tp, 'TP');
+      }
+    };
+    for (let i = Math.max(from, p.lookback + 15); i < to; i++) {
+      const b = bars[i];
+      if (st && st.pending) {
+        if (i > st.expIdx) st = null;
+        else if (st.dir === 1 ? b.l + sp <= st.entry : b.h >= st.entry) { st.pending = false; st.fillIdx = i; checkExit(i, false); }
+      } else if (st) {
+        checkExit(i, true);
+        if (st && i - st.fillIdx >= p.maxHoldBars) close(i, st.dir === 1 ? b.c : b.c + sp, 'TIME');
+      }
+      if (st || i >= to - 1) continue;
+      const s = Hunt.detect(bars, i, ctx, p);
+      if (!s) continue;
+      const dir = s.side === 'BUY' ? 1 : -1;
+      const entry = p.entryMode === 'market' ? (dir === 1 ? bars[i + 1].o + sp : bars[i + 1].o) : s.limit;
+      const slDist = dir * (entry - s.sl);
+      if (slDist <= sp) continue;                     // stop inside the spread: untradeable
+      st = { side: s.side, dir, entry, sl: s.sl, slDist, tp: entry + dir * slDist * p.tpR, q: s.quality, sigIdx: i,
+        pending: p.entryMode !== 'market', fillIdx: i + 1, expIdx: i + p.expiryBars };
+    }
+    if (st && !st.pending) close(to - 1, st.dir === 1 ? bars[to - 1].c : bars[to - 1].c + sp, 'END');
+    return trades;
+  },
+
+  stats(trades, riskPct) {
+    const n = trades.length;
+    const wins = trades.filter(t => t.R > 0), losses = trades.filter(t => t.R <= 0);
+    const sumW = wins.reduce((s, t) => s + t.R, 0), sumL = -losses.reduce((s, t) => s + t.R, 0);
+    const avgWin = wins.length ? sumW / wins.length : 0, avgLoss = losses.length ? sumL / losses.length : 0;
+    let eq = 100, peak = 100, maxDD = 0, streak = 0, maxStreak = 0;
+    const curve = [{ x: 0, y: 100 }];
+    trades.forEach((t, k) => {
+      eq *= 1 + riskPct / 100 * t.R;
+      peak = Math.max(peak, eq); maxDD = Math.max(maxDD, (peak - eq) / peak * 100);
+      streak = t.R <= 0 ? streak + 1 : 0; maxStreak = Math.max(maxStreak, streak);
+      curve.push({ x: k + 1, y: eq });
+    });
+    const span = n > 1 ? (trades[n - 1].t - trades[0].t) / (30 * 86400000) : 0;
+    return {
+      n, wins: wins.length, winRate: n ? wins.length / n * 100 : 0,
+      avgWin, avgLoss, expectancy: n ? (sumW - sumL) / n : 0, pf: sumL > 0 ? sumW / sumL : sumW > 0 ? Infinity : 0,
+      totalR: sumW - sumL, returnPct: eq - 100, maxDD, maxStreak, curve,
+      breakevenWin: avgWin + avgLoss > 0 ? avgLoss / (avgWin + avgLoss) * 100 : 0,
+      perMonth: span > 0 ? n / span : n,
+      mcDD95: Backtest.monteCarloDD(trades, riskPct),
+    };
+  },
+
+  /** Shuffles the trade order 400 times; returns the 95th-percentile max drawdown to plan for. */
+  monteCarloDD(trades, riskPct, runs = 400) {
+    if (trades.length < 5) return 0;
+    const R = trades.map(t => t.R), dds = [];
+    for (let r = 0; r < runs; r++) {
+      for (let i = R.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [R[i], R[j]] = [R[j], R[i]]; }
+      let eq = 1, peak = 1, dd = 0;
+      for (const x of R) { eq *= 1 + riskPct / 100 * x; peak = Math.max(peak, eq); dd = Math.max(dd, (peak - eq) / peak); }
+      dds.push(dd * 100);
+    }
+    dds.sort((a, b) => a - b);
+    return dds[Math.floor(runs * 0.95)];
+  },
+
+  groupBy(trades, keyFn) {
+    const g = new Map();
+    for (const t of trades) { const k = keyFn(t); if (!g.has(k)) g.set(k, []); g.get(k).push(t); }
+    return [...g.entries()].map(([k, list]) => ({
+      key: k, n: list.length, winRate: list.filter(t => t.R > 0).length / list.length * 100,
+      sumR: list.reduce((s, t) => s + t.R, 0), avgR: list.reduce((s, t) => s + t.R, 0) / list.length,
+    }));
+  },
+
+  /** Plain-language pass / weak / fail call with the reasons behind it. */
+  verdict(st, outOfSample) {
+    const bad = [], good = [];
+    let level = 'pass';
+    const down = (to) => { if (to === 'fail' || level === 'pass') level = to; };
+    if (st.n < 30) { down('weak'); bad.push(`มีแค่ ${st.n} ไม้ ยังน้อยเกินไปที่จะสรุป ต้องการอย่างน้อย 30 ไม้`); }
+    if (st.expectancy <= 0) { down('fail'); bad.push(`เฉลี่ยต่อไม้ ${signed(st.expectancy, 3)}R หลังหัก spread แปลว่ายิ่งเทรดยิ่งเสีย`); }
+    else if (st.expectancy < 0.05) { down('weak'); bad.push(`ได้เปรียบแค่ ${signed(st.expectancy, 3)}R ต่อไม้ spread กว้างขึ้นนิดเดียวก็ติดลบ`); }
+    else good.push(`เฉลี่ยได้ ${signed(st.expectancy, 2)}R ต่อไม้หลังหักต้นทุน`);
+    if (st.expectancy > 0 && st.pf < 1.2) { down('weak'); bad.push(`Profit Factor ${fmt(st.pf)} ต่ำกว่า 1.2`); }
+    else if (st.pf >= 1.2) good.push(`Profit Factor ${Number.isFinite(st.pf) ? fmt(st.pf) : '∞'}`);
+    if (st.winRate < st.breakevenWin + 3 && st.expectancy > 0) bad.push(`Win ${fmt(st.winRate, 1)}% ห่างจุดคุ้มทุน ${fmt(st.breakevenWin, 1)}% ไม่มาก`);
+    if (st.mcDD95 > 35) { down('weak'); bad.push(`ควรเผื่อพอร์ตลงได้ถึง ${fmt(st.mcDD95, 0)}% ที่ความเสี่ยงนี้ ลด % ต่อไม้ลง`); }
+    if (st.maxStreak >= 8) bad.push(`เคยแพ้ติดกัน ${st.maxStreak} ไม้`);
+    if (!outOfSample) { down('weak'); bad.push('ยังไม่ได้ทดสอบกับช่วงข้อมูลที่ไม่เคยใช้หาค่า กด Optimize เพื่อทดสอบ'); }
+    const title = { pass: 'ผ่าน · มีความได้เปรียบทางสถิติ', weak: 'ก้ำกึ่ง · ยังไม่ควรใช้เงินจริง', fail: 'ไม่ผ่าน · อย่าใช้กติกาชุดนี้กับเงินจริง' }[level];
+    return { level, title, good, bad };
+  },
+};
+
+/* =====================================================================
+ * 7d. HISTORICAL DATA — Binance download, MT4/MT5 CSV import, synthetic
+ * ===================================================================== */
+const DataSrc = {
+  async binance(symbol, months, onProgress) {
+    const end = Date.now(), out = [];
+    let start = end - months * 30 * 86400000;
+    while (start < end) {
+      const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol.toUpperCase()}&interval=5m&startTime=${start}&limit=1000`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const rows = await res.json();
+      if (!rows.length) break;
+      for (const k of rows) out.push({ t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4] });
+      start = rows[rows.length - 1][0] + M5;
+      onProgress(out.length);
+    }
+    return out;
+  },
+
+  /** Accepts MT5 tab exports (<DATE> <TIME> <OPEN>…), MT4 CSV (2024.08.01,00:05,…), ISO datetimes or epoch ms. Times kept as written. */
+  parseCsv(text) {
+    const toTs = (d, tm) => {
+      const [Y, M, D] = d.split(/[.\-/]/).map(Number), [hh, mm, ss = 0] = tm.split(':').map(Number);
+      return Date.UTC(Y, M - 1, D, hh, mm, ss);
+    };
+    const out = [];
+    for (const line of text.split(/\r?\n/)) {
+      const parts = line.split(/[,;\t]/).map(s => s.replace(/[<>"]/g, '').trim()).filter(Boolean);
+      if (parts.length < 5) continue;
+      let t, k;
+      if (/^\d{4}[.\-/]\d{2}[.\-/]\d{2}$/.test(parts[0]) && /^\d{1,2}:\d{2}(:\d{2})?$/.test(parts[1])) { t = toTs(parts[0], parts[1]); k = 2; }
+      else if (/^\d{4}[.\-/]\d{2}[.\-/]\d{2}[ T]\d{1,2}:\d{2}/.test(parts[0])) { const [d, tm] = parts[0].split(/[ T]/); t = toTs(d, tm.replace(/Z$/, '')); k = 1; }
+      else if (/^\d{10,13}$/.test(parts[0])) { t = parts[0].length === 13 ? +parts[0] : +parts[0] * 1000; k = 1; }
+      else continue;                                   // header or junk
+      const [o, h, l, c] = parts.slice(k, k + 4).map(Number);
+      if (![o, h, l, c].every(Number.isFinite)) continue;
+      out.push({ t, o, h: Math.max(h, o, c), l: Math.min(l, o, c), c });
+    }
+    out.sort((a, b) => a.t - b.t);
+    return out.filter((b, i) => i === 0 || b.t !== out[i - 1].t);
+  },
+
+  /** Random walk with trend regimes. It has no built-in edge, so a fair test should come out near or below zero. */
+  synthetic(days = 60, start = 4000) {
+    const n = days * 288, bars = [];
+    let p = start, t = Math.floor(Date.now() / M5) * M5 - n * M5, drift = 0, vol = 2, left = 0;
+    for (let i = 0; i < n; i++, t += M5) {
+      if (left-- <= 0) { drift = randn() * 0.15; vol = 1.2 + Math.random() * 2; left = 50 + Math.random() * 300; }
+      const o = p; let x = o, h = o, l = o;
+      for (let k = 0; k < 5; k++) { x += drift / 5 + randn() * vol / Math.sqrt(5); h = Math.max(h, x); l = Math.min(l, x); }
+      bars.push({ t, o, h, l, c: x }); p = x;
+    }
+    return bars;
+  },
+
+  describe(bars) {
+    if (bars.length < 2) return { tf: '—', from: 0, to: 0 };
+    const diffs = [];
+    for (let i = 1; i < Math.min(bars.length, 500); i++) diffs.push(bars[i].t - bars[i - 1].t);
+    diffs.sort((a, b) => a - b);
+    const m = diffs[diffs.length >> 1] / 60000;
+    const tf = m < 60 ? `M${m}` : m < 1440 ? `H${m / 60}` : `D${m / 1440}`;
+    return { tf, minutes: m, from: bars[0].t, to: bars[bars.length - 1].t };
+  },
+};
+
+/* =====================================================================
  * 8. BROKER — paper execution. A live broker would implement the same
  *    methods (open / close) by calling YOUR backend, which holds the API
  *    token and places the order (e.g. MetaApi createMarketBuyOrder).
@@ -823,13 +1290,14 @@ class PaperBroker {
   floating(bid, ask) { if (!bid || !ask) return 0; return this.positions.reduce((s, p) => s + this.pnl(p, bid, ask), 0); }
   usedMargin(price) { return this.positions.reduce((s, p) => s + Risk.margin(p.lot, price, this.s), 0); }
 
-  open(side, { slDist, lot, source, score }) {
+  /** trail=false keeps the position exactly as planned (no break-even / trailing), matching the backtest. */
+  open(side, { slDist, lot, rr, source, score, trail = true }) {
     const { bid, ask } = this.app.md;
     const dir = side === 'BUY' ? 1 : -1, entry = side === 'BUY' ? ask : bid;
+    const sl = entry - dir * slDist, tp = entry + dir * slDist * rr;
     const pos = {
-      id: uid(), side, lot, entry, source, score,
-      sl: entry - dir * slDist, tp: entry + dir * slDist * this.s.rr,
-      sl0: entry - dir * slDist, tp0: entry + dir * slDist * this.s.rr,
+      id: uid(), side, lot, entry, source, score, trail,
+      sl, tp, sl0: sl, tp0: tp,
       initSlDist: slDist, openTs: Date.now(), trailActive: false, beDone: false, peak: 0,
     };
     this.positions.push(pos);
@@ -845,12 +1313,13 @@ class PaperBroker {
       pos.peak = Math.max(pos.peak, fav);
       const tpDist = Math.abs(pos.tp0 - pos.entry);
 
-      if (s.breakEven && !pos.beDone && fav >= pos.initSlDist) {
+      const managed = pos.trail !== false;
+      if (managed && s.breakEven && !pos.beDone && fav >= pos.initSlDist) {
         const be = pos.entry + dir * 0.05;
         if ((be - pos.sl) * dir > 0) pos.sl = be;
         pos.beDone = true;
       }
-      if (s.trailEnabled && !pos.trailActive && fav >= tpDist * s.trailActivatePct / 100) {
+      if (managed && s.trailEnabled && !pos.trailActive && fav >= tpDist * s.trailActivatePct / 100) {
         pos.trailActive = true;
         if (s.letRun) pos.tp = null;
         this.app.onTrailStart(pos);
@@ -903,7 +1372,8 @@ function freshState(settings = structuredClone(DEFAULT_SETTINGS)) {
   return {
     v: 1, settings,
     account: { balance: startBalance, startBalance, startTs: now, days: {} },
-    trades: [], positions: [], curve: [{ t: now, b: startBalance }],
+    trades: [], positions: [], pending: [], curve: [{ t: now, b: startBalance }],
+    btLast: null,
     lastPrice: settings.feed.simStart,
   };
 }
@@ -911,7 +1381,14 @@ function freshState(settings = structuredClone(DEFAULT_SETTINGS)) {
 function loadState() {
   const saved = Store.load();
   if (!saved || saved.v !== 1) return freshState();
-  saved.settings = { ...structuredClone(DEFAULT_SETTINGS), ...saved.settings, feed: { ...DEFAULT_SETTINGS.feed, ...(saved.settings || {}).feed } };
+  const s = saved.settings || {}, d = structuredClone(DEFAULT_SETTINGS);
+  saved.settings = {
+    ...d, ...s,
+    feed: { ...d.feed, ...s.feed },
+    hunt: { ...d.hunt, ...s.hunt, sessions: { ...d.hunt.sessions, ...(s.hunt || {}).sessions } },
+    bt: { ...d.bt, ...s.bt },
+  };
+  saved.pending = saved.pending || [];
   return saved;
 }
 
@@ -923,6 +1400,8 @@ const App = {
   matrix: null, signal: { score: 0, action: 'WAIT', aligned: 0 },
   chartTf: '1s', growthMode: 'time', lastCloseTs: 0, renderQueued: false, saveTimer: null,
   tickCount: 0, tickWindowStart: Date.now(), tps: 0,
+  huntPlan: null, huntScans: 0, huntLevels: null,
+  bt: { bars: null, meta: null, label: '', busy: false },
 
   init() {
     this.state = loadState();
@@ -935,6 +1414,7 @@ const App = {
     this.connectFeed(this.state.settings.feed.source, { silent: true });
     setInterval(() => this.housekeeping(), 1000);
     window.addEventListener('beforeunload', () => this.saveNow());
+    setTimeout(() => this.runBacktest({ initial: true }), 300);
   },
 
   get s() { return this.state.settings; },
@@ -953,11 +1433,13 @@ const App = {
   async connectFeed(source, { silent = false } = {}) {
     if (this.feed) {
       this.feed.stop();
-      if (this.state.positions.length && this.md.mid) {      // prices from different sources don't mix
+      if ((this.state.positions.length || this.state.pending.length) && this.md.mid) {   // prices from different sources don't mix
         this.closeAll('FEED');
-        toast('ปิดออเดอร์ทั้งหมดก่อนเปลี่ยนแหล่งราคา');
+        this.state.pending.length = 0;
+        toast('ปิดออเดอร์และยกเลิก Pending ทั้งหมดก่อนเปลี่ยนแหล่งราคา');
       }
     }
+    this.huntPlan = null;
     this.md.reset();
     const feed = this.buildFeed(source);
     this.feed = feed;
@@ -998,16 +1480,196 @@ const App = {
   /* ---------- tick pipeline ---------- */
   onTick(t) {
     if (!this.md.ready) this.md.seedSynthetic((t.bid + t.ask) / 2, t.ts);   // live feeds without history
-    const newSecond = this.md.onTick(t);
+    const opened = this.md.onTick(t);
     this.state.lastPrice = this.md.mid;
     this.tickCount++;
 
     const closed = this.broker.update(this.md.bid, this.md.ask);
     closed.forEach(tr => tr && UI.notifyClose(tr));
-    if (this.state.positions.length || closed.length) this.markDirty();
+    this.updatePending();
+    if (this.state.positions.length || this.state.pending.length || closed.length) this.markDirty();
 
-    if (newSecond || !this.matrix) this.evaluate();
+    if (opened.includes('5m')) this.scanHunt();
+    if (opened.includes('1s') || !this.matrix) this.evaluate();
     this.queueRender();
+  },
+
+  /* ---------- Stop Hunt: live scan, plan, pending orders ---------- */
+  closedM5() { return this.md.series['5m'].slice(0, -1); },
+
+  /** Runs when an M5 candle closes: same detect() the backtest uses. */
+  scanHunt() {
+    const p = this.s.hunt, bars = this.closedM5();
+    if (bars.length < p.lookback + 20) return;
+    this.huntScans++;
+    const setup = Hunt.detect(bars, bars.length - 1, Hunt.prepare(bars, p), p);
+    if (!setup) return UI.renderHunt();
+    const dir = setup.side === 'BUY' ? 1 : -1;
+    const entry = p.entryMode === 'market' ? (dir === 1 ? this.md.ask : this.md.bid) : setup.limit;
+    const slDist = dir * (entry - setup.sl);
+    if (slDist <= 0) return UI.renderHunt();
+    this.huntPlan = {
+      ...setup, entry, slDist, tp: entry + dir * slDist * p.tpR, rr: p.tpR, mode: p.entryMode,
+      createdTs: Date.now(), expiresTs: Date.now() + p.expiryBars * M5, status: 'new',
+    };
+    toast(`พบจังหวะกวาด SL: ${setup.side} · คุณภาพ ${setup.quality}/100`, setup.side === 'BUY' ? 'good' : 'bad');
+    if (this.s.autoTrade && this.s.strategy !== 'mtf') this.executeHuntPlan();
+    UI.renderHunt();
+  },
+
+  executeHuntPlan() {
+    const plan = this.huntPlan, p = this.s.hunt;
+    if (!plan || plan.status !== 'new') return;
+    if (Date.now() > plan.expiresTs) { plan.status = 'expired'; UI.renderHunt(); return toast('แผนนี้หมดอายุแล้ว', 'bad'); }
+    const blocker = this.tradeBlocker();
+    if (blocker) return toast(blocker, 'bad');
+    if (plan.mode === 'market') {
+      const ok = this.openPosition(plan.side, 'HUNT', { slPrice: plan.sl, rr: plan.rr, trail: p.useTrail, score: plan.quality });
+      plan.status = ok ? 'filled' : 'skipped';
+    } else {
+      this.state.pending.push({ id: uid(), side: plan.side, price: plan.entry, sl: plan.sl, tp: plan.tp, rr: plan.rr,
+        trail: p.useTrail, quality: plan.quality, createdTs: Date.now(), expiresTs: plan.expiresTs });
+      plan.status = 'placed';
+      toast(`วาง ${plan.side} LIMIT @ ${pfmt(plan.entry)} รอราคามาถึง`);
+      this.markDirty();
+    }
+    UI.renderHunt(); this.queueRender();
+  },
+
+  /** Fills or expires pending limit orders on every tick. */
+  updatePending() {
+    const list = this.state.pending;
+    if (!list.length) return;
+    const { bid, ask } = this.md, now = Date.now();
+    for (const o of [...list]) {
+      const dir = o.side === 'BUY' ? 1 : -1, px = o.side === 'BUY' ? ask : bid;
+      let done = null;
+      if (now > o.expiresTs) done = `Pending ${o.side} LIMIT หมดอายุ ราคาไม่มาถึง`;
+      else if ((px - o.sl) * dir <= 0) done = `Pending ${o.side} ยกเลิก ราคาเลย SL ไปก่อน`;
+      else if (dir === 1 ? ask <= o.price : bid >= o.price) {
+        list.splice(list.indexOf(o), 1);
+        if (!this.openPosition(o.side, 'HUNT', { slPrice: o.sl, rr: o.rr, trail: o.trail, score: o.quality })) toast('Pending ถึงราคาแต่เปิดออเดอร์ไม่ได้', 'bad');
+        if (this.huntPlan && this.huntPlan.status === 'placed') this.huntPlan.status = 'filled';
+        UI.renderHunt();
+        continue;
+      }
+      if (done) { list.splice(list.indexOf(o), 1); toast(done); if (this.huntPlan && this.huntPlan.status === 'placed') this.huntPlan.status = 'expired'; UI.renderHunt(); this.markDirty(); }
+    }
+  },
+
+  cancelPending(id) {
+    const i = this.state.pending.findIndex(o => o.id === id);
+    if (i >= 0) { this.state.pending.splice(i, 1); this.markDirty(); this.queueRender(); toast('ยกเลิก Pending แล้ว'); }
+  },
+
+  /* ---------- Backtest & optimizer ---------- */
+  cost() { return { spread: this.s.bt.spread, commission: this.s.bt.commission }; },
+
+  async loadBtData() {
+    const b = this.s.bt;
+    if (b.source === 'binance') {
+      UI.btStatus(`กำลังดาวน์โหลด ${b.symbol} M5 ย้อนหลัง ${b.months} เดือน…`);
+      const bars = await DataSrc.binance(b.symbol, +b.months, (n) => UI.btStatus(`ดาวน์โหลดแล้ว ${n.toLocaleString()} แท่ง…`));
+      this.setBtData(bars, `Binance ${b.symbol}`);
+    } else if (b.source === 'csv') {
+      if (!this.bt.bars || !this.bt.label.startsWith('CSV')) throw new Error('เลือกไฟล์ CSV ก่อน');
+    } else if (!this.bt.bars || this.bt.label !== 'ข้อมูลสุ่ม') {
+      this.setBtData(DataSrc.synthetic(60, this.md.mid || 4000), 'ข้อมูลสุ่ม');
+    }
+  },
+
+  setBtData(bars, label) {
+    if (bars.length < 300) throw new Error(`ข้อมูลมีแค่ ${bars.length} แท่ง ต้องการอย่างน้อย 300 แท่ง`);
+    this.bt.bars = bars; this.bt.label = label; this.bt.meta = DataSrc.describe(bars);
+    UI.btStatus(UI.btDataLine());
+  },
+
+  async runBacktest({ initial = false } = {}) {
+    if (this.bt.busy) return;
+    this.bt.busy = true; UI.btBusy(true);
+    try {
+      await this.loadBtData();
+      await yieldUI();
+      const trades = Backtest.run(this.bt.bars, this.s.hunt, this.cost());
+      const st = Backtest.stats(trades, this.s.riskPct);
+      this.showBacktest(st, trades, { outOfSample: false, split: null });
+      UI.renderOptimizer(null);
+      if (!initial) toast(`Backtest เสร็จ ${st.n} ไม้`);
+    } catch (err) {
+      UI.btStatus(`ทำ Backtest ไม่สำเร็จ: ${err.message}`);
+      if (this.s.bt.source === 'binance') toast('ดาวน์โหลดจาก Binance ไม่ได้ ลองเปิดไฟล์นี้ในเครื่อง หรือใช้ไฟล์ CSV', 'bad');
+    } finally { this.bt.busy = false; UI.btBusy(false); }
+  },
+
+  /** Grid search on the first part of the data, then judge the winners on the unseen rest. */
+  async optimize() {
+    if (this.bt.busy) return;
+    this.bt.busy = true; UI.btBusy(true);
+    try {
+      await this.loadBtData();
+      const bars = this.bt.bars, cost = this.cost(), base = this.s.hunt, risk = this.s.riskPct;
+      const split = Math.floor(bars.length * this.s.bt.splitPct / 100);
+      const grid = [];
+      for (const lookback of [24, 48, 96])
+        for (const tpR of [0.7, 1, 1.5, 2])
+          for (const entryMode of ['market', 'limit'])
+            for (const slBufferAtr of [0.1, 0.3])
+              for (const trendFilter of ['off', 'with']) grid.push({ lookback, tpR, entryMode, slBufferAtr, trendFilter });
+      const ctxCache = new Map(), results = [];
+      const minTrades = Math.max(20, Math.round(split / 2000));
+      for (let k = 0; k < grid.length; k++) {
+        const p = { ...base, ...grid[k] };
+        if (!ctxCache.has(p.lookback)) ctxCache.set(p.lookback, Hunt.prepare(bars, p));
+        const ctx = ctxCache.get(p.lookback);
+        const is = Backtest.run(bars, p, cost, 0, split, ctx);
+        const n = is.length, exp = n ? is.reduce((s, t) => s + t.R, 0) / n : 0;
+        results.push({ combo: grid[k], p, isN: n, isExp: exp, score: n >= minTrades ? exp * Math.sqrt(n) : -Infinity });
+        if (k % 6 === 0) { UI.btStatus(`กำลังหาค่า ${k + 1}/${grid.length} ชุด…`); await yieldUI(); }
+      }
+      const eligible = results.filter(r => Number.isFinite(r.score));
+      const robust = eligible.length ? eligible.filter(r => r.isExp > 0).length / eligible.length * 100 : 0;
+      const top = eligible.sort((a, b) => b.score - a.score).slice(0, 5);
+      for (const r of top) {
+        r.oosTrades = Backtest.run(bars, r.p, cost, split, bars.length, ctxCache.get(r.p.lookback));
+        r.oos = Backtest.stats(r.oosTrades, risk);
+      }
+      this.bt.top = top;
+      UI.btStatus(UI.btDataLine());
+      if (!top.length) { UI.renderOptimizer({ top, robust, total: grid.length, minTrades }); toast('ไม่มีชุดค่าไหนได้ไม้มากพอ ลองใช้ข้อมูลยาวขึ้น', 'bad'); return; }
+      const best = top[0];
+      this.showBacktest(best.oos, best.oosTrades, { outOfSample: true, combo: best.combo });
+      UI.renderOptimizer({ top, robust, total: grid.length, minTrades });
+      toast(`ทดสอบ ${grid.length} ชุดค่าเสร็จ`);
+    } catch (err) {
+      UI.btStatus(`Optimize ไม่สำเร็จ: ${err.message}`);
+    } finally { this.bt.busy = false; UI.btBusy(false); }
+  },
+
+  showBacktest(st, trades, info) {
+    const verdict = Backtest.verdict(st, info.outOfSample);
+    this.state.btLast = {
+      key: this.huntKey(info.combo ? { ...this.s.hunt, ...info.combo } : this.s.hunt), label: this.bt.label, outOfSample: info.outOfSample,
+      n: st.n, winRate: st.winRate, expectancy: st.expectancy, pf: Number.isFinite(st.pf) ? st.pf : 99, level: verdict.level, ts: Date.now(),
+    };
+    this.markDirty();
+    UI.renderBacktest(st, trades, verdict, info);
+    UI.renderHunt();
+  },
+
+  applyCombo(idx) {
+    const r = this.bt.top && this.bt.top[idx];
+    if (!r) return;
+    Object.assign(this.s.hunt, r.combo);
+    const v = Backtest.verdict(r.oos, true);
+    this.state.btLast = { key: this.huntKey(this.s.hunt), label: this.bt.label, outOfSample: true, n: r.oos.n, winRate: r.oos.winRate,
+      expectancy: r.oos.expectancy, pf: Number.isFinite(r.oos.pf) ? r.oos.pf : 99, level: v.level, ts: Date.now() };
+    this.markDirty(); UI.syncSettings(); UI.renderHunt();
+    toast('ใช้ชุดค่านี้แล้ว ทั้งสแกนสดและบอท');
+  },
+
+  huntKey(p) {
+    const { lookback, minPierceAtr, maxPierceAtr, wickPct, entryMode, retracePct, expiryBars, slBufferAtr, tpR, maxHoldBars, trendFilter, minQuality, sessions } = p;
+    return JSON.stringify([lookback, minPierceAtr, maxPierceAtr, wickPct, entryMode, retracePct, expiryBars, slBufferAtr, tpR, maxHoldBars, trendFilter, minQuality, sessions]);
   },
 
   /** Once per second: recompute the matrix, the composite signal, and let the bot act. */
@@ -1041,11 +1703,15 @@ const App = {
     let status;
     const blocker = this.tradeBlocker();
     const sinceClose = (Date.now() - this.lastCloseTs) / 1000;
+    const pend = this.state.pending[0];
     if (!s.autoTrade) status = 'บอทปิดอยู่ · เปิดสวิตช์ Auto Bot เพื่อให้เข้าออเดอร์ตามสัญญาณ';
     else if (blocker) status = blocker;
     else if (this.state.positions.length >= s.maxPositions) status = `ถือ ${this.state.positions.length}/${s.maxPositions} ออเดอร์ · ดูแล SL / Trailing`;
+    else if (pend) status = `วาง ${pend.side} LIMIT @ ${pfmt(pend.price)} รอราคามาถึง`;
     else if (sinceClose < s.cooldownSec) status = `พักหลังปิดไม้ อีก ${Math.ceil(s.cooldownSec - sinceClose)} วินาที`;
-    else if (this.signal.action === 'WAIT') status = `รอสัญญาณ · score ${signed(this.signal.score, 1)} ต้องการ ±${s.entryThreshold} และ 1M/1S ไปทางเดียวกัน`;
+    else if (s.strategy === 'hunt') status = 'รอจังหวะกวาด SL · ตรวจทุกครั้งที่แท่ง M5 ปิด';
+    else if (this.signal.action === 'WAIT') status = `รอสัญญาณ · score ${signed(this.signal.score, 1)} ต้องการ ±${s.entryThreshold} และ 1M/1S ไปทางเดียวกัน` +
+      (s.strategy === 'both' ? ' · Stop Hunt ตรวจทุกแท่ง M5' : '');
     else {
       const ok = this.openPosition(this.signal.action, 'BOT');
       status = ok ? `เข้า ${this.signal.action} ตามสัญญาณ score ${signed(this.signal.score, 1)}` : 'ข้ามสัญญาณ (ดูข้อความแจ้งเตือน)';
@@ -1053,10 +1719,18 @@ const App = {
     UI.setBotStatus(status);
   },
 
-  openPosition(side, source) {
+  /** opts.slPrice places the stop at a fixed price (Stop Hunt plans); otherwise the stop comes from ATR sizing. */
+  openPosition(side, source, opts = {}) {
     const blocker = this.tradeBlocker();
     if (blocker) { toast(blocker, 'bad'); return false; }
-    const z = this.sizing();
+    if (source !== 'MANUAL' && this.state.positions.length >= this.s.maxPositions) return false;
+    const dir = side === 'BUY' ? 1 : -1, px = side === 'BUY' ? this.md.ask : this.md.bid;
+    let slDist = this.sizing().slDist;
+    if (opts.slPrice != null) {
+      slDist = (px - opts.slPrice) * dir;
+      if (slDist <= 0) { toast('ราคาเลย SL ของแผนไปแล้ว ไม่เปิดออเดอร์', 'bad'); return false; }
+    }
+    const z = { slDist, ...Risk.lotSize(this.state.account.balance, slDist, this.s) };
     if (z.actualRisk > z.riskAmt * 1.5) {
       toast(`ทุนน้อยเกินไป: lot ขั้นต่ำ 0.01 เสี่ยง ${fmt(z.actualRisk)} USC มากกว่าที่ตั้งไว้ ${fmt(z.riskAmt)} USC`, 'bad');
       return false;
@@ -1065,7 +1739,7 @@ const App = {
     const equity = this.state.account.balance + this.broker.floating(this.md.bid, this.md.ask);
     const free = equity * CFG.marginUseCap - this.broker.usedMargin(price);
     if (Risk.margin(z.lot, price, this.s) > free) { toast('Margin ไม่พอสำหรับออเดอร์นี้', 'bad'); return false; }
-    const pos = this.broker.open(side, { slDist: z.slDist, lot: z.lot, source, score: this.signal.score });
+    const pos = this.broker.open(side, { slDist: z.slDist, lot: z.lot, rr: opts.rr ?? this.s.rr, trail: opts.trail ?? true, source, score: opts.score ?? this.signal.score });
     toast(`เปิด ${side} ${pos.lot.toFixed(2)} lot @ ${fmt(pos.entry)} · SL ${fmt(pos.sl)} · TP ${fmt(pos.tp)}`, side === 'BUY' ? 'good' : 'bad');
     this.markDirty(); this.queueRender();
     return true;
@@ -1128,6 +1802,7 @@ const App = {
     this.tps = this.tickCount / Math.max(1, (now - this.tickWindowStart) / 1000);
     this.tickCount = 0; this.tickWindowStart = now;
     UI.renderFeedInfo();
+    UI.renderHuntLive();
     if (this.md.mid && now - this.md.lastTs > 1500) this.evaluate();   // keep cooldown/status fresh on slow feeds
     if (now % 5000 < 1000) Charts.updateGrowth();
   },
@@ -1159,12 +1834,39 @@ const UI = {
       const b = e.target.closest('[data-risk]'); if (!b) return;
       App.s.riskPct = +b.dataset.risk; App.markDirty(); this.syncSettings();
     });
-    document.querySelectorAll('[data-setting]').forEach(el => el.addEventListener('change', () => {
-      const key = el.dataset.setting;
-      if (el.type === 'checkbox') App.s[key] = el.checked;
-      else { const v = parseFloat(el.value); if (Number.isFinite(v)) App.s[key] = clamp(v, +el.min || -Infinity, +el.max || Infinity); }
+    const bindGroup = (attr, target) => document.querySelectorAll(`[data-${attr}]`).forEach(el => el.addEventListener('change', () => {
+      const key = el.dataset[attr.replace(/-([a-z])/g, (_, c) => c.toUpperCase())], obj = target();
+      if (el.type === 'checkbox') obj[key] = el.checked;
+      else if (typeof obj[key] === 'string') obj[key] = el.value.trim();
+      else {
+        const v = parseFloat(el.value);
+        if (Number.isFinite(v)) obj[key] = clamp(v, el.min !== '' ? +el.min : -Infinity, el.max !== '' ? +el.max : Infinity);
+      }
       App.markDirty(); this.syncSettings();
     }));
+    bindGroup('setting', () => App.s);
+    bindGroup('hunt', () => App.s.hunt);
+    bindGroup('hunt-session', () => App.s.hunt.sessions);
+    bindGroup('bt', () => App.s.bt);
+    $('bt-instrument').innerHTML = Object.entries(INSTRUMENTS).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
+    $('bt-instrument').addEventListener('change', () => {
+      const ins = INSTRUMENTS[App.s.bt.instrument];
+      if (ins && ins.spread != null) { App.s.bt.spread = ins.spread; this.syncSettings(); }
+    });
+    $('bt-file').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      try {
+        const bars = DataSrc.parseCsv(await file.text());
+        App.setBtData(bars, `CSV ${file.name}`);
+        toast(`โหลด ${bars.length.toLocaleString()} แท่งจาก ${file.name}`, 'good');
+      } catch (err) { this.btStatus(`อ่านไฟล์ไม่ได้: ${err.message}`); }
+    });
+    $('btnBtRun').addEventListener('click', () => App.runBacktest());
+    $('btnBtOpt').addEventListener('click', () => App.optimize());
+    $('optBody').addEventListener('click', (e) => { const b = e.target.closest('[data-apply]'); if (b) App.applyCombo(+b.dataset.apply); });
+    $('huntPlan').addEventListener('click', (e) => { if (e.target.closest('[data-place]')) App.executeHuntPlan(); });
+    $('pendBody').addEventListener('click', (e) => { const b = e.target.closest('[data-cancel]'); if (b) App.cancelPending(b.dataset.cancel); });
 
     $('chartTfSeg').addEventListener('click', (e) => {
       const b = e.target.closest('[data-tf]'); if (!b) return;
@@ -1201,18 +1903,151 @@ const UI = {
 
   syncSettings() {
     const s = App.s;
-    document.querySelectorAll('[data-setting]').forEach(el => {
-      if (document.activeElement === el) return;
-      if (el.type === 'checkbox') el.checked = !!s[el.dataset.setting]; else el.value = s[el.dataset.setting];
+    const fill = (attr, obj) => document.querySelectorAll(`[data-${attr}]`).forEach(el => {
+      if (document.activeElement === el && el.tagName !== 'SELECT') return;
+      const v = obj[el.dataset[attr.replace(/-([a-z])/g, (_, c) => c.toUpperCase())]];
+      if (el.type === 'checkbox') el.checked = !!v; else el.value = v ?? '';
     });
+    fill('setting', s); fill('hunt', s.hunt); fill('hunt-session', s.hunt.sessions); fill('bt', s.bt);
+    document.querySelectorAll('[data-bt-for]').forEach(el => { el.hidden = el.dataset.btFor !== s.bt.source; });
+    $('hlLook').textContent = s.hunt.lookback;
+    $('btRiskLbl').textContent = s.riskPct;
     $('riskSeg').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.risk === s.riskPct)));
     $('autoToggle').checked = s.autoTrade;
     $('stTargetPct').textContent = s.dailyTargetPct;
     $('growthTargetLbl').textContent = s.dailyTargetPct;
     $('pvAtrMult').textContent = s.slAtrMult; $('pvRr').textContent = s.rr;
     this.syncFeedForm();
-    this.renderJournal(); this.renderDays(); this.renderProjection(); this.renderSignal();
+    this.renderJournal(); this.renderDays(); this.renderProjection(); this.renderSignal(); this.renderHunt();
     Charts.updateGrowth(); App.queueRender();
+  },
+
+  /* ----- Stop Hunt ----- */
+  renderHuntLive() {
+    const p = App.s.hunt, bars = App.closedM5();
+    const pill = $('huntPill');
+    if (bars.length < p.lookback + 20) {
+      App.huntLevels = null;
+      pill.textContent = `เก็บข้อมูล M5 ${bars.length}/${p.lookback + 20}`;
+    } else {
+      const win = bars.slice(-p.lookback);
+      const hi = Math.max(...win.map(b => b.h)), lo = Math.min(...win.map(b => b.l));
+      const atr = Ind.atr(bars.slice(-60), 14);
+      App.huntLevels = { hi, lo, atr };
+      const mid = App.md.mid;
+      $('hlHigh').textContent = `${pfmt(hi)} (ห่าง ${fmt(hi - mid)})`;
+      $('hlLow').textContent = `${pfmt(lo)} (ห่าง ${fmt(mid - lo)})`;
+      $('hlAtr').textContent = fmt(atr, 2);
+      pill.textContent = `สแกนแล้ว ${App.huntScans} แท่ง`;
+    }
+    const left = M5 - (Date.now() % M5);
+    $('hlNext').textContent = `${Math.floor(left / 60000)}:${String(Math.floor(left % 60000 / 1000)).padStart(2, '0')}`;
+  },
+
+  renderHunt() {
+    const plan = App.huntPlan, box = $('huntPlan'), last = App.state.btLast;
+    const edgeLine = () => {
+      if (!last || last.key !== App.huntKey(App.s.hunt)) return '<div class="text-xs muted">ยังไม่มีผล Backtest ของกติกาชุดนี้ กด Backtest หรือ Optimize ด้านล่าง</div>';
+      const tone = last.level === 'pass' ? 'up' : last.level === 'fail' ? 'down' : 'gold';
+      return `<div class="text-xs"><span class="${tone} font-semibold">Backtest ${last.outOfSample ? '(ช่วงทดสอบ)' : ''} ${last.level === 'pass' ? 'ผ่าน' : last.level === 'fail' ? 'ไม่ผ่าน' : 'ก้ำกึ่ง'}</span>
+        <span class="muted"> · ${last.label} · ${last.n} ไม้ · Win ${fmt(last.winRate, 1)}% · เฉลี่ย ${signed(last.expectancy, 2)}R · PF ${fmt(last.pf)}</span></div>`;
+    };
+    if (!plan) {
+      box.innerHTML = `<div class="empty">ยังไม่พบจังหวะกวาด SL · ระบบตรวจให้เองทุกครั้งที่แท่ง M5 ปิด</div>${edgeLine()}`;
+      return;
+    }
+    const z = Risk.lotSize(App.state.account.balance, plan.slDist, App.s);
+    const typ = plan.mode === 'market' ? `${plan.side} MARKET` : `${plan.side} LIMIT`;
+    const statusText = { new: 'รอยืนยัน', placed: 'วางออเดอร์แล้ว รอราคา', filled: 'เข้าออเดอร์แล้ว', expired: 'หมดอายุ / ยกเลิก', skipped: 'ข้าม' }[plan.status];
+    box.innerHTML = `
+      <div class="plan" data-side="${plan.side}">
+        <div class="flex items-center justify-between gap-2 flex-wrap">
+          <div><span class="tag ${plan.side === 'BUY' ? 'tag-buy' : 'tag-sell'}">${typ}</span> <span class="muted text-xs">${timeStr(plan.createdTs)} · ${statusText}</span></div>
+          <span class="num text-sm">คุณภาพ <b>${plan.quality}</b>/100</span>
+        </div>
+        <div class="qbar"><span style="width:${plan.quality}%"></span></div>
+        <dl class="kv">
+          <dt>ราคาเข้า</dt><dd>${pfmt(plan.entry)}</dd>
+          <dt>Stop Loss</dt><dd class="down">${pfmt(plan.sl)} ($${fmt(plan.slDist)})</dd>
+          <dt>Take Profit</dt><dd class="up">${pfmt(plan.tp)} (${fmt(plan.rr, 1)}R)</dd>
+          <dt>Lot ตามความเสี่ยง ${App.s.riskPct}%</dt><dd>${z.lot.toFixed(2)} lot · เสี่ยง ${fmt(z.actualRisk)} USC</dd>
+          <dt>หมดอายุ</dt><dd>${timeStr(plan.expiresTs)}</dd>
+        </dl>
+        <ul>${plan.reasons.map(r => `<li>${r}</li>`).join('')}</ul>
+        ${edgeLine()}
+        ${plan.status === 'new' ? '<button type="button" class="btn btn-gold" data-place="1">วางออเดอร์ตามแผน</button>' : ''}
+      </div>`;
+  },
+
+  renderPending() {
+    const list = App.state.pending, md = App.md;
+    $('pendEmpty').hidden = list.length > 0;
+    $('pendBody').innerHTML = list.map(o => {
+      const px = o.side === 'BUY' ? md.ask : md.bid;
+      return `<tr><td><span class="tag ${o.side === 'BUY' ? 'tag-buy' : 'tag-sell'}">${o.side} LIMIT</span></td>
+        <td>${pfmt(o.price)}</td><td>${pfmt(o.sl)}</td><td>${pfmt(o.tp)}</td><td>${fmt(Math.abs(px - o.price))}</td>
+        <td>${timeStr(o.expiresTs)}</td><td><button type="button" class="btn btn-sm" data-cancel="${o.id}">ยกเลิก</button></td></tr>`;
+    }).join('');
+  },
+
+  /* ----- Backtest ----- */
+  btStatus(text) { $('btStatus').textContent = text; },
+  btBusy(on) { $('btnBtRun').disabled = on; $('btnBtOpt').disabled = on; },
+  btDataLine() {
+    const m = App.bt.meta, bars = App.bt.bars;
+    if (!m) return '—';
+    const d = (t) => new Date(t).toISOString().slice(0, 10);
+    return `${App.bt.label} · ${bars.length.toLocaleString()} แท่ง ${m.tf} · ${d(m.from)} ถึง ${d(m.to)}` +
+      (m.minutes !== 5 ? ' · หมายเหตุ: กติกาออกแบบสำหรับ M5' : '') +
+      (App.bt.label === 'ข้อมูลสุ่ม' ? ' · ข้อมูลสุ่มไม่มีความได้เปรียบซ่อนอยู่ ผลที่ซื่อตรงควรออกมาใกล้ศูนย์หรือติดลบ' : '');
+  },
+
+  renderBacktest(st, trades, verdict, info) {
+    const v = $('btVerdict');
+    v.dataset.level = verdict.level;
+    v.innerHTML = `<h3>${verdict.title}</h3>
+      <div class="muted text-sm">${info.outOfSample ? `ผลจากช่วงข้อมูล ${100 - App.s.bt.splitPct}% สุดท้ายที่ไม่ได้ใช้หาค่า · กติกาที่ดีที่สุด: ${this.comboText(info.combo)}` : 'ผลจากข้อมูลทั้งหมดด้วยกติกาปัจจุบัน'}</div>
+      <ul>${verdict.good.map(g => `<li class="up">${g}</li>`).join('')}${verdict.bad.map(b => `<li class="down">${b}</li>`).join('')}</ul>`;
+    const tile = (label, val, sub, tone = '') => `<div><span class="eyebrow">${label}</span><span class="v ${tone}">${val}</span><span class="s">${sub}</span></div>`;
+    $('btStats').innerHTML = [
+      tile('จำนวนไม้', st.n, `${fmt(st.perMonth, 1)} ไม้ต่อเดือน`),
+      tile('Win rate', `${fmt(st.winRate, 1)}%`, `ต้องได้ ${fmt(st.breakevenWin, 1)}% ถึงจะคุ้มทุน`, st.winRate > st.breakevenWin ? 'up' : 'down'),
+      tile('กำไร / ขาดทุนเฉลี่ย', `${fmt(st.avgWin, 2)}R / ${fmt(st.avgLoss, 2)}R`, 'R = ระยะ SL ของไม้นั้น'),
+      tile('เฉลี่ยต่อไม้', `${signed(st.expectancy, 3)}R`, 'หัก spread แล้ว', cls(st.expectancy)),
+      tile('Profit Factor', Number.isFinite(st.pf) ? fmt(st.pf) : '∞', 'กำไรรวม ÷ ขาดทุนรวม', st.pf >= 1.2 ? 'up' : st.pf < 1 ? 'down' : ''),
+      tile('ผลตอบแทน', `${signed(st.returnPct, 1)}%`, `เสี่ยง ${App.s.riskPct}% ต่อไม้ ทบต้น`, cls(st.returnPct)),
+      tile('Max Drawdown', `${fmt(st.maxDD, 1)}%`, `ควรเผื่อ ${fmt(st.mcDD95, 1)}% (Monte Carlo 95%)`),
+      tile('แพ้ติดกันสูงสุด', `${st.maxStreak} ไม้`, `${st.wins} ชนะ · ${st.n - st.wins} แพ้`),
+    ].join('');
+    const sess = Backtest.groupBy(trades, t => t.session);
+    $('btSessBody').innerHTML = SESSIONS.map(s => {
+      const g = sess.find(x => x.key === s.key);
+      return g ? `<tr><td>${s.label}</td><td>${g.n}</td><td>${fmt(g.winRate, 0)}%</td><td class="${cls(g.avgR)}">${signed(g.avgR, 2)}</td></tr>`
+               : `<tr><td>${s.label}</td><td>0</td><td>—</td><td>—</td></tr>`;
+    }).join('');
+    const months = Backtest.groupBy(trades, t => new Date(t.t).toISOString().slice(0, 7)).sort((a, b) => b.key.localeCompare(a.key)).slice(0, 12);
+    $('btMonthBody').innerHTML = months.map(g => `<tr><td>${g.key}</td><td>${g.n}</td><td>${fmt(g.winRate, 0)}%</td><td class="${cls(g.sumR)}">${signed(g.sumR, 1)}</td></tr>`).join('')
+      || '<tr><td colspan="4" class="muted">ไม่มีไม้</td></tr>';
+    Charts.updateBacktest(st.curve);
+  },
+
+  comboText(c) {
+    if (!c) return '';
+    return `กรอบ ${c.lookback} แท่ง · TP ${c.tpR}R · ${c.entryMode === 'market' ? 'Market' : 'Limit'} · SL เลยไส้ ${c.slBufferAtr} ATR · ${c.trendFilter === 'with' ? 'ตามเทรนด์' : 'ไม่กรองเทรนด์'}`;
+  },
+
+  renderOptimizer(res) {
+    $('optWrap').hidden = !res;
+    if (!res) return;
+    $('optBody').innerHTML = res.top.map((r, i) => `<tr>
+      <td style="white-space:normal;min-width:220px;font-family:var(--font-body)">${this.comboText(r.combo)}</td>
+      <td>${r.isN}</td><td class="${cls(r.isExp)}">${signed(r.isExp, 3)}</td>
+      <td>${r.oos.n}</td><td>${fmt(r.oos.winRate, 1)}%</td><td class="${cls(r.oos.expectancy)}">${signed(r.oos.expectancy, 3)}</td>
+      <td>${Number.isFinite(r.oos.pf) ? fmt(r.oos.pf) : '∞'}</td>
+      <td><button type="button" class="btn btn-sm" data-apply="${i}">ใช้ค่านี้</button></td></tr>`).join('')
+      || '<tr><td colspan="8" class="muted">ไม่มีชุดค่าที่ได้ไม้มากพอ</td></tr>';
+    $('optRobust').textContent = `ทดสอบ ${res.total} ชุดค่า (ต้องมีอย่างน้อย ${res.minTrades} ไม้) · ${fmt(res.robust, 0)}% ของชุดค่าทำกำไรในช่วงหาค่า ` +
+      (res.robust >= 60 ? '→ ความได้เปรียบค่อนข้างทั่วถึง ไม่ได้ขึ้นกับค่าใดค่าหนึ่ง' : res.robust >= 30 ? '→ ขึ้นกับการเลือกค่าพอสมควร ระวังการจูนจนเกินจริง' : '→ ส่วนใหญ่ขาดทุน ชุดที่ดีอาจเป็นแค่โชค');
   },
 
   syncFeedForm() {
@@ -1267,6 +2102,7 @@ const UI = {
     $('stPerf').textContent = `${trades.length} ไม้ · PF ${gl > 0 ? fmt(gw / gl) : gw > 0 ? '∞' : '—'} · Max DD ${fmt(this.maxDrawdown(), 1)}%`;
 
     this.renderPositions();
+    this.renderPending();
   },
 
   maxDrawdown() {
@@ -1456,6 +2292,18 @@ const Charts = {
       options: g,
     });
     this.updateGrowth();
+    const b = this.baseOptions(c);
+    b.scales.x = { ...b.scales.x, type: 'linear', min: 0, title: { display: true, color: c.muted, text: 'ไม้ที่' } };
+    b.plugins.legend.display = false;
+    b.plugins.tooltip.callbacks = { title: (items) => items.length ? `ไม้ที่ ${items[0].parsed.x}` : '', label: (it) => `Equity ${fmt(it.parsed.y, 1)}%` };
+    this.bt = new Chart($('btChart'), {
+      type: 'line',
+      data: { datasets: [
+        { label: 'Equity (%)', data: [], borderColor: c.gold, borderWidth: 2, pointRadius: 0 },
+        { label: 'ทุนเริ่มต้น', data: [{ x: 0, y: 100 }, { x: 1e6, y: 100 }], borderColor: c.muted, borderDash: [4, 4], borderWidth: 1, pointRadius: 0 },
+      ] },
+      options: b,
+    });
     const retheme = () => this.retheme();
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', retheme);
     new MutationObserver(retheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
@@ -1464,13 +2312,18 @@ const Charts = {
   retheme() {
     if (!this.price) return;
     const c = this.palette();
-    for (const ch of [this.price, this.growth]) {
+    for (const ch of [this.price, this.growth, this.bt]) {
       const o = this.baseOptions(c);
       ch.options.plugins.legend.labels.color = c.muted;
       Object.assign(ch.options.plugins.tooltip, { backgroundColor: o.plugins.tooltip.backgroundColor, titleColor: c.fg, bodyColor: c.fg, borderColor: c.line });
       for (const ax of ['x', 'y']) { ch.options.scales[ax].ticks.color = c.muted; ch.options.scales[ax].grid.color = c.line; }
     }
     this.growth.options.scales.x.title.color = c.muted;
+    this.bt.options.scales.x.title.color = c.muted;
+    this.bt.data.datasets[1].borderColor = c.muted;
+    const btLine = this.bt.data.datasets[0], btData = btLine.data;
+    if (btData.length) btLine.borderColor = btData[btData.length - 1].y >= 100 ? c.bull : c.bear;
+    this.bt.update('none');
     const [p, e9, e21, en, sl, tp] = this.price.data.datasets;
     Object.assign(p, { borderColor: c.gold, backgroundColor: c.gold + '22' });
     e9.borderColor = c.bull; e21.borderColor = c.bear; en.borderColor = c.fg; sl.borderColor = c.bear; tp.borderColor = c.bull;
@@ -1508,6 +2361,15 @@ const Charts = {
   growthXLabel(x) {
     if (App.growthMode === 'daily') return `วันที่ ${x}`;
     return x < 1 ? `${fmt(x * 60, 0)} นาทีหลังเริ่ม` : `${fmt(x, 1)} ชม. หลังเริ่ม`;
+  },
+
+  updateBacktest(curve) {
+    if (!this.bt) return;
+    const ds = this.bt.data.datasets[0];
+    ds.data = curve;
+    ds.borderColor = curve[curve.length - 1].y >= 100 ? cssVar('--bull') : cssVar('--bear');
+    this.bt.options.scales.x.max = Math.max(1, curve.length - 1);
+    this.bt.update('none');
   },
 
   updateGrowth() {

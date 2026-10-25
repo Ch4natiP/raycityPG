@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { parseOM, omParts } from '../om.js';
 import { readZip } from '../zip.js';
 import { createCity } from './city.js';
-import { loadGarage, compactParts, handling } from './garage.js';
+import { loadGarage, compactParts, handling, garageScene } from './garage.js';
 import { createTraffic } from './traffic.js';
 import { createPeople } from './people.js';
 
@@ -398,6 +398,7 @@ window.addEventListener('keyup', (e) => { if (KEYMAP[e.code]) keys.delete(KEYMAP
 document.querySelectorAll('#touch button').forEach((b) => { const k = b.dataset.k; b.addEventListener('pointerdown', (e) => { e.preventDefault(); keys.add(k); }); for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(ev, () => keys.delete(k)); });
 let camMode = 0;
 $('btn-panel').addEventListener('click', () => $('panel').classList.toggle('hide'));
+$('btn-garage').addEventListener('click', (e) => { setGarage(!garageOn); e.currentTarget.blur(); });
 $('btn-reset').addEventListener('click', (e) => { reset(); e.currentTarget.blur(); });
 $('btn-cam').addEventListener('click', (e) => { camMode = (camMode + 1) % 2; e.currentTarget.blur(); });
 const lap = { n: 0, t0: 0, best: Infinity, next: 1, started: false, done: false, time: 0 };
@@ -463,9 +464,29 @@ function step(dt) {
 }
 
 const camPos = new THREE.Vector3(); const camLook = new THREE.Vector3();
+
+// the game's garage: the car on show, the camera turning round it; the city waits hidden
+let garageOn = false; let garageGroup = null; let garageSpin = 0; let savedFog = null; let savedBg = null; let savedLight = null;
+function setGarage(on) {
+  if (on && !garageGroup) { if (!GARAGE || !GARAGE.garage) return; garageGroup = garageScene(GARAGE, THREE); garageGroup.position.set(0, -2000, 0); scene.add(garageGroup); }
+  garageOn = on; if (garageGroup) garageGroup.visible = on;
+  for (const o of scene.children) if (o !== garageGroup && o !== car && !o.isLight && o !== cam) o.visible = on ? false : o === sky ? !!sky.material.map : true;
+  // the garage's light is mostly baked: the scene lights only lift the unlit pieces and the car
+  if (on) { savedLight = [sun.intensity, hemi.intensity]; sun.intensity = 0.7; hemi.intensity = 0.55; } else if (savedLight) { [sun.intensity, hemi.intensity] = savedLight; }
+  if (on) { savedFog = scene.fog; savedBg = scene.background; scene.fog = null; scene.background = new THREE.Color('#05070a'); S.vx = S.vz = 0; car.position.set(0, -2000 + GARAGE_FLOOR, 0); car.rotation.y = 0; $('panel').classList.remove('hide'); }
+  else { scene.fog = savedFog || scene.fog; scene.background = savedBg || scene.background; reset(); camPos.set(S.x, S.y + 3, S.z - 8); }
+  document.body.classList.toggle('in-garage', on);
+}
+const GARAGE_FLOOR = 0;
 let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (garageOn) {
+    garageSpin += dt * 0.35; const r = 6.2;
+    cam.position.set(Math.sin(garageSpin) * r, -2000 + GARAGE_FLOOR + 1.7, Math.cos(garageSpin) * r); cam.lookAt(0, -2000 + GARAGE_FLOOR + 0.6, 0);
+    sun.position.set(4, -2000 + 8, 3); sun.target.position.set(0, -2000, 0);
+    renderer.render(scene, cam); requestAnimationFrame(frame); return;
+  }
   let r = { vf: 0 }; for (let i = 0; i < 4; i++) r = step(dt / 4);
   car.position.set(S.x, S.y, S.z); car.rotation.y = S.h;
   for (const w of wheels) { w.w.rotation.x = S.wheelSpin; if (w.front) w.pivot.rotation.y = S.steer; }

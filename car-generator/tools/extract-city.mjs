@@ -283,6 +283,52 @@ const people = [];
     }
   }
 }
+// the game's garage (ui/garagestage2/garage.0m): its meshes in order, each after the names of its picture and,
+// for the lit pieces, its baked light ("...CompleteMap", on the second uv set). Meshes as: i16 position (/1000 m),
+// i8 normal (/127), i16 uv (/400), i16 light uv (/400) when lit, u16 index; pictures down to 128 px, light 256 px
+let garageScene = null;
+{
+  const gd = path.join(game, 'ui', 'garagestage2'); const gf = path.join(gd, 'garage.0m');
+  if (fs.existsSync(gf)) {
+    const b = fs.readFileSync(gf); const meshes = []; const texs = new Map(); let names = [];
+    const pic = (name, size) => {
+      const key = `${name}|${size}`; if (texs.has(key)) return texs.get(key);
+      const f = fs.readdirSync(gd).find((x) => x.toLowerCase() === `${name.toLowerCase()}.dds`); if (!f) { texs.set(key, null); return null; }
+      const { w, h, data } = dds(fs.readFileSync(path.join(gd, f))); const F = Math.max(1, Math.ceil(Math.max(w, h) / size)); const W = Math.max(1, Math.floor(w / F)); const H = Math.max(1, Math.floor(h / F));
+      const o = Buffer.alloc(W * H * 3);
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) for (let k = 0; k < 3; k++) { let sum = 0; for (let dy = 0; dy < F; dy++) for (let dx = 0; dx < F; dx++) sum += data[((y * F + dy) * w + x * F + dx) * 4 + k]; o[(y * W + x) * 3 + k] = sum / (F * F); }
+      const ref = put(png(W, H, 3, o)); texs.set(key, ref); return ref;
+    };
+    let j = b.indexOf(Buffer.from([0xaa, 0x27]));
+    while (j !== -1) {
+      let next = j + 1;
+      const ln = b.readUInt32LE(j + 4);
+      if (ln > 0 && ln < 64 && b[j + 9] === 0 && [...Array(ln).keys()].every((i) => b[j + 8 + 2 * i] >= 32 && b[j + 8 + 2 * i] < 127)) {
+        const name = b.toString('utf16le', j + 8, j + 8 + 2 * ln); if (name !== 'property') names.push(name); next = j + 8 + 2 * ln;
+      } else if (b[j + 6] === 1) {
+        try {
+          const n = b.readUInt16LE(j + 4); let o = j + 7; const P = o; o += 12 * n; const Nn = b[o] === 1 ? o + 1 : -1; o += Nn > 0 ? 1 + 12 * n : 1; o += b[o] === 1 ? 1 + 4 * n : 1;
+          const sets = b[o]; o += 2; const U = o; o += 8 * n * Math.max(1, sets); const ni = b.readUInt16LE(o); const I = o + 2;
+          let ok = ni % 3 === 0 && ni > 0 && I + 2 * ni <= b.length; for (let i = 0; ok && i < ni; i++) ok = b.readUInt16LE(I + i * 2) < n;
+          if (ok && n >= 3) {
+            const lit = sets >= 2 && names.some((x) => /completemap/i.test(x)); const cl = (v) => Math.max(-32767, Math.min(32767, Math.round(v)));
+            const out = Buffer.alloc(n * 6 + n * 3 + n * 4 * (lit ? 2 : 1) + ni * 2); let q = 0;
+            for (let i = 0; i < n * 3; i++, q += 2) out.writeInt16LE(cl(b.readFloatLE(P + i * 4) * 1000), q);
+            for (let i = 0; i < n * 3; i++, q += 1) out.writeInt8(Nn > 0 ? Math.max(-127, Math.min(127, Math.round(b.readFloatLE(Nn + i * 4) * 127))) : 0, q);
+            for (let set = 0; set < (lit ? 2 : 1); set++) for (let i = 0; i < n * 2; i++, q += 2) out.writeInt16LE(cl(b.readFloatLE(U + set * 8 * n + i * 4) * 400), q);
+            for (let i = 0; i < ni; i++, q += 2) out.writeUInt16LE(b.readUInt16LE(I + i * 2), q);
+            const tex = names.find((x) => !/completemap/i.test(x)); const light = names.find((x) => /completemap/i.test(x));
+            meshes.push({ n, ni, lit, data: put(out), tex: tex ? pic(tex, 128) : null, light: lit ? pic(light, 256) : null });
+            names = []; next = I + 2 * ni;
+          }
+        } catch { /* not a mesh */ }
+      }
+      j = b.indexOf(Buffer.from([0xaa, 0x27]), next);
+    }
+    garageScene = { meshes };
+    console.log(`garage: ${meshes.length} meshes, ${meshes.reduce((a, m) => a + m.n, 0)} points, ${[...texs.values()].filter(Boolean).length} pictures`);
+  }
+}
 // the game's paints (paint3/*.xml <color>a r g b</color>) for the colour swatches
 const paints = [];
 const pdir = path.join(game, 'paint3');
@@ -291,7 +337,7 @@ for (const f of fs.existsSync(pdir) ? fs.readdirSync(pdir).sort() : []) {
   const m = /<color>\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/.exec(t); if (m && /<type>\s*0\s*</.test(t)) paints.push(`#${[m[2], m[3], m[4]].map((v) => (+v).toString(16).padStart(2, '0')).join('')}`);
 }
 {
-  const index = Buffer.from(JSON.stringify({ cars, wheel, people, paints: [...new Set(paints)] })); const len = Buffer.alloc(4); len.writeUInt32LE(index.length);
+  const index = Buffer.from(JSON.stringify({ cars, wheel, people, garage: garageScene, paints: [...new Set(paints)] })); const len = Buffer.alloc(4); len.writeUInt32LE(index.length);
   const b64 = zlib.gzipSync(Buffer.concat([len, index, ...blobs]), { level: 9 }).toString('base64');
   fs.writeFileSync(new URL('../js/drive/rc-cars.js', import.meta.url), `window.RC_CARS = '${b64}';\n`);
   console.log(`${cars.length} cars, ${people.length} people, ${new Set(paints).size} paints; rc-cars.js ${(b64.length / 1024).toFixed(0)} KB`);

@@ -59,6 +59,8 @@
     #touch { position: fixed; bottom: 64px; left: 12px; display: none; gap: 8px; }
     #touch button { width: 64px; height: 64px; font-size: 22px; border-radius: 50%; opacity: .85; touch-action: none; }
     @media (pointer: coarse) { #touch { display: flex; } }
+    body.in-garage #minimap, body.in-garage #lap, body.in-garage #speed, body.in-garage #sp, body.in-garage #touch { display: none; }
+    body.in-garage #btn-garage { background: linear-gradient(#ff9f1a, #b86400); }
     @media (max-width: 640px) { #minimap { transform: scale(.7); transform-origin: top right; } #lap { top: 150px; } #plate .bars { min-width: 110px; } }
   </style>
 </head>
@@ -96,7 +98,7 @@
 
   <div id="speed"><div class="gear" id="gear">N</div><div class="v" id="kmh">0</div><div class="u">km/h</div></div>
   <div id="sp"><span class="lbl">SP</span><div class="bar"><i id="sp-fill" style="width: 100%"></i></div><div id="sp-text">8996/8996</div></div>
-  <div id="tools"><button id="btn-reset" title="กลับจุดเริ่ม (R)">↺</button><button id="btn-cam" title="เปลี่ยนกล้อง (C)">🎥</button></div>
+  <div id="tools"><button id="btn-garage" title="โรงรถ: เลือกรถ / ออกขับ">🏠</button><button id="btn-reset" title="กลับจุดเริ่ม (R)">↺</button><button id="btn-cam" title="เปลี่ยนกล้อง (C)">🎥</button></div>
 
   <div id="touch"><button data-k="left">◀</button><button data-k="right">▶</button><button data-k="down">⏬</button><button data-k="up">⏫</button><button data-k="boost">⚡</button></div>
   <script type="importmap">

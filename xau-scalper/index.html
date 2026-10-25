@@ -58,6 +58,12 @@
   .pill[data-state="live"] .dot { background: var(--bull); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bull) 25%, transparent); }
   .pill[data-state="connecting"] .dot { background: var(--gold); }
   .pill[data-state="error"] .dot { background: var(--bear); }
+  .checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+  .checks li { display: flex; gap: 8px; align-items: baseline; }
+  .checks li::before { content: "✕"; font-family: var(--font-mono); color: var(--bear); width: 12px; flex: none; }
+  .checks li.ok::before { content: "✓"; color: var(--bull); }
+  .checks li.warn::before { content: "!"; color: var(--gold); }
+  .checks li.ok { color: var(--muted); }
   #srcBadge { font-size: 13px; padding: 4px 12px; }
   #srcBadge[data-kind="sim"] { border-color: var(--gold); color: var(--gold); }
   #srcBadge[data-kind="real"] { border-color: var(--bull); color: var(--bull); }
@@ -193,7 +199,7 @@
       <label class="switch" for="autoToggle">
         <input type="checkbox" id="autoToggle">
         <span class="track"></span>
-        <span class="font-semibold">Auto Bot</span>
+        <span class="flex flex-col leading-tight"><span class="font-semibold">Auto Bot</span><span id="botChip" class="text-xs muted">ปิดอยู่</span></span>
       </label>
     </div>
   </header>
@@ -265,6 +271,15 @@
         </div>
         <div class="flex justify-between text-xs muted num mt-1"><span>-100 SELL</span><span>0</span><span>BUY +100</span></div>
       </div>
+      <div class="flex items-center justify-between gap-2 flex-wrap">
+        <span class="eyebrow">ความไวของบอท</span>
+        <div class="seg" role="group" aria-label="ความไวของบอท" id="sensSeg">
+          <button type="button" data-thr="45">เข้มงวด</button>
+          <button type="button" data-thr="35">ปกติ</button>
+          <button type="button" data-thr="20">ไว</button>
+        </div>
+      </div>
+      <ul id="sigChecks" class="checks" aria-label="เงื่อนไขก่อนบอทเข้าออเดอร์"></ul>
       <dl class="kv">
         <dt>SL (ATR 1M × <span id="pvAtrMult">1.5</span>)</dt><dd id="pvSl">—</dd>
         <dt>TP (R:R <span id="pvRr">1.5</span>)</dt><dd id="pvTp">—</dd>
@@ -648,11 +663,13 @@ const CFG = {
   marginUseCap: 0.9,          // never use more than 90% of equity as margin
 };
 
+// atrFloor: smallest ATR (as a fraction of price) the score will divide by, so a market that is
+// barely ticking (weekend, thin book) reads as Consolidation instead of amplifying 1-cent flicker.
 const TF = [
-  { key: '1d', label: '1D', name: 'รายวัน',     ms: 86400000, weight: 0.15, seedVol: 38,   max: 300 },
-  { key: '1h', label: '1H', name: 'รายชั่วโมง', ms: 3600000,  weight: 0.25, seedVol: 7,    max: 300 },
-  { key: '1m', label: '1M', name: 'รายนาที',    ms: 60000,    weight: 0.35, seedVol: 1.6,  max: 300 },
-  { key: '1s', label: '1S', name: 'รายวินาที',  ms: 1000,     weight: 0.25, seedVol: 0.22, max: 300 },
+  { key: '1d', label: '1D', name: 'รายวัน',     ms: 86400000, weight: 0.15, seedVol: 38,   max: 300, atrFloor: 0.003 },
+  { key: '1h', label: '1H', name: 'รายชั่วโมง', ms: 3600000,  weight: 0.25, seedVol: 7,    max: 300, atrFloor: 0.0006 },
+  { key: '1m', label: '1M', name: 'รายนาที',    ms: 60000,    weight: 0.35, seedVol: 1.6,  max: 300, atrFloor: 0.00006 },
+  { key: '1s', label: '1S', name: 'รายวินาที',  ms: 1000,     weight: 0.25, seedVol: 0.22, max: 300, atrFloor: 0.000015 },
 ];
 // Every candle series MarketData keeps: the four matrix frames plus M5 for the Stop Hunt scanner.
 const SERIES = [...TF, { key: '5m', label: 'M5', ms: 300000, seedVol: 2.6, max: 400 }];
@@ -723,6 +740,8 @@ const priceDigits = (v) => (Math.abs(v) < 20 ? 5 : Math.abs(v) < 500 ? 3 : 2);
 const pfmt = (v) => fmt(v, priceDigits(v));
 const sessionOf = (t) => { const h = new Date(t).getUTCHours(); return SESSIONS.find(s => h >= s.from && h < s.to).key; };
 const yieldUI = () => new Promise(r => setTimeout(r, 0));
+/** Spot gold trades Sunday ~22:00 UTC to Friday ~21:00 UTC. */
+const goldMarketClosed = (t) => { const d = new Date(t), day = d.getUTCDay(), h = d.getUTCHours(); return day === 6 || (day === 5 && h >= 21) || (day === 0 && h < 22); };
 
 function toast(msg, kind = '') {
   const el = document.createElement('div');
@@ -996,26 +1015,31 @@ class CustomWsFeed extends PriceFeed {
  * 6. SENTIMENT ENGINE — score each timeframe −100…+100, then combine
  * ===================================================================== */
 const Sentiment = {
-  analyze(candles) {
-    if (candles.length < 30) return { score: 0, state: 'CONSOLIDATION', rsi: 50, atr: 0, ema9: 0, ema21: 0, macd: 0, ready: false };
+  analyze(candles, tf) {
+    if (candles.length < 30) return { score: 0, state: 'CONSOLIDATION', rsi: 50, atr: 0, ema9: 0, ema21: 0, macd: 0, ready: false, quiet: true };
     const closes = candles.map(c => c.c);
     const e9 = Ind.emaSeries(closes, 9), e21 = Ind.emaSeries(closes, 21);
     const n = closes.length - 1, price = closes[n];
-    const atr = Ind.atr(candles.slice(-60), 14) || 1e-6;
+    const atr = Ind.atr(candles.slice(-60), 14);
+    const floor = price * (tf ? tf.atrFloor : 0) || 1e-6;
+    const norm = Math.max(atr, floor);                // divide by at least the floor
+    const quiet = atr < floor;
+    // RSI on a near-flat series swings to extremes on tiny moves; scale its vote by how alive the market is.
     const rsi = Ind.rsi(closes.slice(-100), 14);
+    const live = clamp(atr / floor, 0, 1);
     const macd = Ind.macdHist(closes.slice(-120));
     const parts = {
-      trend: clamp((e9[n] - e21[n]) / atr, -1.5, 1.5) / 1.5 * 35,
-      position: clamp((price - e21[n]) / atr, -2, 2) / 2 * 20,
-      momentum: clamp((rsi - 50) / 20, -1, 1) * 20,
-      macd: clamp(macd / (atr * 0.3), -1, 1) * 15,
-      slope: clamp((e9[n] - e9[n - 3]) / atr, -1, 1) * 10,
+      trend: clamp((e9[n] - e21[n]) / norm, -1.5, 1.5) / 1.5 * 35,
+      position: clamp((price - e21[n]) / norm, -2, 2) / 2 * 20,
+      momentum: clamp((rsi - 50) / 20, -1, 1) * 20 * live,
+      macd: clamp(macd / (norm * 0.3), -1, 1) * 15,
+      slope: clamp((e9[n] - e9[n - 3]) / norm, -1, 1) * 10,
     };
     const score = clamp(Object.values(parts).reduce((s, x) => s + x, 0), -100, 100);
     const state = score >= 20 ? 'BULLISH' : score <= -20 ? 'BEARISH' : 'CONSOLIDATION';
-    return { score, state, rsi, atr, ema9: e9[n], ema21: e21[n], macd, ready: true };
+    return { score, state, rsi, atr, ema9: e9[n], ema21: e21[n], macd, ready: true, quiet };
   },
-  matrix(md) { return Object.fromEntries(TF.map(tf => [tf.key, Sentiment.analyze(md.series[tf.key])])); },
+  matrix(md) { return Object.fromEntries(TF.map(tf => [tf.key, Sentiment.analyze(md.series[tf.key], tf)])); },
   /** BUY/SELL needs the weighted score past the threshold AND the two fast frames agreeing. */
   composite(m, threshold) {
     const score = TF.reduce((s, tf) => s + m[tf.key].score * tf.weight, 0);
@@ -1499,6 +1523,7 @@ const App = {
     }
     feed.start();
     if (!silent) toast(`เชื่อมต่อ ${feed.name}`);
+    if (source !== 'sim' && goldMarketClosed(Date.now())) toast('ตอนนี้ตลาดทองปิด (เสาร์–อาทิตย์) ราคาจะขยับน้อย บอทอาจไม่เข้าออเดอร์จนกว่าตลาดเปิด');
   },
 
   onFeedStatus(feed, { state, msg }) {
@@ -1742,19 +1767,22 @@ const App = {
     const blocker = this.tradeBlocker();
     const sinceClose = (Date.now() - this.lastCloseTs) / 1000;
     const pend = this.state.pending[0];
-    if (!s.autoTrade) status = 'บอทปิดอยู่ · เปิดสวิตช์ Auto Bot เพื่อให้เข้าออเดอร์ตามสัญญาณ';
-    else if (blocker) status = blocker;
-    else if (this.state.positions.length >= s.maxPositions) status = `ถือ ${this.state.positions.length}/${s.maxPositions} ออเดอร์ · ดูแล SL / Trailing`;
-    else if (pend) status = `วาง ${pend.side} LIMIT @ ${pfmt(pend.price)} รอราคามาถึง`;
-    else if (sinceClose < s.cooldownSec) status = `พักหลังปิดไม้ อีก ${Math.ceil(s.cooldownSec - sinceClose)} วินาที`;
-    else if (s.strategy === 'hunt') status = 'รอจังหวะกวาด SL · ตรวจทุกครั้งที่แท่ง M5 ปิด';
-    else if (this.signal.action === 'WAIT') status = `รอสัญญาณ · score ${signed(this.signal.score, 1)} ต้องการ ±${s.entryThreshold} และ 1M/1S ไปทางเดียวกัน` +
-      (s.strategy === 'both' ? ' · Stop Hunt ตรวจทุกแท่ง M5' : '');
-    else {
+    let chip;
+    if (!s.autoTrade) { status = 'บอทปิดอยู่ · เปิดสวิตช์ Auto Bot เพื่อให้เข้าออเดอร์ตามสัญญาณ'; chip = 'ปิดอยู่'; }
+    else if (blocker) { status = blocker; chip = 'หยุดชั่วคราว'; }
+    else if (this.state.positions.length >= s.maxPositions) { status = `ถือ ${this.state.positions.length}/${s.maxPositions} ออเดอร์ · ดูแล SL / Trailing`; chip = 'ถือออเดอร์'; }
+    else if (pend) { status = `วาง ${pend.side} LIMIT @ ${pfmt(pend.price)} รอราคามาถึง`; chip = 'รอ Pending'; }
+    else if (sinceClose < s.cooldownSec) { status = `พักหลังปิดไม้ อีก ${Math.ceil(s.cooldownSec - sinceClose)} วินาที`; chip = 'พักหลังปิดไม้'; }
+    else if (s.strategy === 'hunt') { status = 'รอจังหวะกวาด SL · ตรวจทุกครั้งที่แท่ง M5 ปิด'; chip = 'ทำงาน · รอจังหวะ'; }
+    else if (this.signal.action === 'WAIT') {
+      status = 'ทำงานอยู่ · รอให้เงื่อนไขด้านบนครบ' + (s.strategy === 'both' ? ' · Stop Hunt ตรวจทุกแท่ง M5' : '');
+      chip = 'ทำงาน · รอสัญญาณ';
+    } else {
       const ok = this.openPosition(this.signal.action, 'BOT');
       status = ok ? `เข้า ${this.signal.action} ตามสัญญาณ score ${signed(this.signal.score, 1)}` : 'ข้ามสัญญาณ (ดูข้อความแจ้งเตือน)';
+      chip = ok ? 'เข้าออเดอร์แล้ว' : 'ข้ามสัญญาณ';
     }
-    UI.setBotStatus(status);
+    UI.setBotStatus(status, chip);
   },
 
   /** opts.slPrice places the stop at a fixed price (Stop Hunt plans); otherwise the stop comes from ATR sizing. */
@@ -1868,6 +1896,12 @@ const UI = {
     $('btnCloseAll').addEventListener('click', () => App.closeAll());
     $('posBody').addEventListener('click', (e) => { const b = e.target.closest('[data-close]'); if (b) App.closePosition(b.dataset.close); });
 
+    $('sensSeg').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-thr]'); if (!b) return;
+      App.s.entryThreshold = +b.dataset.thr; App.markDirty(); this.syncSettings();
+      if (App.matrix) App.evaluate();
+      toast(`ความไวบอท: ${b.textContent} (เกณฑ์ ±${b.dataset.thr})`);
+    });
     $('riskSeg').addEventListener('click', (e) => {
       const b = e.target.closest('[data-risk]'); if (!b) return;
       App.s.riskPct = +b.dataset.risk; App.markDirty(); this.syncSettings();
@@ -2225,6 +2259,9 @@ const UI = {
     $('thrLo').style.left = `${50 - s.entryThreshold / 2}%`; $('thrHi').style.left = `${50 + s.entryThreshold / 2}%`;
     $('sigAligned').textContent = `${sig.aligned} / 4 TF ตรงกัน`;
 
+    $('sensSeg').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.thr === s.entryThreshold)));
+    this.renderChecks();
+
     const z = App.sizing();
     $('pvSl').textContent = `$${fmt(z.slDist)}`;
     $('pvTp').textContent = `$${fmt(z.slDist * s.rr)}`;
@@ -2232,7 +2269,31 @@ const UI = {
     $('pvRisk').textContent = `${fmt(z.actualRisk)} USC ≈ ${fmt(this.toThb(z.actualRisk))} ฿`;
   },
 
-  setBotStatus(text) { $('botStatus').textContent = text; },
+  /** What the bot is waiting for, one line per condition, so "Auto is on but nothing happens" explains itself. */
+  renderChecks() {
+    const s = App.s, sig = App.signal, m = App.matrix, items = [];
+    const add = (state, text) => items.push(`<li class="${state}">${text}</li>`);
+    add(s.autoTrade ? 'ok' : '', s.autoTrade ? 'Auto Bot เปิดอยู่' : 'Auto Bot ยังปิดอยู่');
+    if (App.feed && App.feed.name !== 'Simulator' && goldMarketClosed(Date.now()))
+      add('warn', 'ตลาดทองปิดช่วงเสาร์–อาทิตย์ ราคาตอนนี้แทบไม่ขยับ สัญญาณจะเกิดน้อยมาก');
+    if (s.strategy === 'hunt') {
+      add('', `กลยุทธ์ Stop Hunt: รอให้ราคากวาด High/Low แล้วปิดกลับ (ตรวจแล้ว ${App.huntScans} แท่ง M5)`);
+    } else if (m) {
+      const dir = sig.score >= 0 ? 1 : -1, word = dir > 0 ? 'ขึ้น (BUY)' : 'ลง (SELL)';
+      add(Math.abs(sig.score) >= s.entryThreshold ? 'ok' : '', `คะแนนรวมถึง ±${s.entryThreshold} · ตอนนี้ ${signed(sig.score, 1)}`);
+      add(Math.sign(m['1m'].score) === dir ? 'ok' : '', `1M ไปทาง${word} · ${signed(m['1m'].score, 1)}`);
+      add(Math.sign(m['1s'].score) === dir ? 'ok' : '', `1S ไปทาง${word} · ${signed(m['1s'].score, 1)}`);
+      if (m['1m'].quiet) add('warn', 'ราคา 1M แทบไม่ขยับ ระบบนับเป็น Consolidation');
+      if (s.strategy === 'both') add('', 'Stop Hunt ตรวจคู่กันทุกครั้งที่แท่ง M5 ปิด');
+    }
+    $('sigChecks').innerHTML = items.join('');
+  },
+
+  setBotStatus(text, chip) {
+    $('botStatus').textContent = text;
+    if (chip) $('botChip').textContent = chip;
+    this.renderChecks();
+  },
 
   notifyClose(tr) {
     const label = { TP: 'ถึง TP', SL: 'โดน SL', TRAIL: 'Trailing Stop ล็อกกำไร', BE: 'ออกที่จุดคุ้มทุน', MANUAL: 'ปิดเอง', FEED: 'เปลี่ยนแหล่งราคา', RESET: 'เริ่มพอร์ตใหม่' }[tr.reason] || tr.reason;

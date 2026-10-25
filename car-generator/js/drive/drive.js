@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { parseOM, omParts } from '../om.js';
 import { readZip } from '../zip.js';
+import { createCity } from './city.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -18,13 +19,31 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#7fa6d6');
 scene.fog = new THREE.Fog('#7fa6d6', 120, 420);
-const cam = new THREE.PerspectiveCamera(62, 1, 0.1, 1000);
-scene.add(new THREE.HemisphereLight('#dfe9ff', '#3b4a2c', 0.9));
+const cam = new THREE.PerspectiveCamera(62, 1, 0.1, 3000);
+const hemi = new THREE.HemisphereLight('#dfe9ff', '#3b4a2c', 0.9); scene.add(hemi);
 const sun = new THREE.DirectionalLight('#ffffff', 1.6);
 sun.position.set(-60, 120, 40); sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
 Object.assign(sun.shadow.camera, { left: -40, right: 40, top: 40, bottom: -40, near: 1, far: 300 });
 scene.add(sun, sun.target);
+// the game's sunset: its sky picture (etc/skydome/sunset, upper half = the sky down to the horizon) on a dome
+// that follows the camera, its fog colour and range (etc/env/sunset.xml), a low warm sun
+const sky = new THREE.Mesh(new THREE.SphereGeometry(2000, 48, 24), new THREE.MeshBasicMaterial({ side: THREE.BackSide, fog: false, depthWrite: false }));
+sky.renderOrder = -1; sky.visible = false; scene.add(sky);
+function gameSky(look) {
+  if (!look || !look.sky) return;
+  const img = new Image(); img.src = `data:image/png;base64,${look.sky}`;
+  const tex = new THREE.Texture(img); img.onload = () => { tex.needsUpdate = true; }; tex.colorSpace = THREE.SRGBColorSpace;
+  // v from the elevation: horizon = the picture's middle row, straight up = its top row; below the horizon holds
+  const pos = sky.geometry.attributes.position; const uv = sky.geometry.attributes.uv;
+  for (let i = 0; i < pos.count; i++) { const y = pos.getY(i) / 2000; uv.setY(i, 0.5 + 0.5 * Math.max(0.004, Math.asin(Math.max(-1, Math.min(1, y))) / (Math.PI / 2))); }
+  uv.needsUpdate = true; sky.material.map = tex; sky.material.needsUpdate = true; sky.visible = true;
+  // the game's fog colour is mixed with its HDR sky; on its own it browns everything, so lighten it towards the horizon
+  const f = (look.fog ? new THREE.Color(`rgb(${look.fog.color.join(',')})`) : new THREE.Color('#a86a48')).lerp(new THREE.Color('#e8b08a'), 0.6);
+  scene.background = f; scene.fog = new THREE.Fog(f, look.fog ? look.fog.range[0] : 400, look.fog ? look.fog.range[1] * 1.3 : 1100);
+  hemi.color.set('#fff0e2'); hemi.groundColor.set('#55604a'); hemi.intensity = 1.15;
+  sun.color.set('#ffe0bf'); sun.intensity = 1.9;
+}
 function resize() { renderer.setSize(window.innerWidth, window.innerHeight, false); cam.aspect = window.innerWidth / window.innerHeight; cam.updateProjectionMatrix(); }
 window.addEventListener('resize', resize); resize();
 
@@ -37,11 +56,24 @@ window.addEventListener('resize', resize); resize();
 const world = new THREE.Group(); scene.add(world);
 let TRACK = []; let HEIGHT = []; let LOOP = true; let LAPS = 0; let ROAD_W = 14; let BOUND = 317;
 let nearRoad = () => Infinity; // distance to the closest other road (city roads)
+let city = null; let tilesOn = false; // the minimap city (js/drive/city.js), when the world is built from it
+let SPAWN = null; // free roam: where R puts the car back
 let blocks = []; let blockGrid = new Map(); // building footprints [x0, z0, x1, z1] for collisions
 const unpack = (a) => { const o = []; let x = 0; let y = 0; let z = 0; for (let i = 0; i < a.length; i += 3) { x += a[i]; y += a[i + 1]; z += a[i + 2]; o.push([x / 10, y / 10, z / 10]); } return o; };
 function clearWorld() {
   world.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) [o.material].flat().forEach((m) => { if (m.map) m.map.dispose(); m.dispose(); }); });
   world.clear(); blocks = []; blockGrid = new Map(); nearRoad = () => Infinity;
+  if (city) city.clear(); tilesOn = false; SPAWN = null; TRACK = []; HEIGHT = [];
+}
+
+// free roam in the city, like the game's field: the minimap city around the car, no race
+function buildFree() {
+  clearWorld();
+  const t = CITY.tracks.find((q) => q.file === 'gwanghwamun') || CITY.tracks.find((q) => q.region === 'kr');
+  const raw = unpack(t.path); const [ox, oy] = raw[0];
+  city.setOrigin(ox, oy); tilesOn = true; LOOP = true; LAPS = 0; ROAD_W = 12; BOUND = 1e9;
+  const b = raw[3] || raw[1]; SPAWN = { x: 0, z: 0, h: Math.atan2(b[0] - ox, -(b[1] - oy)) };
+  $('track-info').textContent = 'ขับเล่นในเมือง (โซล) · ถนนและบล็อกจากแผนที่ในเกม · Shift = บูสต์ SP';
 }
 
 function buildPractice() {
@@ -140,10 +172,12 @@ async function loadCity() {
 function buildCity(t) {
   clearWorld();
   const raw = unpack(t.path); const [ox, oy, oz] = raw[0];
-  const W = (q) => [q[0] - ox, -(q[1] - oy), q[2] - oz]; // → [x, z, height]
+  const flat = t.region === 'kr' && city && city.count > 0; // the minimap city is flat
+  const W = (q) => [q[0] - ox, -(q[1] - oy), flat ? 0 : q[2] - oz]; // → [x, z, height]
   const route = raw.map(W);
   TRACK = route.map((q) => new THREE.Vector2(q[0], q[1])); HEIGHT = route.map((q) => q[2]);
   LOOP = t.loop; LAPS = t.laps; ROAD_W = 12;
+  if (flat) return cityRoute(t, route, ox, oy);
   let x0 = Infinity; let z0 = Infinity; let x1 = -Infinity; let z1 = -Infinity; let hmin = Infinity;
   for (const q of route) { x0 = Math.min(x0, q[0]); z0 = Math.min(z0, q[1]); x1 = Math.max(x1, q[0]); z1 = Math.max(z1, q[1]); hmin = Math.min(hmin, q[2]); }
   const M = 400; BOUND = Math.max(Math.abs(x0), Math.abs(x1), Math.abs(z0), Math.abs(z1)) + M;
@@ -189,11 +223,28 @@ function buildCity(t) {
   $('track-info').textContent = `${t.name} · ${REGION[t.region] || t.region} · ${km ? `${km.toFixed(1)} กม. · ` : ''}${LOOP ? `วงปิด${LAPS ? ` ${LAPS} รอบ` : ''}` : 'วิ่งถึงเส้นชัย'} · ถนนรอบ ๆ ${lines.length.toLocaleString()} เส้น`;
 }
 
+// a kr route raced through the minimap city: the route drawn as the game's glowing guide, start / finish lines
+function cityRoute(t, route, ox, oy) {
+  city.setOrigin(ox, oy); tilesOn = true; BOUND = 1e9;
+  const glow = new THREE.MeshBasicMaterial({ color: '#3fe0ff', transparent: true, opacity: 0.28, depthWrite: false });
+  ribbonMesh([route], 3.2, 0.12, glow).renderOrder = 1;
+  const chk = (() => { const c = document.createElement('canvas'); c.width = 12; c.height = 2; const g = c.getContext('2d'); for (let i = 0; i < 12; i++) for (let j = 0; j < 2; j++) { g.fillStyle = (i + j) % 2 ? '#111' : '#fff'; g.fillRect(i, j, 1, 1); } const tx = new THREE.CanvasTexture(c); tx.magFilter = THREE.NearestFilter; return tx; })();
+  const line = (i) => {
+    const a = route[Math.min(i, route.length - 2)]; const b = route[Math.min(i, route.length - 2) + 1]; const p = route[i];
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(ROAD_W, 2.4), new THREE.MeshStandardMaterial({ map: chk }));
+    m.rotation.order = 'YXZ'; m.rotation.set(-Math.PI / 2, Math.atan2(b[0] - a[0], b[1] - a[1]), 0); m.position.set(p[0], 0.1, p[1]); world.add(m);
+  };
+  line(0); if (!LOOP) line(route.length - 1);
+  const km = (t.length || 0) / 1000;
+  $('track-info').textContent = `${t.name} · โซล · ${km ? `${km.toFixed(1)} กม. · ` : ''}${LOOP ? `วงปิด${LAPS ? ` ${LAPS} รอบ` : ''}` : 'วิ่งถึงเส้นชัย'} · ตามเส้นสีฟ้า`;
+}
+
 // nearest distance to the track's centre line, its segment and the road height there; searched around the
 // last segment (routes cross themselves), all of it when far off
 let lastSeg = 0;
 function onTrack(x, z, all = false) {
   const n = TRACK.length; const segs = LOOP ? n : n - 1;
+  if (n < 2) return { dist: 0, seg: 0, h: 0 }; // free roam
   const scan = (from, to) => {
     let best = Infinity; let bi = 0; let bt = 0;
     for (let s = from; s < to; s++) {
@@ -298,16 +349,22 @@ $('file-car').addEventListener('change', async (e) => {
 
 const S = { x: 0, z: 0, y: 0, h: 0, vx: 0, vz: 0, steer: 0, wheelSpin: 0 };
 function reset() {
-  const a = TRACK[0]; const b = TRACK[1]; Object.assign(S, { x: a.x, z: a.y, y: HEIGHT[0], h: Math.atan2(b.x - a.x, b.y - a.y), vx: 0, vz: 0, steer: 0 });
+  if (SPAWN) Object.assign(S, { x: SPAWN.x, z: SPAWN.z, y: 0, h: SPAWN.h, vx: 0, vz: 0, steer: 0 });
+  else { const a = TRACK[0]; const b = TRACK[1]; Object.assign(S, { x: a.x, z: a.y, y: HEIGHT[0], h: Math.atan2(b.x - a.x, b.y - a.y), vx: 0, vz: 0, steer: 0 }); }
+  SP.v = SP.max;
   // a sprint's clock runs from the start; a loop's from the first time over the line
   lastSeg = 0; lap.n = 0; lap.t0 = performance.now(); lap.next = 1; lap.started = !LOOP; lap.done = false;
 }
 const keys = new Set();
-const KEYMAP = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', Space: 'hand' };
+const KEYMAP = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', Space: 'hand', ShiftLeft: 'boost', ShiftRight: 'boost' };
+const SP = { v: 8996, max: 8996 }; // the game's SP bar, spent on the boost
 window.addEventListener('keydown', (e) => { if (KEYMAP[e.code]) { keys.add(KEYMAP[e.code]); e.preventDefault(); } if (e.code === 'KeyR') reset(); if (e.code === 'KeyC') camMode = (camMode + 1) % 2; });
 window.addEventListener('keyup', (e) => { if (KEYMAP[e.code]) keys.delete(KEYMAP[e.code]); });
 document.querySelectorAll('#touch button').forEach((b) => { const k = b.dataset.k; b.addEventListener('pointerdown', (e) => { e.preventDefault(); keys.add(k); }); for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(ev, () => keys.delete(k)); });
 let camMode = 0;
+$('btn-panel').addEventListener('click', () => $('panel').classList.toggle('hide'));
+$('btn-reset').addEventListener('click', (e) => { reset(); e.currentTarget.blur(); });
+$('btn-cam').addEventListener('click', (e) => { camMode = (camMode + 1) % 2; e.currentTarget.blur(); });
 const lap = { n: 0, t0: 0, best: Infinity, next: 1, started: false, done: false, time: 0 };
 const fmt = (ms) => `${Math.floor(ms / 60000)}:${((ms % 60000) / 1000).toFixed(2).padStart(5, '0')}`;
 
@@ -315,10 +372,12 @@ function step(dt) {
   const fx = Math.sin(S.h); const fz = Math.cos(S.h);
   let vf = S.vx * fx + S.vz * fz; let vs = S.vx * fz - S.vz * fx; // forward / side speed
   const tr = onTrack(S.x, S.z); lastSeg = tr.seg;
-  const off = tr.dist > ROAD_W / 2 + 1 && nearRoad(S.x, S.z) > 5;
+  const off = tilesOn ? city.classAt(S.x, S.z) < 2 : tr.dist > ROAD_W / 2 + 1 && nearRoad(S.x, S.z) > 5;
+  const boost = keys.has('boost') && keys.has('up') && SP.v > 0;
+  SP.v = Math.max(0, Math.min(SP.max, SP.v + (boost ? -2200 : 500) * dt));
   const up = keys.has('up'); const down = keys.has('down'); const hand = keys.has('hand');
   let braking = false; let reversing = false;
-  if (up) vf += (vf < 0 ? 18 : 9.5 * Math.max(0.15, 1 - vf / 62)) * dt;
+  if (up) vf += (vf < 0 ? 18 : (boost ? 16 : 9.5) * Math.max(0.15, 1 - vf / (boost ? 80 : 62))) * dt;
   if (down) { if (vf > 0.5) { vf = Math.max(0, vf - 16 * dt); braking = true; } else { vf = Math.max(-12, vf - 6 * dt); reversing = vf < -0.2; } }
   if (!up && !down) vf -= Math.sign(vf) * Math.min(Math.abs(vf), (1.2 + (off ? 6 : 0)) * dt);
   vf -= vf * Math.abs(vf) * (off ? 0.012 : 0.0016) * dt * 10;
@@ -335,10 +394,11 @@ function step(dt) {
   S.vx = nfx * vf + nfz * vs; S.vz = nfz * vf - nfx * vs;
   S.x += S.vx * dt; S.z += S.vz * dt;
   // buildings: back out of the wall, losing most of the speed into it
-  const hit = hitBlock(S.x, S.z, 1.1);
-  if (hit) {
+  const hb = hitBlock(S.x, S.z, 1.1); const hc = !hb && tilesOn ? city.hit(S.x, S.z, 1.1) : null;
+  if (hb || hc) {
     S.x -= S.vx * dt; S.z -= S.vz * dt;
-    const nx = S.x < hit[0] ? -1 : S.x > hit[2] ? 1 : 0; const nz = nx ? 0 : S.z < hit[1] ? -1 : 1;
+    let nx; let nz;
+    if (hc) { nx = hc.nx; nz = hc.nz; } else { nx = S.x < hb[0] ? -1 : S.x > hb[2] ? 1 : 0; nz = nx ? 0 : S.z < hb[1] ? -1 : 1; }
     const vn = S.vx * nx + S.vz * nz; if (vn < 0) { S.vx -= vn * nx * 1.3; S.vz -= vn * nz * 1.3; }
     S.vx *= 0.6; S.vz *= 0.6;
   }
@@ -349,6 +409,7 @@ function step(dt) {
   for (const m of lamps.brake) m.emissiveIntensity = braking ? 2.2 : 0.15;
   for (const m of lamps.reverse) m.emissiveIntensity = reversing ? 1.8 : 0;
   // laps: 8 checkpoints along the line, in order; a sprint ends past the last one at the finish
+  if (TRACK.length < 2) return { vf, slip: Math.abs(vs), boost };
   const segs = LOOP ? TRACK.length : TRACK.length - 1; const NCP = 8; const cp = Math.min(NCP - 1, Math.floor((tr.seg * NCP) / segs));
   if (!lap.done && LOOP && cp === lap.next % NCP) {
     if (lap.next % NCP === 0) {
@@ -360,7 +421,7 @@ function step(dt) {
     if (cp === lap.next && lap.next < NCP) lap.next++;
     if (lap.next >= NCP && tr.seg >= segs - 1 && tr.dist < ROAD_W) { lap.done = true; lap.time = performance.now() - lap.t0; lap.n = 1; lap.best = Math.min(lap.best, lap.time); }
   }
-  return { vf, slip: Math.abs(vs) };
+  return { vf, slip: Math.abs(vs), boost };
 }
 
 const camPos = new THREE.Vector3(); const camLook = new THREE.Vector3();
@@ -374,8 +435,17 @@ function frame(now) {
   if (camMode === 0) { camPos.lerp(new THREE.Vector3(S.x - fx * 6.5, S.y + 2.4, S.z - fz * 6.5), Math.min(1, dt * 6)); camLook.set(S.x + fx * 3, S.y + 0.8, S.z + fz * 3); }
   else { camPos.set(S.x + fx * 0.2, S.y + 1.25, S.z + fz * 0.2); camLook.set(S.x + fx * 10, S.y + 1.0, S.z + fz * 10); }
   cam.position.copy(camPos); cam.lookAt(camLook);
-  sun.position.set(S.x - 60, S.y + 120, S.z + 40); sun.target.position.set(S.x, S.y, S.z);
-  $('kmh').textContent = Math.round(Math.abs(r.vf) * 3.6);
+  sun.position.set(S.x - 70, S.y + 60, S.z - 50); sun.target.position.set(S.x, S.y, S.z);
+  sky.position.copy(cam.position);
+  if (tilesOn) city.update(S.x, S.z);
+  // HUD: speed, SP, the round minimap
+  const kmh = Math.round(Math.abs(r.vf) * 3.6);
+  $('kmh').textContent = kmh; $('gear').textContent = r.vf < -0.2 ? 'R' : kmh < 3 ? 'N' : Math.min(6, 1 + Math.floor(kmh / 38));
+  $('sp-fill').style.width = `${(SP.v / SP.max) * 100}%`; $('sp-text').textContent = `${Math.round(SP.v)}/${SP.max}`; $('sp').classList.toggle('on', !!r.boost);
+  const mm = $('mini'); const g = mm.getContext('2d');
+  if (tilesOn) city.drawMinimap(g, S.x, S.z, S.h, mm.width, 260, TRACK);
+  else { g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, mm.width, mm.height); }
+  $('mini-n').style.transform = `rotate(${(-S.h * 180) / Math.PI + 180}deg)`;
   $('lap-n').textContent = LOOP ? `${lap.n}${LAPS ? `/${LAPS}` : ''}` : lap.done ? 'ถึงเส้นชัย' : '-';
   $('lap-t').textContent = lap.done ? fmt(lap.time) : lap.started ? fmt(now - lap.t0) : '0:00.00'; $('lap-best').textContent = Number.isFinite(lap.best) ? fmt(lap.best) : '-';
   renderer.render(scene, cam);
@@ -385,19 +455,24 @@ function frame(now) {
 (async () => {
   buildPractice();
   CITY = await loadCity().catch(() => null);
+  if (CITY && CITY.look) {
+    gameSky(CITY.look);
+    city = createCity(scene, CITY); await city.load();
+  }
   if (CITY) {
     const sel = $('track'); const groups = {};
+    if (city && city.count) { const o = document.createElement('option'); o.value = 'city'; o.textContent = '🏙️ ขับเล่นในเมือง (โซล)'; sel.prepend(o); sel.value = 'city'; buildFree(); }
     CITY.tracks.forEach((t, i) => {
       const r = REGION[t.region] ? t.region : 'other';
       if (!groups[r]) { groups[r] = document.createElement('optgroup'); groups[r].label = REGION[r] || 'อื่น ๆ (ไม่มีแผนที่ถนน)'; }
       const o = document.createElement('option'); o.value = i; o.textContent = `${t.name}${t.length ? ` · ${(t.length / 1000).toFixed(1)} กม.` : ''}${t.loop ? ' · วง' : ''}${t.hidden ? ' · (ซ่อน)' : ''}`; groups[r].append(o);
     });
     for (const r of ['kr', 'n1', 'other']) if (groups[r]) sel.append(groups[r]);
-    sel.addEventListener('change', () => { if (sel.value === 'practice') buildPractice(); else buildCity(CITY.tracks[+sel.value]); reset(); camPos.set(S.x, S.y + 3, S.z - 8); sel.blur(); });
+    sel.addEventListener('change', () => { if (sel.value === 'practice') buildPractice(); else if (sel.value === 'city') buildFree(); else buildCity(CITY.tracks[+sel.value]); reset(); camPos.set(S.x, S.y + 3, S.z - 8); sel.blur(); });
   }
   const esc = await escarabajo();
   if (esc) await loadCar(esc, 'Escarabajo (ในตัว)');
   reset(); camPos.set(S.x, S.y + 3, S.z - 8);
   requestAnimationFrame(frame);
-  window.drive = { S, keys, lap, car, get track() { return { pts: TRACK, loop: LOOP, seg: lastSeg } } };
+  window.drive = { S, keys, lap, car, city: () => city, SP, get track() { return { pts: TRACK, loop: LOOP, seg: lastSeg } } };
 })();

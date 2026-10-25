@@ -7,39 +7,97 @@
   <style>
     html, body { margin: 0; height: 100%; background: #10131a; color: #ececec; font: 14px/1.4 system-ui, "Noto Sans Thai", "Segoe UI", sans-serif; overflow: hidden; }
     #gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
-    #hud { position: fixed; left: 12px; top: 10px; display: flex; flex-direction: column; gap: 6px; max-width: min(360px, calc(100% - 24px)); }
-    .box { background: rgba(20, 24, 34, .82); border: 1px solid #2f3747; border-radius: 10px; padding: 8px 10px; }
+    .box { background: rgba(14, 18, 28, .78); border: 1px solid rgba(120, 150, 190, .35); border-radius: 10px; padding: 8px 10px; }
     .box b { color: #ff9f1a; }
-    #speed { position: fixed; right: 16px; bottom: 14px; text-align: right; font-variant-numeric: tabular-nums; }
-    #speed .v { font-size: 44px; font-weight: 700; line-height: 1; }
-    #speed .u { color: #a2a2a2; }
-    #lap { position: fixed; right: 16px; top: 10px; text-align: right; font-variant-numeric: tabular-nums; }
     button, select, input[type=color] { background: #2b3242; color: #ececec; border: 1px solid #44506a; border-radius: 8px; padding: 6px 10px; font: inherit; cursor: pointer; }
     .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-    .hint { color: #a2a2a2; font-size: 12px; }
-    #touch { position: fixed; bottom: 14px; left: 12px; display: none; gap: 8px; }
+    .hint { color: #a9b0bb; font-size: 12px; }
+    .shadow { text-shadow: 0 1px 2px #000, 0 0 6px rgba(0,0,0,.6); }
+
+    /* player plate (top left), like the game's */
+    #plate { position: fixed; left: 8px; top: 8px; display: flex; align-items: center; gap: 6px; }
+    #plate .lv { width: 52px; height: 52px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #ff6a5a, #8d1010 70%); border: 3px solid #e9c46a; display: grid; place-items: center; font-weight: 800; font-size: 20px; color: #fff; box-shadow: 0 2px 6px rgba(0,0,0,.6); }
+    #plate .bars { display: flex; flex-direction: column; gap: 3px; min-width: 150px; }
+    #plate .name { font-weight: 700; color: #fff; }
+    .bar { height: 9px; border-radius: 5px; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.2); overflow: hidden; }
+    .bar i { display: block; height: 100%; }
+    #plate .money { font-weight: 700; color: #ffe08a; font-size: 13px; }
+
+    /* settings panel */
+    #menu { position: fixed; left: 8px; top: 72px; display: flex; flex-direction: column; gap: 6px; max-width: min(360px, calc(100% - 16px)); }
+    #panel { display: flex; flex-direction: column; gap: 6px; }
+    #panel.hide { display: none; }
+
+    /* round minimap (top right) */
+    #minimap { position: fixed; right: 12px; top: 10px; width: 196px; height: 196px; }
+    #mini { position: absolute; inset: 8px; width: 180px; height: 180px; border-radius: 50%; }
+    #minimap .ring { position: absolute; inset: 0; border-radius: 50%; border: 8px solid rgba(20, 26, 36, .85); box-shadow: 0 0 0 2px rgba(150, 190, 230, .5), inset 0 0 12px rgba(0,0,0,.7); pointer-events: none; }
+    #mini-n { position: absolute; inset: 0; pointer-events: none; }
+    #mini-n span { position: absolute; left: 50%; top: -3px; transform: translateX(-50%); font: 800 13px system-ui; color: #5dff7a; text-shadow: 0 0 3px #000; }
+    #minimap .me { position: absolute; left: 50%; top: 50%; width: 0; height: 0; transform: translate(-50%, -60%); border-left: 7px solid transparent; border-right: 7px solid transparent; border-bottom: 14px solid #ffd23f; filter: drop-shadow(0 0 2px #000); }
+
+    #lap { position: fixed; right: 16px; top: 214px; text-align: right; font-variant-numeric: tabular-nums; }
+
+    /* speed panel (bottom right) */
+    #speed { position: fixed; right: 10px; bottom: 10px; width: 170px; padding: 8px 14px 6px; border-radius: 14px 4px 14px 4px; background: linear-gradient(135deg, rgba(10, 60, 70, .85), rgba(20, 30, 46, .85)); border: 1px solid rgba(80, 220, 230, .45); text-align: right; font-variant-numeric: tabular-nums; }
+    #speed .v { font-size: 52px; font-weight: 800; font-style: italic; line-height: 1; color: #fff; }
+    #speed .u { color: #8fe9ef; font-size: 12px; }
+    #speed .gear { position: absolute; left: 12px; top: 10px; font: 800 24px system-ui; color: #ffd23f; font-style: italic; }
+
+    /* SP bar (bottom centre) */
+    #sp { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); width: min(300px, 50vw); }
+    #sp .bar { height: 14px; border-radius: 3px; }
+    #sp-fill { background: linear-gradient(90deg, #6a2cff, #c63cff); transition: width .1s; }
+    #sp.on #sp-fill { background: linear-gradient(90deg, #2cf0ff, #ffffff); }
+    #sp .lbl { position: absolute; left: -26px; top: -2px; font: 800 13px system-ui; color: #ffd23f; font-style: italic; }
+    #sp-text { position: absolute; inset: 0; text-align: center; font: 700 11px/14px system-ui; color: #fff; }
+
+    /* bottom left buttons */
+    #tools { position: fixed; left: 8px; bottom: 10px; display: flex; gap: 4px; }
+    #tools button { width: 46px; height: 42px; padding: 0; font-size: 18px; border-radius: 6px; background: linear-gradient(#3b4560, #1f2536); }
+
+    #touch { position: fixed; bottom: 64px; left: 12px; display: none; gap: 8px; }
     #touch button { width: 64px; height: 64px; font-size: 22px; border-radius: 50%; opacity: .85; touch-action: none; }
     @media (pointer: coarse) { #touch { display: flex; } }
+    @media (max-width: 640px) { #minimap { transform: scale(.7); transform-origin: top right; } #lap { top: 150px; } #plate .bars { min-width: 110px; } }
   </style>
 </head>
 <body>
   <canvas id="gl"></canvas>
-  <div id="hud">
-    <div class="box"><b>RayCity Drive</b> <span class="hint">ต้นแบบเกมแข่งบนเว็บ</span></div>
-    <div class="box">
-      <div class="row"><button id="btn-car">📂 เปิดรถ (.zip)</button><input id="file-car" type="file" accept=".zip" hidden>
-        <span>สี</span><input id="c1" type="color" value="#e8e8e8" title="สี 1"><input id="c2" type="color" value="#2a6bd8" title="สี 2"><input id="c3" type="color" value="#d63a2f" title="สี 3"></div>
-      <div id="car-info" class="hint">รถ: Escarabajo (ในตัว)</div>
+
+  <div id="plate" class="shadow">
+    <div class="lv">RC</div>
+    <div class="bars">
+      <div class="name">RayCity PG</div>
+      <div class="bar"><i style="width: 59%; background: linear-gradient(90deg, #ffb703, #ffe08a)"></i></div>
+      <div class="money">₩ 7,361,400</div>
     </div>
-    <div class="box">
-      <div class="row"><span>สนาม</span><select id="track" style="max-width: 260px"><option value="practice">สนามฝึก (วงปิด)</option></select></div>
-      <div id="track-info" class="hint"></div>
-    </div>
-    <div class="box hint">W/↑ เร่ง · S/↓ เบรก/ถอย · A D/← → เลี้ยว · Space เบรกมือ (ดริฟต์) · R กลับจุดเริ่ม · C เปลี่ยนกล้อง</div>
   </div>
+
+  <div id="menu">
+    <div class="row"><button id="btn-panel">⚙ รถ · สนาม</button></div>
+    <div id="panel" class="hide">
+      <div class="box">
+        <div class="row"><button id="btn-car">📂 เปิดรถ (.zip)</button><input id="file-car" type="file" accept=".zip" hidden>
+          <span>สี</span><input id="c1" type="color" value="#e8e8e8" title="สี 1"><input id="c2" type="color" value="#2a6bd8" title="สี 2"><input id="c3" type="color" value="#d63a2f" title="สี 3"></div>
+        <div id="car-info" class="hint">รถ: Escarabajo (ในตัว)</div>
+      </div>
+      <div class="box">
+        <div class="row"><span>สนาม</span><select id="track" style="max-width: 260px"><option value="practice">สนามฝึก (วงปิด)</option></select></div>
+        <div id="track-info" class="hint"></div>
+      </div>
+      <div class="box hint">W/↑ เร่ง · S/↓ เบรก/ถอย · A D/← → เลี้ยว · Space เบรกมือ (ดริฟต์) · Shift บูสต์ (ใช้ SP) · R กลับจุดเริ่ม · C เปลี่ยนกล้อง</div>
+    </div>
+  </div>
+
+  <div id="minimap"><canvas id="mini" width="180" height="180"></canvas><div class="ring"></div><div id="mini-n"><span>N</span></div><div class="me"></div></div>
   <div id="lap" class="box"><div>รอบ <b id="lap-n">0</b></div><div>เวลา <span id="lap-t">0:00.00</span></div><div class="hint">ดีสุด <span id="lap-best">-</span></div></div>
-  <div id="speed" class="box"><div class="v" id="kmh">0</div><div class="u">กม./ชม.</div></div>
-  <div id="touch"><button data-k="left">◀</button><button data-k="right">▶</button><button data-k="down">⏬</button><button data-k="up">⏫</button></div>
+
+  <div id="speed"><div class="gear" id="gear">N</div><div class="v" id="kmh">0</div><div class="u">km/h</div></div>
+  <div id="sp"><span class="lbl">SP</span><div class="bar"><i id="sp-fill" style="width: 100%"></i></div><div id="sp-text">8996/8996</div></div>
+  <div id="tools"><button id="btn-reset" title="กลับจุดเริ่ม (R)">↺</button><button id="btn-cam" title="เปลี่ยนกล้อง (C)">🎥</button></div>
+
+  <div id="touch"><button data-k="left">◀</button><button data-k="right">▶</button><button data-k="down">⏬</button><button data-k="up">⏫</button><button data-k="boost">⚡</button></div>
   <script type="importmap">
     { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
   </script>

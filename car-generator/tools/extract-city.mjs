@@ -1,5 +1,6 @@
 // Pulls the city out of the game folder for RayCity Drive: every race route (track/*.0m, named in
 // track/track*.xml) and the traffic road network of each region (etc/traffic/road_<region>.bin).
+// Also the look of the game (minimap tiles, the sunset sky and fog: see "the game's look" below).
 // Writes js/drive/rc-city.js (window.RC_CITY = base64 gzip JSON). Usage:
 //   node tools/extract-city.mjs "<game folder (the one holding track/ and etc/)>"
 //
@@ -96,7 +97,69 @@ for (const f of fs.existsSync(tdir) ? fs.readdirSync(tdir) : []) {
   console.log(`roads ${m[1]}: ${lines.length} lines, ${kept} points`);
 }
 
-const json = JSON.stringify({ tracks, roads });
+// --- the game's look: minimap tiles (ui/minimap/<region>/<region>_<A>_<B>_mm.dds, 256 px over 1024 m from
+// x = (A − 1000) × 512, y = (B − 1000) × 512) as classes (0 none, 1 block, 2 lane, 3 road; ×85 grey PNG),
+// the sunset sky (etc/skydome/sunset/cm_sky09.dds, halved) and the sunset fog (etc/env/sunset.xml)
+function dds(b) {
+  const h = b.readUInt32LE(12); const w = b.readUInt32LE(16); const cc = b.toString('latin1', 84, 88);
+  const bs = cc === 'DXT1' ? 8 : 16; const out = Buffer.alloc(w * h * 4); let o = 128;
+  const c565 = (c) => [((c >> 11) & 31) * 255 / 31, ((c >> 5) & 63) * 255 / 63, (c & 31) * 255 / 31];
+  for (let by = 0; by < h; by += 4) for (let bx = 0; bx < w; bx += 4, o += bs) {
+    const cb = o + (bs === 16 ? 8 : 0); const a = b.readUInt16LE(cb); const c = b.readUInt16LE(cb + 2);
+    const p0 = c565(a); const p1 = c565(c); const pal = [p0, p1];
+    if (a > c || bs === 16) { pal.push(p0.map((v, i) => (2 * v + p1[i]) / 3), p0.map((v, i) => (v + 2 * p1[i]) / 3)); } else { pal.push(p0.map((v, i) => (v + p1[i]) / 2), [0, 0, 0]); }
+    const bits = b.readUInt32LE(cb + 4);
+    for (let i = 0; i < 16; i++) {
+      const x = bx + (i & 3); const y = by + (i >> 2); if (x >= w || y >= h) continue; const q = (y * w + x) * 4; const k = (bits >> (2 * i)) & 3;
+      out[q] = pal[k][0]; out[q + 1] = pal[k][1]; out[q + 2] = pal[k][2];
+      out[q + 3] = bs === 16 ? ((b[o + (i >> 1)] >> ((i & 1) * 4)) & 15) * 17 : (a <= c && k === 3 ? 0 : 255);
+    }
+  }
+  return { w, h, data: out };
+}
+function png(w, h, ch, data) {
+  const crcT = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+  const crc = (buf) => { let c = 0xffffffff; for (const x of buf) c = crcT[(c ^ x) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+  const chunk = (t, d) => { const l = Buffer.alloc(4); l.writeUInt32BE(d.length); const td = Buffer.concat([Buffer.from(t), d]); const c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([l, td, c]); };
+  const raw = Buffer.alloc((w * ch + 1) * h); for (let y = 0; y < h; y++) data.copy(raw, y * (w * ch + 1) + 1, y * w * ch, (y + 1) * w * ch);
+  const hd = Buffer.alloc(13); hd.writeUInt32BE(w, 0); hd.writeUInt32BE(h, 4); hd[8] = 8; hd[9] = { 1: 0, 3: 2, 4: 6 }[ch];
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', hd), chunk('IDAT', zlib.deflateSync(raw, { level: 9 })), chunk('IEND', Buffer.alloc(0))]);
+}
+const look = { tiles: {}, sky: null, fog: null };
+for (const region of ['kr', 'n1']) {
+  const dir = path.join(game, 'ui', 'minimap', region); if (!fs.existsSync(dir)) continue;
+  for (const f of fs.readdirSync(dir)) {
+    const m = /_(\d{4})_(\d{4})_mm\.dds$/i.exec(f); if (!m) continue;
+    const { w, h, data } = dds(fs.readFileSync(path.join(dir, f)));
+    let same = true; for (let i = 4; i < data.length && same; i += 4) same = data[i] === data[0] && data[i + 1] === data[1] && data[i + 2] === data[2];
+    if (same) continue; // an empty tile (outside the city)
+    const g = Buffer.alloc(w * h);
+    for (let i = 0; i < w * h; i++) {
+      const r = data[i * 4]; const gg = data[i * 4 + 1]; const bl = data[i * 4 + 2]; const L = (r + gg + bl) / 3;
+      g[i] = 85 * (L < 165 ? 2 : r - bl < 35 && L > 200 ? 3 : 1);
+    }
+    look.tiles[`${region}_${m[1]}_${m[2]}`] = png(w, h, 1, g).toString('base64');
+  }
+}
+{
+  const f = path.join(game, 'etc', 'skydome', 'sunset', 'cm_sky09.dds');
+  if (fs.existsSync(f)) {
+    const { w, h, data } = dds(fs.readFileSync(f)); const W = w / 2; const H = h / 2; const o = Buffer.alloc(W * H * 3);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) for (let k = 0; k < 3; k++) {
+      let s = 0; for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) s += data[((2 * y + dy) * w + 2 * x + dx) * 4 + k]; o[(y * W + x) * 3 + k] = s / 4;
+    }
+    look.sky = png(W, H, 3, o).toString('base64');
+  }
+  const e = path.join(game, 'etc', 'env', 'sunset.xml');
+  if (fs.existsSync(e)) {
+    const t = fs.readFileSync(e).toString('utf16le');
+    const c = /<FogColor>\s*([\d\s]+)<\/FogColor>/.exec(t); const r = /<FogRange>\s*([\d.\s]+)<\/FogRange>/.exec(t);
+    if (c) look.fog = { color: c[1].trim().split(/\s+/).slice(1).map(Number), range: r ? r[1].trim().split(/\s+/).map(Number) : [300, 800] };
+  }
+}
+console.log(`look: ${Object.keys(look.tiles).length} minimap tiles, sky ${look.sky ? 'yes' : 'no'}, fog ${JSON.stringify(look.fog)}`);
+
+const json = JSON.stringify({ tracks, roads, look });
 const b64 = zlib.gzipSync(json, { level: 9 }).toString('base64');
 fs.writeFileSync(new URL('../js/drive/rc-city.js', import.meta.url), `window.RC_CITY = '${b64}';\n`);
 console.log(`${tracks.length} tracks; rc-city.js ${(b64.length / 1024).toFixed(0)} KB`);

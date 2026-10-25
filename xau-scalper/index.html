@@ -1,0 +1,1545 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>XAU Auto Scalper</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  /* Layout: trading-terminal grid — summary strip, chart + signal, MTF matrix, risk + positions, growth, journal, feed config */
+  :root {
+    --bg: #0f131a; --panel: #151a23; --panel-2: #1b2130; --line: #262e3f;
+    --fg: #e8e4d8; --muted: #8a91a1; --gold: #e0ad4a; --gold-ink: #1a1407;
+    --bull: #33c08d; --bear: #ec5f57; --flat: #9aa3b6;
+    --font-display: 'Chakra Petch', 'IBM Plex Sans Thai', system-ui, sans-serif;
+    --font-body: 'IBM Plex Sans Thai', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #eef0f4; --panel: #ffffff; --panel-2: #f5f6f9; --line: #dde1e9;
+      --fg: #161b25; --muted: #5d6577; --gold: #a26f0c; --gold-ink: #ffffff;
+      --bull: #13895f; --bear: #c93d35; --flat: #6b7385; color-scheme: light;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #eef0f4; --panel: #ffffff; --panel-2: #f5f6f9; --line: #dde1e9;
+    --fg: #161b25; --muted: #5d6577; --gold: #a26f0c; --gold-ink: #ffffff;
+    --bull: #13895f; --bear: #c93d35; --flat: #6b7385; color-scheme: light;
+  }
+
+  html, body { background: var(--bg); color: var(--fg); }
+  body { margin: 0; font-family: var(--font-body); font-size: 14px; line-height: 1.5; }
+  .wrap { max-width: 1440px; margin: 0 auto; padding-block: 20px 40px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+    display: flex; flex-direction: column; gap: 16px; }
+  .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .display { font-family: var(--font-display); letter-spacing: .01em; text-wrap: balance; }
+  .muted { color: var(--muted); }
+  .eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); font-weight: 600; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0; }
+  .panel h2 { font-family: var(--font-display); font-size: 16px; font-weight: 600; margin: 0; }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .up { color: var(--bull); } .down { color: var(--bear); } .flat { color: var(--flat); }
+  .gold { color: var(--gold); }
+
+  /* Header */
+  .brand-mark { width: 40px; height: 40px; border-radius: 8px; display: grid; place-items: center; flex: none;
+    background: var(--gold); color: var(--gold-ink); font-family: var(--font-display); font-weight: 700; font-size: 18px; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    border: 1px solid var(--line); background: var(--panel-2); white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--flat); }
+  .pill[data-state="live"] .dot { background: var(--bull); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bull) 25%, transparent); }
+  .pill[data-state="connecting"] .dot { background: var(--gold); }
+  .pill[data-state="error"] .dot { background: var(--bear); }
+
+  /* Controls */
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 14px; border-radius: 8px; font-weight: 600;
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--fg); cursor: pointer; font-size: 13px; transition: filter .15s, background .15s; }
+  .btn:hover { filter: brightness(1.12); }
+  .btn:focus-visible, .seg button:focus-visible, input:focus-visible, select:focus-visible, .switch input:focus-visible + span { outline: 2px solid var(--gold); outline-offset: 2px; }
+  .btn-buy { background: var(--bull); border-color: var(--bull); color: #fff; }
+  .btn-sell { background: var(--bear); border-color: var(--bear); color: #fff; }
+  .btn-gold { background: var(--gold); border-color: var(--gold); color: var(--gold-ink); }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+  .btn[disabled] { opacity: .45; cursor: not-allowed; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { padding: 6px 12px; background: var(--panel-2); color: var(--muted); border: 0; font-weight: 600; font-size: 13px; cursor: pointer; font-family: var(--font-mono); }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button[aria-pressed="true"] { background: var(--gold); color: var(--gold-ink); }
+  label.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); min-width: 0; }
+  input[type="number"], input[type="text"], input[type="password"], select {
+    background: var(--panel-2); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px;
+    font-family: var(--font-mono); font-size: 13px; width: 100%; min-width: 0; }
+  .switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-size: 13px; }
+  .switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .switch span.track { width: 38px; height: 22px; border-radius: 999px; background: var(--line); position: relative; flex: none; transition: background .15s; }
+  .switch span.track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--fg); transition: transform .15s; }
+  .switch input:checked + span.track { background: var(--gold); }
+  .switch input:checked + span.track::after { transform: translateX(16px); background: var(--gold-ink); }
+
+  /* Stat strip */
+  .stat { display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; min-width: 0; }
+  .stat + .stat { border-left: 1px solid var(--line); }
+  .stat .val { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 20px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stat .sub { font-size: 12px; color: var(--muted); font-family: var(--font-mono); }
+  @media (max-width: 1023px) { .stat + .stat { border-left: 0; } .stat { border-top: 1px solid var(--line); } }
+  .progress { height: 6px; border-radius: 999px; background: var(--panel-2); overflow: hidden; margin-top: 6px; }
+  .progress > span { display: block; height: 100%; background: var(--gold); width: 0; transition: width .4s; }
+
+  /* Signal */
+  .big-arrow { font-family: var(--font-mono); font-size: 56px; line-height: 1; }
+  .gauge { position: relative; height: 10px; border-radius: 999px;
+    background: linear-gradient(90deg, var(--bear), var(--panel-2) 45%, var(--panel-2) 55%, var(--bull)); }
+  .gauge .marker { position: absolute; top: -4px; width: 4px; height: 18px; border-radius: 2px; background: var(--fg); transform: translateX(-2px); transition: left .3s; }
+  .gauge .thr { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--muted); opacity: .6; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+  /* MTF matrix */
+  .tf-card { border: 1px solid var(--line); border-radius: 10px; padding: 14px; background: var(--panel); display: flex; flex-direction: column; gap: 8px; min-width: 0;
+    border-top: 3px solid var(--flat); }
+  .tf-card[data-state="BULLISH"] { border-top-color: var(--bull); }
+  .tf-card[data-state="BEARISH"] { border-top-color: var(--bear); }
+  .tf-card .tf-label { font-family: var(--font-display); font-weight: 700; font-size: 22px; }
+  .tf-card .arrow { font-family: var(--font-mono); font-size: 34px; line-height: 1; }
+  .scorebar { position: relative; height: 6px; background: var(--panel-2); border-radius: 999px; overflow: hidden; }
+  .scorebar::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--muted); }
+  .scorebar > span { position: absolute; top: 0; bottom: 0; transition: left .3s, width .3s; }
+  .tf-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 10px; font-size: 12px; }
+  .tf-meta span:nth-child(odd) { color: var(--muted); }
+
+  /* Tables */
+  .table-wrap { overflow-x: auto; }
+  table.data { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.data th { text-align: left; font-weight: 600; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  table.data td { padding: 7px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  table.data tr:last-child td { border-bottom: 0; }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 11px; font-weight: 600; font-family: var(--font-body); }
+  .tag-buy { background: color-mix(in srgb, var(--bull) 18%, transparent); color: var(--bull); }
+  .tag-sell { background: color-mix(in srgb, var(--bear) 18%, transparent); color: var(--bear); }
+  .tag-trail { background: color-mix(in srgb, var(--gold) 20%, transparent); color: var(--gold); }
+  .tag-muted { background: var(--panel-2); color: var(--muted); }
+  .empty { padding: 20px; text-align: center; color: var(--muted); font-size: 13px; }
+
+  .chart-box { position: relative; height: 290px; }
+  @media (max-width: 640px) { .chart-box { height: 230px; } }
+
+  /* Toasts */
+  #toasts { position: fixed; right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    display: flex; flex-direction: column; gap: 8px; z-index: 50; max-width: min(360px, calc(100vw - 32px)); }
+  .toast { background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--gold); border-radius: 8px; padding: 10px 12px; font-size: 13px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.25); animation: toast-in .2s ease-out; }
+  .toast.good { border-left-color: var(--bull); } .toast.bad { border-left-color: var(--bear); }
+  @keyframes toast-in { from { transform: translateY(6px); opacity: .4; } to { transform: none; opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+  details > summary { cursor: pointer; }
+  code { font-family: var(--font-mono); font-size: 12px; background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ============ HEADER ============ -->
+  <header class="flex flex-wrap items-center justify-between gap-4">
+    <div class="flex items-center gap-3 min-w-0">
+      <div class="brand-mark" aria-hidden="true">Au</div>
+      <div class="min-w-0">
+        <h1 class="display text-xl sm:text-2xl font-bold leading-tight m-0">XAU Auto Scalper</h1>
+        <div class="muted text-xs">AI Scalping &amp; Compounding Assistant · XAU/USD · Cent Account</div>
+      </div>
+    </div>
+    <div class="flex flex-wrap items-center gap-4">
+      <div class="text-right">
+        <div class="flex items-baseline gap-2 justify-end">
+          <span id="pxMid" class="num text-2xl font-semibold">—</span>
+          <span id="pxChg" class="num text-sm muted">—</span>
+        </div>
+        <div class="num text-xs muted">Bid <span id="pxBid">—</span> · Ask <span id="pxAsk">—</span> · Spread <span id="pxSpread">—</span></div>
+      </div>
+      <span id="feedPill" class="pill" data-state="off"><span class="dot"></span><span id="feedPillText">ยังไม่เชื่อมต่อ</span></span>
+      <label class="switch" for="autoToggle">
+        <input type="checkbox" id="autoToggle">
+        <span class="track"></span>
+        <span class="font-semibold">Auto Bot</span>
+      </label>
+    </div>
+  </header>
+
+  <!-- ============ ACCOUNT STRIP ============ -->
+  <section class="panel !p-0 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5" aria-label="สรุปพอร์ต">
+    <div class="stat">
+      <span class="eyebrow">Balance</span>
+      <span id="stBalance" class="val">—</span>
+      <span id="stBalanceThb" class="sub">—</span>
+    </div>
+    <div class="stat">
+      <span class="eyebrow">Equity</span>
+      <span id="stEquity" class="val">—</span>
+      <span id="stMargin" class="sub">—</span>
+    </div>
+    <div class="stat">
+      <span class="eyebrow">Floating P/L</span>
+      <span id="stFloat" class="val">—</span>
+      <span id="stOpenCount" class="sub">—</span>
+    </div>
+    <div class="stat">
+      <span class="eyebrow">วันนี้ เทียบเป้า <span id="stTargetPct">10</span>%</span>
+      <span id="stToday" class="val">—</span>
+      <div class="progress" aria-hidden="true"><span id="stTodayBar"></span></div>
+      <span id="stTodaySub" class="sub">—</span>
+    </div>
+    <div class="stat">
+      <span class="eyebrow">Performance</span>
+      <span id="stWin" class="val">—</span>
+      <span id="stPerf" class="sub">—</span>
+    </div>
+  </section>
+
+  <!-- ============ CHART + SIGNAL ============ -->
+  <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <div class="panel lg:col-span-2">
+      <div class="panel-head">
+        <div>
+          <h2>XAU/USD</h2>
+          <div class="muted text-xs">เส้นราคาปิด + EMA 9 / EMA 21 · เส้นประคือ Entry / SL / TP ของออเดอร์ที่เปิดอยู่</div>
+        </div>
+        <div class="seg" role="group" aria-label="เลือก Timeframe ของกราฟ" id="chartTfSeg">
+          <button type="button" data-tf="1s" aria-pressed="true">1S</button>
+          <button type="button" data-tf="1m" aria-pressed="false">1M</button>
+          <button type="button" data-tf="1h" aria-pressed="false">1H</button>
+          <button type="button" data-tf="1d" aria-pressed="false">1D</button>
+        </div>
+      </div>
+      <div class="chart-box"><canvas id="priceChart" aria-label="กราฟราคาทองคำ"></canvas></div>
+    </div>
+
+    <div class="panel flex flex-col gap-4">
+      <div class="panel-head !mb-0">
+        <h2>AI Signal</h2>
+        <span id="sigAligned" class="pill">— / 4 TF</span>
+      </div>
+      <div class="flex items-center gap-4">
+        <div id="sigArrow" class="big-arrow flat" aria-hidden="true">◆</div>
+        <div class="min-w-0">
+          <div id="sigAction" class="display text-3xl font-bold">WAIT</div>
+          <div class="muted text-xs">Composite Sentiment <span id="sigScore" class="num">0</span> / ±100</div>
+        </div>
+      </div>
+      <div>
+        <div class="gauge" aria-hidden="true">
+          <span class="thr" id="thrLo"></span><span class="thr" id="thrHi"></span>
+          <span class="marker" id="sigMarker" style="left:50%"></span>
+        </div>
+        <div class="flex justify-between text-xs muted num mt-1"><span>-100 SELL</span><span>0</span><span>BUY +100</span></div>
+      </div>
+      <dl class="kv">
+        <dt>SL (ATR 1M × <span id="pvAtrMult">1.5</span>)</dt><dd id="pvSl">—</dd>
+        <dt>TP (R:R <span id="pvRr">1.5</span>)</dt><dd id="pvTp">—</dd>
+        <dt>Lot ที่คำนวณได้</dt><dd id="pvLot">—</dd>
+        <dt>ความเสี่ยงต่อไม้</dt><dd id="pvRisk">—</dd>
+      </dl>
+      <div class="flex gap-2">
+        <button type="button" class="btn btn-buy flex-1" id="btnBuy">▲ BUY</button>
+        <button type="button" class="btn btn-sell flex-1" id="btnSell">▼ SELL</button>
+      </div>
+      <div id="botStatus" class="text-xs muted" role="status">บอทปิดอยู่</div>
+    </div>
+  </section>
+
+  <!-- ============ MTF MATRIX ============ -->
+  <section class="panel">
+    <div class="panel-head">
+      <div>
+        <h2>Multi-Timeframe Matrix</h2>
+        <div class="muted text-xs">คะแนน = EMA trend 35 + ตำแหน่งราคา 20 + RSI 20 + MACD 15 + ความชัน 10 · ≥ +20 Bullish · ≤ −20 Bearish · ที่เหลือ Consolidation</div>
+      </div>
+      <span class="muted text-xs">น้ำหนัก 1D 15% · 1H 25% · 1M 35% · 1S 25%</span>
+    </div>
+    <div id="matrix" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3"></div>
+  </section>
+
+  <!-- ============ RISK + POSITIONS ============ -->
+  <section class="grid grid-cols-1 xl:grid-cols-5 gap-4">
+    <div class="panel xl:col-span-2">
+      <div class="panel-head">
+        <h2>Risk Management</h2>
+        <span class="muted text-xs">บันทึกอัตโนมัติ</span>
+      </div>
+      <div class="flex flex-col gap-4">
+        <div>
+          <div class="eyebrow mb-2">ความเสี่ยงต่อไม้ (% ของพอร์ต)</div>
+          <div class="flex flex-wrap items-center gap-3">
+            <div class="seg" role="group" aria-label="ความเสี่ยงต่อไม้" id="riskSeg">
+              <button type="button" data-risk="1">1%</button>
+              <button type="button" data-risk="2">2%</button>
+              <button type="button" data-risk="3">3%</button>
+              <button type="button" data-risk="5">5%</button>
+            </div>
+            <label class="field w-24" for="set-riskPct">กำหนดเอง
+              <input type="number" id="set-riskPct" data-setting="riskPct" min="0.1" max="20" step="0.1">
+            </label>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <label class="field" for="set-slAtrMult">SL = ATR(1M) ×<input type="number" id="set-slAtrMult" data-setting="slAtrMult" min="0.5" max="10" step="0.1"></label>
+          <label class="field" for="set-minSl">SL ขั้นต่ำ ($)<input type="number" id="set-minSl" data-setting="minSl" min="0.1" max="50" step="0.1"></label>
+          <label class="field" for="set-rr">Risk : Reward<input type="number" id="set-rr" data-setting="rr" min="0.5" max="10" step="0.1"></label>
+        </div>
+
+        <div class="flex flex-col gap-3 border-t pt-4" style="border-color:var(--line)">
+          <div class="eyebrow">Trailing Stop</div>
+          <label class="switch" for="set-trailEnabled"><input type="checkbox" id="set-trailEnabled" data-setting="trailEnabled"><span class="track"></span>เปิด Trailing Stop อัตโนมัติ</label>
+          <div class="grid grid-cols-2 gap-3">
+            <label class="field" for="set-trailActivatePct">เริ่มทำงานเมื่อถึง (% ของระยะ TP)<input type="number" id="set-trailActivatePct" data-setting="trailActivatePct" min="10" max="100" step="5"></label>
+            <label class="field" for="set-trailDistPct">ระยะตาม (% ของระยะ SL เดิม)<input type="number" id="set-trailDistPct" data-setting="trailDistPct" min="5" max="150" step="5"></label>
+          </div>
+          <label class="switch" for="set-breakEven"><input type="checkbox" id="set-breakEven" data-setting="breakEven"><span class="track"></span>เลื่อน SL มาจุดคุ้มทุนเมื่อกำไรถึง 1R</label>
+          <label class="switch" for="set-letRun"><input type="checkbox" id="set-letRun" data-setting="letRun"><span class="track"></span>ยกเลิก TP เมื่อ Trailing ทำงาน (ปล่อยกำไรวิ่ง)</label>
+        </div>
+
+        <div class="flex flex-col gap-3 border-t pt-4" style="border-color:var(--line)">
+          <div class="eyebrow">กติกาบอท</div>
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <label class="field" for="set-entryThreshold">เกณฑ์เข้า (|score|)<input type="number" id="set-entryThreshold" data-setting="entryThreshold" min="5" max="95" step="1"></label>
+            <label class="field" for="set-maxPositions">ออเดอร์พร้อมกันสูงสุด<input type="number" id="set-maxPositions" data-setting="maxPositions" min="1" max="10" step="1"></label>
+            <label class="field" for="set-cooldownSec">พักหลังปิดไม้ (วินาที)<input type="number" id="set-cooldownSec" data-setting="cooldownSec" min="0" max="600" step="1"></label>
+            <label class="field" for="set-dailyTargetPct">เป้ากำไรต่อวัน (%)<input type="number" id="set-dailyTargetPct" data-setting="dailyTargetPct" min="1" max="100" step="1"></label>
+            <label class="field" for="set-dailyMaxLossPct">ขาดทุนสูงสุดต่อวัน (%)<input type="number" id="set-dailyMaxLossPct" data-setting="dailyMaxLossPct" min="1" max="100" step="1"></label>
+            <label class="field" for="set-leverage">Leverage 1:<input type="number" id="set-leverage" data-setting="leverage" min="10" max="3000" step="10"></label>
+          </div>
+          <label class="switch" for="set-stopAtTarget"><input type="checkbox" id="set-stopAtTarget" data-setting="stopAtTarget"><span class="track"></span>หยุดบอทเมื่อถึงเป้ากำไรรายวัน</label>
+        </div>
+
+        <div class="flex flex-col gap-3 border-t pt-4" style="border-color:var(--line)">
+          <div class="eyebrow">บัญชี Cent</div>
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <label class="field" for="set-startCapitalThb">ทุนเริ่มต้น (บาท)<input type="number" id="set-startCapitalThb" data-setting="startCapitalThb" min="100" step="100"></label>
+            <label class="field" for="set-thbPerUsd">THB ต่อ 1 USD<input type="number" id="set-thbPerUsd" data-setting="thbPerUsd" min="1" step="0.1"></label>
+            <label class="field" for="set-spread">Spread จำลอง ($)<input type="number" id="set-spread" data-setting="spread" min="0" max="5" step="0.01"></label>
+          </div>
+          <p class="muted text-xs m-0">บัญชี Cent แสดงยอดเป็น USC (1 USD = 100 USC) · 1.00 lot = 100 oz · ราคาขยับ $1 = 100 USC ต่อ 1.00 lot · Lot = (ทุน × %เสี่ยง) ÷ (ระยะ SL × 100) ปัดลงทีละ 0.01 · ทุนเริ่มต้นใหม่มีผลเมื่อกด "เริ่มพอร์ตใหม่"</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel xl:col-span-3 flex flex-col gap-3">
+      <div class="panel-head !mb-0">
+        <div>
+          <h2>Open Positions</h2>
+          <div class="muted text-xs">SL ที่มีป้าย TRAIL คือ Trailing Stop ที่กำลังล็อกกำไร</div>
+        </div>
+        <button type="button" class="btn btn-sm" id="btnCloseAll">ปิดทุกออเดอร์</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data">
+          <thead><tr><th>Side</th><th>Lot</th><th>Entry</th><th>SL</th><th>TP</th><th>ราคาปัจจุบัน</th><th>P/L (USC)</th><th></th></tr></thead>
+          <tbody id="posBody"></tbody>
+        </table>
+      </div>
+      <div id="posEmpty" class="empty">ไม่มีออเดอร์เปิดอยู่ · เปิด Auto Bot หรือกด BUY / SELL</div>
+    </div>
+  </section>
+
+  <!-- ============ GROWTH ============ -->
+  <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <div class="panel lg:col-span-2">
+      <div class="panel-head">
+        <div>
+          <h2>Portfolio Growth</h2>
+          <div class="muted text-xs">Equity จริงเทียบเส้นเป้าหมายทบต้น <span id="growthTargetLbl">10</span>% ต่อวัน</div>
+        </div>
+        <div class="seg" role="group" aria-label="มุมมองกราฟการเติบโต" id="growthSeg">
+          <button type="button" data-mode="time" aria-pressed="true">ตามเวลา</button>
+          <button type="button" data-mode="daily" aria-pressed="false">รายวัน</button>
+        </div>
+      </div>
+      <div class="chart-box"><canvas id="growthChart" aria-label="กราฟการเติบโตของพอร์ต"></canvas></div>
+    </div>
+    <div class="panel flex flex-col gap-3 min-w-0">
+      <h2>สรุปรายวัน</h2>
+      <div class="table-wrap">
+        <table class="data">
+          <thead><tr><th>วันที่</th><th>เปิด</th><th>ปิด</th><th>%</th><th>ไม้</th></tr></thead>
+          <tbody id="dayBody"></tbody>
+        </table>
+      </div>
+      <details>
+        <summary class="text-sm font-semibold">ตารางเป้าหมายทบต้นจากทุนเริ่มต้น</summary>
+        <div class="table-wrap mt-2">
+          <table class="data"><thead><tr><th>วันที่</th><th>USC</th><th>≈ บาท</th></tr></thead><tbody id="projBody"></tbody></table>
+        </div>
+        <p class="muted text-xs mt-2">ทบต้น 10% ต่อวันคือการเติบโตราว 17 เท่าใน 30 วัน ใช้เป็นเส้นวัดผลเท่านั้น ตลาดจริงทำได้ยากมากและต้องใช้ความเสี่ยงสูง</p>
+      </details>
+    </div>
+  </section>
+
+  <!-- ============ JOURNAL ============ -->
+  <section class="panel">
+    <div class="panel-head">
+      <div>
+        <h2>Compound Growth Journal</h2>
+        <div class="muted text-xs">บันทึกทุกไม้ลง LocalStorage ของเบราว์เซอร์นี้ · ปิดหน้าเว็บแล้วเปิดใหม่ข้อมูลยังอยู่</div>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <button type="button" class="btn btn-sm" id="btnExport">Export CSV</button>
+        <button type="button" class="btn btn-sm" id="btnReset">เริ่มพอร์ตใหม่</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="data">
+        <thead><tr><th>ปิดเมื่อ</th><th>Side</th><th>Lot</th><th>Entry</th><th>Exit</th><th>เหตุผล</th><th>ที่มา</th><th>P/L (USC)</th><th>Balance</th></tr></thead>
+        <tbody id="jBody"></tbody>
+      </table>
+    </div>
+    <div id="jEmpty" class="empty">ยังไม่มีประวัติการเทรด</div>
+  </section>
+
+  <!-- ============ LIVE FEED ============ -->
+  <section class="panel">
+    <div class="panel-head">
+      <div>
+        <h2>Live Price Feed</h2>
+        <div class="muted text-xs">ทุกแหล่งราคาใช้อินเทอร์เฟซเดียวกัน (<code>PriceFeed</code>) ส่ง bid/ask เข้า MarketData → Sentiment → Bot</div>
+      </div>
+      <button type="button" class="btn btn-gold" id="btnConnect">เชื่อมต่อ</button>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="flex flex-col gap-3">
+        <label class="field" for="feed-source">แหล่งราคา
+          <select id="feed-source" data-feed="source">
+            <option value="sim">Simulator (ราคาจำลอง)</option>
+            <option value="binance">Binance WebSocket (PAXG/USDT, ทองคำโทเคน 1 oz)</option>
+            <option value="metaapi">MetaApi (MT4/MT5 โบรกเกอร์จริง, REST polling)</option>
+            <option value="custom">Custom WebSocket (JSON)</option>
+          </select>
+        </label>
+        <div data-for="sim" class="grid grid-cols-2 gap-3">
+          <label class="field" for="feed-simStart">ราคาเริ่มต้นจำลอง<input type="number" id="feed-simStart" data-feed="simStart" step="0.01"></label>
+        </div>
+        <div data-for="binance" class="grid grid-cols-2 gap-3" hidden>
+          <label class="field" for="feed-binanceSymbol">Symbol<input type="text" id="feed-binanceSymbol" data-feed="binanceSymbol"></label>
+        </div>
+        <div data-for="metaapi" class="grid grid-cols-2 gap-3" hidden>
+          <label class="field col-span-2" for="feed-metaApiToken">Auth Token (ไม่ถูกบันทึก)<input type="password" id="feed-metaApiToken" autocomplete="off"></label>
+          <label class="field" for="feed-metaApiAccount">Account ID<input type="text" id="feed-metaApiAccount" data-feed="metaApiAccount"></label>
+          <label class="field" for="feed-metaApiRegion">Region<input type="text" id="feed-metaApiRegion" data-feed="metaApiRegion"></label>
+          <label class="field" for="feed-metaApiSymbol">Symbol ของโบรกเกอร์<input type="text" id="feed-metaApiSymbol" data-feed="metaApiSymbol"></label>
+        </div>
+        <div data-for="custom" class="grid grid-cols-2 gap-3" hidden>
+          <label class="field col-span-2" for="feed-wsUrl">WebSocket URL<input type="text" id="feed-wsUrl" data-feed="wsUrl" placeholder="wss://example.com/stream"></label>
+          <label class="field col-span-2" for="feed-wsSubscribe">ข้อความ Subscribe (JSON, ไม่บังคับ)<input type="text" id="feed-wsSubscribe" data-feed="wsSubscribe" placeholder='{"action":"subscribe","symbol":"XAUUSD"}'></label>
+          <label class="field" for="feed-wsBidPath">Path ของ bid<input type="text" id="feed-wsBidPath" data-feed="wsBidPath" placeholder="data.bid"></label>
+          <label class="field" for="feed-wsAskPath">Path ของ ask<input type="text" id="feed-wsAskPath" data-feed="wsAskPath" placeholder="data.ask"></label>
+          <label class="field" for="feed-wsPricePath">Path ของราคา (ถ้าไม่มี bid/ask)<input type="text" id="feed-wsPricePath" data-feed="wsPricePath" placeholder="p"></label>
+        </div>
+        <div id="feedInfo" class="text-xs muted num">—</div>
+      </div>
+      <div class="text-xs muted flex flex-col gap-2">
+        <p class="m-0"><b class="gold">Binance</b> ใช้ราคา PAXG/USDT แทนทองคำ (1 PAXG = ทองคำ 1 ออนซ์) ไม่ต้องใช้ API key ดึงแท่งเทียนย้อนหลัง 1S/1M/1H/1D จาก REST แล้วรับ bid/ask สดจาก <code>@bookTicker</code></p>
+        <p class="m-0"><b class="gold">MetaApi</b> อ่านราคา XAUUSD จากบัญชี MT4/MT5 จริงทุก 1 วินาทีผ่าน REST <code>/symbols/{symbol}/current-price</code> ข้อมูลย้อนหลังจะสร้างจากราคาแรกที่ได้รับ</p>
+        <p class="m-0"><b class="gold">Custom</b> รองรับ WebSocket ใดก็ได้ที่ส่ง JSON โดยระบุ path ของ bid/ask เช่น <code>data.bid</code></p>
+        <p class="m-0">ถ้าเชื่อมต่อไม่สำเร็จ ระบบจะกลับไปใช้ราคาจำลองอัตโนมัติ การส่งคำสั่งซื้อขายจริงควรทำผ่าน backend ของคุณเอง (ดู <code>BrokerAdapter</code> ในโค้ด) อย่าใส่ Token บัญชีจริงไว้ในหน้าเว็บที่คนอื่นเปิดได้</p>
+      </div>
+    </div>
+  </section>
+
+  <footer class="muted text-xs">
+    เครื่องมือนี้เป็นระบบจำลองเพื่อการศึกษา (Paper Trading) ไม่ใช่คำแนะนำการลงทุน การเทรดทองคำด้วย Leverage มีความเสี่ยงสูงและอาจสูญเสียเงินทุนทั้งหมด
+  </footer>
+</div>
+<div id="toasts" aria-live="polite"></div>
+
+<script>
+'use strict';
+
+/* =====================================================================
+ * 1. CONFIG
+ * ===================================================================== */
+const CFG = {
+  symbol: 'XAUUSD',
+  contractSize: 100,          // ounces per 1.00 lot; P/L per $1 move per 1.00 lot = 100 (USC on a cent account)
+  lotStep: 0.01, minLot: 0.01, maxLot: 50,
+  storageKey: 'xauAutoScalper.v1',
+  maxTrades: 2000, maxCurve: 3000,
+  chartBars: 120,
+  marginUseCap: 0.9,          // never use more than 90% of equity as margin
+};
+
+const TF = [
+  { key: '1d', label: '1D', name: 'รายวัน',     ms: 86400000, weight: 0.15, seedVol: 38,   max: 300 },
+  { key: '1h', label: '1H', name: 'รายชั่วโมง', ms: 3600000,  weight: 0.25, seedVol: 7,    max: 300 },
+  { key: '1m', label: '1M', name: 'รายนาที',    ms: 60000,    weight: 0.35, seedVol: 1.6,  max: 300 },
+  { key: '1s', label: '1S', name: 'รายวินาที',  ms: 1000,     weight: 0.25, seedVol: 0.22, max: 300 },
+];
+const TF_BY_KEY = Object.fromEntries(TF.map(t => [t.key, t]));
+
+const DEFAULT_SETTINGS = {
+  riskPct: 2, rr: 1.5, slAtrMult: 1.5, minSl: 0.6,
+  trailEnabled: true, trailActivatePct: 50, trailDistPct: 40, breakEven: true, letRun: false,
+  entryThreshold: 35, maxPositions: 1, cooldownSec: 5,
+  dailyTargetPct: 10, stopAtTarget: false, dailyMaxLossPct: 15,
+  startCapitalThb: 500, thbPerUsd: 33, leverage: 1000, spread: 0.20,
+  autoTrade: false,
+  feed: {
+    source: 'sim', simStart: 4000,
+    binanceSymbol: 'PAXGUSDT',
+    metaApiAccount: '', metaApiRegion: 'new-york', metaApiSymbol: 'XAUUSD',
+    wsUrl: '', wsSubscribe: '', wsBidPath: '', wsAskPath: '', wsPricePath: 'p',
+  },
+};
+
+/* =====================================================================
+ * 2. UTILS
+ * ===================================================================== */
+const $ = (id) => document.getElementById(id);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const floorStep = (v, step) => Math.floor(v / step + 1e-9) * step;
+const fmt = (v, d = 2) => Number(v).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+const signed = (v, d = 2) => (v > 0 ? '+' : v < 0 ? '−' : '') + fmt(Math.abs(v), d);
+const cls = (v) => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat');
+const getPath = (obj, path) => (path ? path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj) : undefined);
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const randn = () => { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+const dayKey = (t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const timeStr = (t) => new Date(t).toLocaleTimeString('th-TH', { hour12: false });
+const dateTimeStr = (t) => new Date(t).toLocaleString('th-TH', { hour12: false, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+function toast(msg, kind = '') {
+  const el = document.createElement('div');
+  el.className = `toast ${kind}`;
+  el.textContent = msg;
+  $('toasts').appendChild(el);
+  setTimeout(() => el.remove(), 4500);
+}
+
+/* =====================================================================
+ * 3. INDICATORS
+ * ===================================================================== */
+const Ind = {
+  emaSeries(values, period) {
+    const k = 2 / (period + 1), out = new Array(values.length);
+    let e = values[0];
+    for (let i = 0; i < values.length; i++) { e = i === 0 ? values[0] : values[i] * k + e * (1 - k); out[i] = e; }
+    return out;
+  },
+  rsi(values, period = 14) {
+    if (values.length < period + 1) return 50;
+    let gain = 0, loss = 0;
+    for (let i = 1; i <= period; i++) { const d = values[i] - values[i - 1]; if (d > 0) gain += d; else loss -= d; }
+    gain /= period; loss /= period;
+    for (let i = period + 1; i < values.length; i++) {
+      const d = values[i] - values[i - 1];
+      gain = (gain * (period - 1) + Math.max(d, 0)) / period;
+      loss = (loss * (period - 1) + Math.max(-d, 0)) / period;
+    }
+    if (loss === 0) return gain === 0 ? 50 : 100;
+    return 100 - 100 / (1 + gain / loss);
+  },
+  macdHist(values) {
+    const fast = Ind.emaSeries(values, 12), slow = Ind.emaSeries(values, 26);
+    const macd = fast.map((f, i) => f - slow[i]);
+    const signal = Ind.emaSeries(macd, 9);
+    return macd[macd.length - 1] - signal[signal.length - 1];
+  },
+  atr(candles, period = 14) {
+    if (candles.length < 2) return 0;
+    const tr = [];
+    for (let i = 1; i < candles.length; i++) {
+      const c = candles[i], p = candles[i - 1];
+      tr.push(Math.max(c.h - c.l, Math.abs(c.h - p.c), Math.abs(c.l - p.c)));
+    }
+    const n = Math.min(period, tr.length);
+    let a = tr.slice(0, n).reduce((s, x) => s + x, 0) / n;
+    for (let i = n; i < tr.length; i++) a = (a * (period - 1) + tr[i]) / period;
+    return a;
+  },
+};
+
+/* =====================================================================
+ * 4. MARKET DATA — aggregates ticks into 1S / 1M / 1H / 1D candles
+ * ===================================================================== */
+class MarketData {
+  constructor() { this.reset(); }
+  reset() {
+    this.series = Object.fromEntries(TF.map(t => [t.key, []]));
+    this.bid = 0; this.ask = 0; this.mid = 0; this.lastTs = 0; this.ticks = 0;
+    this.synthetic = false; this.ready = false;
+  }
+  /** history: { '1d': [{t,o,h,l,c}], ... } from a feed that supports it */
+  seed(history) {
+    for (const tf of TF) if (history[tf.key]) this.series[tf.key] = history[tf.key].slice(-tf.max);
+    this.ready = true;
+  }
+  /** Builds a random-walk history ending at `price`, used when a feed has no history endpoint. */
+  seedSynthetic(price, now = Date.now()) {
+    for (const tf of TF) {
+      const n = tf.max, closes = [price];
+      const drift = randn() * tf.seedVol * 0.08;
+      let p = price;
+      for (let i = 1; i < n; i++) { p = p - drift - randn() * tf.seedVol; closes.push(p); }
+      closes.reverse();
+      const start = Math.floor(now / tf.ms) * tf.ms - (n - 1) * tf.ms;
+      this.series[tf.key] = closes.map((c, i) => {
+        const o = i ? closes[i - 1] : c + randn() * tf.seedVol * 0.5;
+        const wick = Math.abs(randn()) * tf.seedVol * 0.5;
+        return { t: start + i * tf.ms, o, h: Math.max(o, c) + wick, l: Math.min(o, c) - wick * Math.random(), c };
+      });
+    }
+    this.synthetic = true; this.ready = true;
+  }
+  /** Returns true when a new 1-second candle opened (used as the bot's evaluation clock). */
+  onTick({ bid, ask, ts }) {
+    const mid = (bid + ask) / 2;
+    Object.assign(this, { bid, ask, mid, lastTs: ts }); this.ticks++;
+    let newSecond = false;
+    for (const tf of TF) {
+      const arr = this.series[tf.key];
+      const bucket = Math.floor(ts / tf.ms) * tf.ms;
+      const last = arr[arr.length - 1];
+      if (last && last.t === bucket) {
+        last.h = Math.max(last.h, mid); last.l = Math.min(last.l, mid); last.c = mid;
+      } else if (!last || bucket > last.t) {
+        const o = last ? last.c : mid;
+        arr.push({ t: bucket, o, h: Math.max(o, mid), l: Math.min(o, mid), c: mid });
+        if (arr.length > tf.max) arr.shift();
+        if (tf.key === '1s') newSecond = true;
+      }
+    }
+    return newSecond;
+  }
+  dayOpen() { const d = this.series['1d']; return d.length ? d[d.length - 1].o : 0; }
+}
+
+/* =====================================================================
+ * 5. PRICE FEEDS — every source implements the same small interface:
+ *    start(), stop(), loadHistory() → history|null, emits 'tick' {bid,ask,ts} and 'status' {state,msg}
+ * ===================================================================== */
+class PriceFeed {
+  constructor(name) { this.name = name; this.handlers = { tick: [], status: [] }; this.stopped = true; this.failures = 0; }
+  on(ev, fn) { this.handlers[ev].push(fn); return this; }
+  emit(ev, payload) { this.handlers[ev].forEach(fn => fn(payload)); }
+  status(state, msg) { this.state = state; this.emit('status', { state, msg, feed: this.name }); }
+  tick(bid, ask, ts = Date.now()) { if (bid > 0 && ask > 0 && ask >= bid) this.emit('tick', { bid, ask, ts }); }
+  async loadHistory() { return null; }
+  start() {}
+  stop() { this.stopped = true; }
+  /** Exponential backoff reconnect: 1s, 2s, 4s … 30s. Gives up after `maxFailures`. */
+  retry(fn, maxFailures = 6) {
+    if (this.stopped) return;
+    this.failures++;
+    if (this.failures > maxFailures) { this.status('error', 'เชื่อมต่อไม่สำเร็จหลายครั้ง'); this.emit('status', { state: 'fatal', feed: this.name }); return; }
+    const wait = Math.min(30000, 1000 * 2 ** (this.failures - 1));
+    this.status('connecting', `เชื่อมต่อใหม่ใน ${wait / 1000}s (ครั้งที่ ${this.failures})`);
+    this.retryTimer = setTimeout(fn, wait);
+  }
+}
+
+class SimulatedFeed extends PriceFeed {
+  constructor({ startPrice, getSpread }) {
+    super('Simulator');
+    this.price = startPrice; this.getSpread = getSpread;
+    this.drift = 0; this.vol = 0.12; this.regimeLeft = 0;
+  }
+  start() {
+    this.stopped = false;
+    this.status('live', 'ราคาจำลอง (random walk + เปลี่ยนเทรนด์เป็นช่วง)');
+    this.timer = setInterval(() => this.step(), 250);
+  }
+  step() {
+    if (this.regimeLeft-- <= 0) {           // new market regime: trend up, trend down or sideways
+      this.drift = randn() * 0.008;
+      this.vol = 0.08 + Math.random() * 0.1;
+      this.regimeLeft = 120 + Math.random() * 480;
+    }
+    this.price += this.drift + randn() * this.vol;
+    if (Math.random() < 0.004) this.price += randn() * this.vol * 8;   // occasional news spike
+    const sp = this.getSpread();
+    this.tick(this.price - sp / 2, this.price + sp / 2);
+  }
+  stop() { super.stop(); clearInterval(this.timer); }
+}
+
+class BinanceFeed extends PriceFeed {
+  constructor({ symbol }) { super('Binance'); this.symbol = symbol.toUpperCase(); }
+  async loadHistory() {
+    const out = {};
+    await Promise.all(TF.map(async tf => {
+      const url = `https://api.binance.com/api/v3/klines?symbol=${this.symbol}&interval=${tf.key}&limit=${tf.max}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`klines ${tf.label}: HTTP ${res.status}`);
+      out[tf.key] = (await res.json()).map(k => ({ t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4] }));
+    }));
+    return out;
+  }
+  start() { this.stopped = false; this.open(); }
+  open() {
+    this.status('connecting', `กำลังเชื่อมต่อ ${this.symbol}`);
+    const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${this.symbol.toLowerCase()}@bookTicker`);
+    this.ws = ws;
+    ws.onopen = () => { this.failures = 0; this.status('live', `Binance ${this.symbol} @bookTicker`); };
+    ws.onmessage = (e) => { const d = JSON.parse(e.data); this.tick(+d.b, +d.a); };
+    ws.onerror = () => ws.close();
+    ws.onclose = () => this.retry(() => this.open());
+  }
+  stop() { super.stop(); clearTimeout(this.retryTimer); if (this.ws) { this.ws.onclose = null; this.ws.close(); } }
+}
+
+class MetaApiFeed extends PriceFeed {
+  constructor({ token, accountId, region, symbol }) {
+    super('MetaApi'); Object.assign(this, { token, accountId, region: region || 'new-york', symbol: symbol || 'XAUUSD' });
+  }
+  url() {
+    return `https://mt-client-api-v1.${this.region}.agiliumtrade.ai/users/current/accounts/${encodeURIComponent(this.accountId)}` +
+      `/symbols/${encodeURIComponent(this.symbol)}/current-price`;
+  }
+  start() {
+    if (!this.token || !this.accountId) { this.status('error', 'กรอก Auth Token และ Account ID ก่อน'); this.emit('status', { state: 'fatal', feed: this.name }); return; }
+    this.stopped = false; this.status('connecting', 'กำลังอ่านราคาจาก MetaApi'); this.poll();
+  }
+  async poll() {
+    if (this.stopped) return;
+    try {
+      const res = await fetch(this.url(), { headers: { 'auth-token': this.token } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const d = await res.json();
+      this.tick(+d.bid, +d.ask);
+      if (this.state !== 'live') this.status('live', `MetaApi ${this.symbol}`);
+      this.failures = 0;
+      this.timer = setTimeout(() => this.poll(), 1000);
+    } catch (err) {
+      this.retry(() => this.poll());
+    }
+  }
+  stop() { super.stop(); clearTimeout(this.timer); clearTimeout(this.retryTimer); }
+}
+
+class CustomWsFeed extends PriceFeed {
+  constructor({ url, subscribe, bidPath, askPath, pricePath, getSpread }) {
+    super('Custom WS'); Object.assign(this, { url, subscribe, bidPath, askPath, pricePath, getSpread });
+  }
+  start() {
+    if (!/^wss?:\/\//.test(this.url || '')) { this.status('error', 'ใส่ WebSocket URL ที่ขึ้นต้นด้วย ws:// หรือ wss://'); this.emit('status', { state: 'fatal', feed: this.name }); return; }
+    this.stopped = false; this.open();
+  }
+  open() {
+    this.status('connecting', `กำลังเชื่อมต่อ ${this.url}`);
+    const ws = new WebSocket(this.url);
+    this.ws = ws;
+    ws.onopen = () => { this.failures = 0; if (this.subscribe) ws.send(this.subscribe); this.status('live', 'Custom WebSocket'); };
+    ws.onmessage = (e) => {
+      let d; try { d = JSON.parse(e.data); } catch { return; }
+      const bid = +getPath(d, this.bidPath), ask = +getPath(d, this.askPath);
+      if (bid > 0 && ask > 0) return this.tick(bid, ask);
+      const p = +getPath(d, this.pricePath), sp = this.getSpread();
+      if (p > 0) this.tick(p - sp / 2, p + sp / 2);
+    };
+    ws.onerror = () => ws.close();
+    ws.onclose = () => this.retry(() => this.open());
+  }
+  stop() { super.stop(); clearTimeout(this.retryTimer); if (this.ws) { this.ws.onclose = null; this.ws.close(); } }
+}
+
+/* =====================================================================
+ * 6. SENTIMENT ENGINE — score each timeframe −100…+100, then combine
+ * ===================================================================== */
+const Sentiment = {
+  analyze(candles) {
+    if (candles.length < 30) return { score: 0, state: 'CONSOLIDATION', rsi: 50, atr: 0, ema9: 0, ema21: 0, macd: 0, ready: false };
+    const closes = candles.map(c => c.c);
+    const e9 = Ind.emaSeries(closes, 9), e21 = Ind.emaSeries(closes, 21);
+    const n = closes.length - 1, price = closes[n];
+    const atr = Ind.atr(candles.slice(-60), 14) || 1e-6;
+    const rsi = Ind.rsi(closes.slice(-100), 14);
+    const macd = Ind.macdHist(closes.slice(-120));
+    const parts = {
+      trend: clamp((e9[n] - e21[n]) / atr, -1.5, 1.5) / 1.5 * 35,
+      position: clamp((price - e21[n]) / atr, -2, 2) / 2 * 20,
+      momentum: clamp((rsi - 50) / 20, -1, 1) * 20,
+      macd: clamp(macd / (atr * 0.3), -1, 1) * 15,
+      slope: clamp((e9[n] - e9[n - 3]) / atr, -1, 1) * 10,
+    };
+    const score = clamp(Object.values(parts).reduce((s, x) => s + x, 0), -100, 100);
+    const state = score >= 20 ? 'BULLISH' : score <= -20 ? 'BEARISH' : 'CONSOLIDATION';
+    return { score, state, rsi, atr, ema9: e9[n], ema21: e21[n], macd, ready: true };
+  },
+  matrix(md) { return Object.fromEntries(TF.map(tf => [tf.key, Sentiment.analyze(md.series[tf.key])])); },
+  /** BUY/SELL needs the weighted score past the threshold AND the two fast frames agreeing. */
+  composite(m, threshold) {
+    const score = TF.reduce((s, tf) => s + m[tf.key].score * tf.weight, 0);
+    const fast = m['1m'].score, tick = m['1s'].score;
+    let action = 'WAIT';
+    if (score >= threshold && fast > 0 && tick > 0) action = 'BUY';
+    else if (score <= -threshold && fast < 0 && tick < 0) action = 'SELL';
+    const aligned = TF.filter(tf => Math.sign(m[tf.key].score) === Math.sign(score) && m[tf.key].state !== 'CONSOLIDATION').length;
+    return { score, action, aligned };
+  },
+};
+
+/* =====================================================================
+ * 7. RISK MANAGER — SL distance, lot sizing, margin
+ * ===================================================================== */
+const Risk = {
+  slDistance(atr1m, s) { return Math.max(s.minSl, atr1m * s.slAtrMult); },
+  /** lot = (balance × risk%) ÷ (SL distance × contract size), rounded down to the lot step */
+  lotSize(balance, slDist, s) {
+    const riskAmt = balance * s.riskPct / 100;
+    const raw = riskAmt / (slDist * CFG.contractSize);
+    const lot = +clamp(floorStep(raw, CFG.lotStep), CFG.minLot, CFG.maxLot).toFixed(2);
+    return { lot, raw, riskAmt, actualRisk: lot * slDist * CFG.contractSize, belowMin: raw < CFG.minLot };
+  },
+  margin(lot, price, s) { return lot * CFG.contractSize * price / s.leverage; },
+};
+
+/* =====================================================================
+ * 8. BROKER — paper execution. A live broker would implement the same
+ *    methods (open / close) by calling YOUR backend, which holds the API
+ *    token and places the order (e.g. MetaApi createMarketBuyOrder).
+ *
+ *    interface BrokerAdapter {
+ *      open({ side, lot, sl, tp }) → Promise<{ id, entry }>
+ *      modify(id, { sl, tp })      → Promise<void>      // used by trailing stop
+ *      close(id)                   → Promise<{ exit }>
+ *    }
+ * ===================================================================== */
+class PaperBroker {
+  constructor(app) { this.app = app; }
+  get s() { return this.app.state.settings; }
+  get acct() { return this.app.state.account; }
+  get positions() { return this.app.state.positions; }
+
+  pnl(pos, bid, ask) {
+    const dir = pos.side === 'BUY' ? 1 : -1, px = pos.side === 'BUY' ? bid : ask;
+    return (px - pos.entry) * dir * pos.lot * CFG.contractSize;
+  }
+  floating(bid, ask) { if (!bid || !ask) return 0; return this.positions.reduce((s, p) => s + this.pnl(p, bid, ask), 0); }
+  usedMargin(price) { return this.positions.reduce((s, p) => s + Risk.margin(p.lot, price, this.s), 0); }
+
+  open(side, { slDist, lot, source, score }) {
+    const { bid, ask } = this.app.md;
+    const dir = side === 'BUY' ? 1 : -1, entry = side === 'BUY' ? ask : bid;
+    const pos = {
+      id: uid(), side, lot, entry, source, score,
+      sl: entry - dir * slDist, tp: entry + dir * slDist * this.s.rr,
+      sl0: entry - dir * slDist, tp0: entry + dir * slDist * this.s.rr,
+      initSlDist: slDist, openTs: Date.now(), trailActive: false, beDone: false, peak: 0,
+    };
+    this.positions.push(pos);
+    return pos;
+  }
+
+  /** Runs on every tick: break-even, trailing stop, then SL / TP exits. */
+  update(bid, ask) {
+    const s = this.s, closed = [];
+    for (const pos of [...this.positions]) {
+      const dir = pos.side === 'BUY' ? 1 : -1, px = pos.side === 'BUY' ? bid : ask;
+      const fav = (px - pos.entry) * dir;                       // favourable move in $
+      pos.peak = Math.max(pos.peak, fav);
+      const tpDist = Math.abs(pos.tp0 - pos.entry);
+
+      if (s.breakEven && !pos.beDone && fav >= pos.initSlDist) {
+        const be = pos.entry + dir * 0.05;
+        if ((be - pos.sl) * dir > 0) pos.sl = be;
+        pos.beDone = true;
+      }
+      if (s.trailEnabled && !pos.trailActive && fav >= tpDist * s.trailActivatePct / 100) {
+        pos.trailActive = true;
+        if (s.letRun) pos.tp = null;
+        this.app.onTrailStart(pos);
+      }
+      if (pos.trailActive) {
+        const candidate = px - dir * pos.initSlDist * s.trailDistPct / 100;
+        if ((candidate - pos.sl) * dir > 0) pos.sl = candidate;   // stop only ever moves toward profit
+      }
+
+      if ((px - pos.sl) * dir <= 0) {
+        const reason = pos.trailActive ? 'TRAIL' : pos.beDone && Math.abs(pos.sl - pos.entry) < 0.1 ? 'BE' : 'SL';
+        closed.push(this.close(pos, px, reason));
+      } else if (pos.tp != null && (px - pos.tp) * dir >= 0) {
+        closed.push(this.close(pos, px, 'TP'));
+      }
+    }
+    return closed;
+  }
+
+  close(pos, exit, reason) {
+    const idx = this.positions.indexOf(pos);
+    if (idx < 0) return null;
+    this.positions.splice(idx, 1);
+    const dir = pos.side === 'BUY' ? 1 : -1;
+    const pnl = (exit - pos.entry) * dir * pos.lot * CFG.contractSize;
+    const before = this.acct.balance;
+    this.acct.balance = before + pnl;
+    const trade = {
+      id: pos.id, side: pos.side, lot: pos.lot, entry: pos.entry, exit, sl0: pos.sl0, tp0: pos.tp0,
+      openTs: pos.openTs, closeTs: Date.now(), pnl, reason, source: pos.source, score: pos.score,
+      balanceBefore: before, balanceAfter: this.acct.balance,
+    };
+    this.app.recordTrade(trade);
+    return trade;
+  }
+}
+
+/* =====================================================================
+ * 9. STORE — LocalStorage persistence (wrapped: storage can be blocked)
+ * ===================================================================== */
+const Store = {
+  load() { try { const raw = localStorage.getItem(CFG.storageKey); return raw ? JSON.parse(raw) : null; } catch { return null; } },
+  save(state) { try { localStorage.setItem(CFG.storageKey, JSON.stringify(state)); return true; } catch { return false; } },
+  clear() { try { localStorage.removeItem(CFG.storageKey); } catch { /* storage unavailable */ } },
+};
+
+function freshState(settings = structuredClone(DEFAULT_SETTINGS)) {
+  const startBalance = settings.startCapitalThb / settings.thbPerUsd * 100;   // THB → USC
+  const now = Date.now();
+  return {
+    v: 1, settings,
+    account: { balance: startBalance, startBalance, startTs: now, days: {} },
+    trades: [], positions: [], curve: [{ t: now, b: startBalance }],
+    lastPrice: settings.feed.simStart,
+  };
+}
+
+function loadState() {
+  const saved = Store.load();
+  if (!saved || saved.v !== 1) return freshState();
+  saved.settings = { ...structuredClone(DEFAULT_SETTINGS), ...saved.settings, feed: { ...DEFAULT_SETTINGS.feed, ...(saved.settings || {}).feed } };
+  return saved;
+}
+
+/* =====================================================================
+ * 10. APP
+ * ===================================================================== */
+const App = {
+  state: null, md: new MarketData(), broker: null, feed: null,
+  matrix: null, signal: { score: 0, action: 'WAIT', aligned: 0 },
+  chartTf: '1s', growthMode: 'time', lastCloseTs: 0, renderQueued: false, saveTimer: null,
+  tickCount: 0, tickWindowStart: Date.now(), tps: 0,
+
+  init() {
+    this.state = loadState();
+    this.broker = new PaperBroker(this);
+    this.ensureDay();
+    UI.bindControls();
+    UI.buildMatrix();
+    Charts.init();
+    UI.syncSettings();
+    this.connectFeed(this.state.settings.feed.source, { silent: true });
+    setInterval(() => this.housekeeping(), 1000);
+    window.addEventListener('beforeunload', () => this.saveNow());
+  },
+
+  get s() { return this.state.settings; },
+
+  /* ---------- feed lifecycle ---------- */
+  buildFeed(source) {
+    const f = this.s.feed, getSpread = () => this.s.spread;
+    switch (source) {
+      case 'binance': return new BinanceFeed({ symbol: f.binanceSymbol || 'PAXGUSDT' });
+      case 'metaapi': return new MetaApiFeed({ token: $('feed-metaApiToken').value.trim(), accountId: f.metaApiAccount, region: f.metaApiRegion, symbol: f.metaApiSymbol });
+      case 'custom': return new CustomWsFeed({ url: f.wsUrl, subscribe: f.wsSubscribe, bidPath: f.wsBidPath, askPath: f.wsAskPath, pricePath: f.wsPricePath, getSpread });
+      default: return new SimulatedFeed({ startPrice: this.state.lastPrice || f.simStart, getSpread });
+    }
+  },
+
+  async connectFeed(source, { silent = false } = {}) {
+    if (this.feed) {
+      this.feed.stop();
+      if (this.state.positions.length && this.md.mid) {      // prices from different sources don't mix
+        this.closeAll('FEED');
+        toast('ปิดออเดอร์ทั้งหมดก่อนเปลี่ยนแหล่งราคา');
+      }
+    }
+    this.md.reset();
+    const feed = this.buildFeed(source);
+    this.feed = feed;
+    feed.on('status', (st) => this.onFeedStatus(feed, st));
+    feed.on('tick', (t) => { if (this.feed === feed) this.onTick(t); });
+
+    if (source === 'sim') {
+      this.md.seedSynthetic(feed.price);
+    } else {
+      try {
+        UI.setFeedStatus('connecting', 'กำลังโหลดข้อมูลย้อนหลัง');
+        const history = await feed.loadHistory();
+        if (this.feed !== feed) return;
+        if (history) this.md.seed(history);
+      } catch (err) {
+        if (this.feed !== feed) return;
+        return this.fallbackToSim(`โหลดข้อมูลย้อนหลังไม่ได้ (${err.message})`);
+      }
+    }
+    feed.start();
+    if (!silent) toast(`เชื่อมต่อ ${feed.name}`);
+  },
+
+  onFeedStatus(feed, { state, msg }) {
+    if (this.feed !== feed) return;
+    if (state === 'fatal') return this.fallbackToSim(`${feed.name} ใช้งานไม่ได้`);
+    UI.setFeedStatus(state, `${feed.name} · ${msg}`);
+  },
+
+  fallbackToSim(reason) {
+    toast(`${reason} — กลับไปใช้ราคาจำลอง`, 'bad');
+    this.s.feed.source = 'sim';
+    UI.syncFeedForm();
+    this.markDirty();
+    this.connectFeed('sim', { silent: true });
+  },
+
+  /* ---------- tick pipeline ---------- */
+  onTick(t) {
+    if (!this.md.ready) this.md.seedSynthetic((t.bid + t.ask) / 2, t.ts);   // live feeds without history
+    const newSecond = this.md.onTick(t);
+    this.state.lastPrice = this.md.mid;
+    this.tickCount++;
+
+    const closed = this.broker.update(this.md.bid, this.md.ask);
+    closed.forEach(tr => tr && UI.notifyClose(tr));
+    if (this.state.positions.length || closed.length) this.markDirty();
+
+    if (newSecond || !this.matrix) this.evaluate();
+    this.queueRender();
+  },
+
+  /** Once per second: recompute the matrix, the composite signal, and let the bot act. */
+  evaluate() {
+    this.matrix = Sentiment.matrix(this.md);
+    this.signal = Sentiment.composite(this.matrix, this.s.entryThreshold);
+    UI.renderMatrix(this.matrix);
+    UI.renderSignal();
+    Charts.updatePrice();
+    this.runBot();
+  },
+
+  sizing() {
+    const atr = this.matrix ? this.matrix['1m'].atr : 0;
+    const slDist = Risk.slDistance(atr, this.s);
+    return { slDist, ...Risk.lotSize(this.state.account.balance, slDist, this.s) };
+  },
+
+  /** Returns a reason string when trading is blocked, or '' when clear. */
+  tradeBlocker() {
+    const today = this.todayStats();
+    if (!this.md.ready || !this.md.mid) return 'รอข้อมูลราคา';
+    if (this.s.stopAtTarget && today.pct >= this.s.dailyTargetPct) return `ถึงเป้ากำไรวันนี้ ${fmt(today.pct)}% แล้ว · หยุดเทรด`;
+    if (today.pct <= -this.s.dailyMaxLossPct) return `ขาดทุนวันนี้ถึง ${fmt(today.pct)}% · หยุดเทรดเพื่อป้องกันพอร์ต`;
+    if (this.state.account.balance <= 0) return 'Balance หมด';
+    return '';
+  },
+
+  runBot() {
+    const s = this.s;
+    let status;
+    const blocker = this.tradeBlocker();
+    const sinceClose = (Date.now() - this.lastCloseTs) / 1000;
+    if (!s.autoTrade) status = 'บอทปิดอยู่ · เปิดสวิตช์ Auto Bot เพื่อให้เข้าออเดอร์ตามสัญญาณ';
+    else if (blocker) status = blocker;
+    else if (this.state.positions.length >= s.maxPositions) status = `ถือ ${this.state.positions.length}/${s.maxPositions} ออเดอร์ · ดูแล SL / Trailing`;
+    else if (sinceClose < s.cooldownSec) status = `พักหลังปิดไม้ อีก ${Math.ceil(s.cooldownSec - sinceClose)} วินาที`;
+    else if (this.signal.action === 'WAIT') status = `รอสัญญาณ · score ${signed(this.signal.score, 1)} ต้องการ ±${s.entryThreshold} และ 1M/1S ไปทางเดียวกัน`;
+    else {
+      const ok = this.openPosition(this.signal.action, 'BOT');
+      status = ok ? `เข้า ${this.signal.action} ตามสัญญาณ score ${signed(this.signal.score, 1)}` : 'ข้ามสัญญาณ (ดูข้อความแจ้งเตือน)';
+    }
+    UI.setBotStatus(status);
+  },
+
+  openPosition(side, source) {
+    const blocker = this.tradeBlocker();
+    if (blocker) { toast(blocker, 'bad'); return false; }
+    const z = this.sizing();
+    if (z.actualRisk > z.riskAmt * 1.5) {
+      toast(`ทุนน้อยเกินไป: lot ขั้นต่ำ 0.01 เสี่ยง ${fmt(z.actualRisk)} USC มากกว่าที่ตั้งไว้ ${fmt(z.riskAmt)} USC`, 'bad');
+      return false;
+    }
+    const price = side === 'BUY' ? this.md.ask : this.md.bid;
+    const equity = this.state.account.balance + this.broker.floating(this.md.bid, this.md.ask);
+    const free = equity * CFG.marginUseCap - this.broker.usedMargin(price);
+    if (Risk.margin(z.lot, price, this.s) > free) { toast('Margin ไม่พอสำหรับออเดอร์นี้', 'bad'); return false; }
+    const pos = this.broker.open(side, { slDist: z.slDist, lot: z.lot, source, score: this.signal.score });
+    toast(`เปิด ${side} ${pos.lot.toFixed(2)} lot @ ${fmt(pos.entry)} · SL ${fmt(pos.sl)} · TP ${fmt(pos.tp)}`, side === 'BUY' ? 'good' : 'bad');
+    this.markDirty(); this.queueRender();
+    return true;
+  },
+
+  closePosition(id, reason = 'MANUAL') {
+    const pos = this.state.positions.find(p => p.id === id);
+    if (!pos) return;
+    const tr = this.broker.close(pos, pos.side === 'BUY' ? this.md.bid : this.md.ask, reason);
+    if (tr) UI.notifyClose(tr);
+  },
+
+  closeAll(reason = 'MANUAL') { [...this.state.positions].forEach(p => this.closePosition(p.id, reason)); },
+
+  onTrailStart(pos) { toast(`Trailing Stop ทำงาน: ${pos.side} @ ${fmt(pos.entry)} เริ่มล็อกกำไร`); },
+
+  /* ---------- journal ---------- */
+  ensureDay(ts = Date.now()) {
+    const k = dayKey(ts), days = this.state.account.days;
+    if (!days[k]) days[k] = { open: this.state.account.balance, close: this.state.account.balance, trades: 0, wins: 0, pnl: 0 };
+    return days[k];
+  },
+
+  recordTrade(tr) {
+    const day = this.ensureDay(tr.closeTs);
+    day.trades++; day.pnl += tr.pnl; day.close = tr.balanceAfter; if (tr.pnl > 0) day.wins++;
+    this.state.trades.push(tr);
+    if (this.state.trades.length > CFG.maxTrades) this.state.trades.shift();
+    this.state.curve.push({ t: tr.closeTs, b: tr.balanceAfter });
+    if (this.state.curve.length > CFG.maxCurve) this.state.curve.splice(1, 1);   // keep the starting point
+    this.lastCloseTs = tr.closeTs;
+    this.saveNow();
+    UI.renderJournal(); UI.renderDays(); Charts.updateGrowth();
+  },
+
+  todayStats() {
+    const day = this.ensureDay();
+    const equity = this.state.account.balance + this.broker.floating(this.md.bid, this.md.ask);
+    const pnl = equity - day.open;
+    return { day, equity, pnl, pct: day.open > 0 ? pnl / day.open * 100 : 0 };
+  },
+
+  resetPortfolio() {
+    if (this.state.positions.length) this.closeAll('RESET');
+    this.state = freshState(this.state.settings);
+    this.state.lastPrice = this.md.mid || this.s.feed.simStart;
+    this.broker = new PaperBroker(this);
+    this.ensureDay();
+    this.saveNow();
+    UI.renderJournal(); UI.renderDays(); UI.renderProjection(); Charts.updateGrowth(); this.queueRender();
+    toast(`เริ่มพอร์ตใหม่ด้วยทุน ${fmt(this.s.startCapitalThb, 0)} บาท`, 'good');
+  },
+
+  /* ---------- persistence & loop ---------- */
+  markDirty() { if (!this.saveTimer) this.saveTimer = setTimeout(() => this.saveNow(), 1000); },
+  saveNow() { clearTimeout(this.saveTimer); this.saveTimer = null; Store.save(this.state); },
+
+  housekeeping() {
+    const now = Date.now();
+    this.tps = this.tickCount / Math.max(1, (now - this.tickWindowStart) / 1000);
+    this.tickCount = 0; this.tickWindowStart = now;
+    UI.renderFeedInfo();
+    if (this.md.mid && now - this.md.lastTs > 1500) this.evaluate();   // keep cooldown/status fresh on slow feeds
+    if (now % 5000 < 1000) Charts.updateGrowth();
+  },
+
+  queueRender() {
+    if (this.renderQueued) return;
+    this.renderQueued = true;
+    requestAnimationFrame(() => { this.renderQueued = false; UI.renderLive(); });
+  },
+};
+
+/* =====================================================================
+ * 11. UI
+ * ===================================================================== */
+const UI = {
+  toThb(usc) { return usc / 100 * App.s.thbPerUsd; },
+
+  bindControls() {
+    $('autoToggle').addEventListener('change', (e) => {
+      App.s.autoTrade = e.target.checked; App.markDirty(); App.runBot();
+      toast(e.target.checked ? 'Auto Bot ทำงาน' : 'Auto Bot หยุด');
+    });
+    $('btnBuy').addEventListener('click', () => App.openPosition('BUY', 'MANUAL'));
+    $('btnSell').addEventListener('click', () => App.openPosition('SELL', 'MANUAL'));
+    $('btnCloseAll').addEventListener('click', () => App.closeAll());
+    $('posBody').addEventListener('click', (e) => { const b = e.target.closest('[data-close]'); if (b) App.closePosition(b.dataset.close); });
+
+    $('riskSeg').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-risk]'); if (!b) return;
+      App.s.riskPct = +b.dataset.risk; App.markDirty(); this.syncSettings();
+    });
+    document.querySelectorAll('[data-setting]').forEach(el => el.addEventListener('change', () => {
+      const key = el.dataset.setting;
+      if (el.type === 'checkbox') App.s[key] = el.checked;
+      else { const v = parseFloat(el.value); if (Number.isFinite(v)) App.s[key] = clamp(v, +el.min || -Infinity, +el.max || Infinity); }
+      App.markDirty(); this.syncSettings();
+    }));
+
+    $('chartTfSeg').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-tf]'); if (!b) return;
+      App.chartTf = b.dataset.tf; this.pressed('chartTfSeg', b); Charts.updatePrice();
+    });
+    $('growthSeg').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-mode]'); if (!b) return;
+      App.growthMode = b.dataset.mode; this.pressed('growthSeg', b); Charts.updateGrowth();
+    });
+
+    document.querySelectorAll('[data-feed]').forEach(el => el.addEventListener('change', () => {
+      const key = el.dataset.feed;
+      App.s.feed[key] = el.type === 'number' ? parseFloat(el.value) : el.value.trim();
+      App.markDirty();
+      if (key === 'source') this.syncFeedForm();
+    }));
+    $('btnConnect').addEventListener('click', () => {
+      if (App.s.feed.source === 'sim') App.state.lastPrice = App.s.feed.simStart;
+      App.connectFeed(App.s.feed.source);
+    });
+
+    $('btnExport').addEventListener('click', () => this.exportCsv());
+    $('btnReset').addEventListener('click', (e) => this.confirmReset(e.currentTarget));
+  },
+
+  pressed(groupId, btn) { $(groupId).querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === btn))); },
+
+  /** Two-step confirm in the page itself (no blocking dialogs). */
+  confirmReset(btn) {
+    if (btn.dataset.armed) { delete btn.dataset.armed; btn.textContent = 'เริ่มพอร์ตใหม่'; btn.classList.remove('btn-sell'); App.resetPortfolio(); return; }
+    btn.dataset.armed = '1'; btn.textContent = 'กดอีกครั้งเพื่อยืนยัน (ล้างประวัติ)'; btn.classList.add('btn-sell');
+    setTimeout(() => { if (btn.dataset.armed) { delete btn.dataset.armed; btn.textContent = 'เริ่มพอร์ตใหม่'; btn.classList.remove('btn-sell'); } }, 4000);
+  },
+
+  syncSettings() {
+    const s = App.s;
+    document.querySelectorAll('[data-setting]').forEach(el => {
+      if (document.activeElement === el) return;
+      if (el.type === 'checkbox') el.checked = !!s[el.dataset.setting]; else el.value = s[el.dataset.setting];
+    });
+    $('riskSeg').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.risk === s.riskPct)));
+    $('autoToggle').checked = s.autoTrade;
+    $('stTargetPct').textContent = s.dailyTargetPct;
+    $('growthTargetLbl').textContent = s.dailyTargetPct;
+    $('pvAtrMult').textContent = s.slAtrMult; $('pvRr').textContent = s.rr;
+    this.syncFeedForm();
+    this.renderJournal(); this.renderDays(); this.renderProjection(); this.renderSignal();
+    Charts.updateGrowth(); App.queueRender();
+  },
+
+  syncFeedForm() {
+    const f = App.s.feed;
+    document.querySelectorAll('[data-feed]').forEach(el => { if (document.activeElement !== el) el.value = f[el.dataset.feed] ?? ''; });
+    document.querySelectorAll('[data-for]').forEach(el => { el.hidden = el.dataset.for !== f.source; });
+  },
+
+  setFeedStatus(state, text) {
+    $('feedPill').dataset.state = state;
+    $('feedPillText').textContent = state === 'live' ? 'LIVE · ' + (App.feed ? App.feed.name : '') : state === 'connecting' ? 'กำลังเชื่อมต่อ' : state === 'error' ? 'ผิดพลาด' : 'ปิด';
+    this.feedText = text;
+    this.renderFeedInfo();
+  },
+
+  renderFeedInfo() {
+    const md = App.md;
+    $('feedInfo').textContent = `${this.feedText || '—'} · ${fmt(App.tps, 1)} tick/s` +
+      (md.synthetic && App.feed && App.feed.name !== 'Simulator' ? ' · ข้อมูลย้อนหลังเป็นค่าสังเคราะห์' : '');
+  },
+
+  /* ----- per-frame: price, account, positions ----- */
+  renderLive() {
+    const md = App.md, acct = App.state.account;
+    if (md.mid) {
+      $('pxMid').textContent = fmt(md.mid);
+      $('pxBid').textContent = fmt(md.bid); $('pxAsk').textContent = fmt(md.ask);
+      $('pxSpread').textContent = fmt(md.ask - md.bid);
+      const open = md.dayOpen(), chg = open ? (md.mid - open) / open * 100 : 0;
+      const el = $('pxChg'); el.textContent = `${signed(md.mid - open)} (${signed(chg)}%)`; el.className = `num text-sm ${cls(chg)}`;
+    }
+    const floating = App.broker.floating(md.bid, md.ask);
+    const equity = acct.balance + floating;
+    const margin = App.broker.usedMargin(md.mid);
+    $('stBalance').textContent = `${fmt(acct.balance)} USC`;
+    $('stBalanceThb').textContent = `≈ ${fmt(this.toThb(acct.balance))} บาท · เริ่ม ${fmt(this.toThb(acct.startBalance), 0)} บาท`;
+    $('stEquity').textContent = `${fmt(equity)} USC`;
+    $('stMargin').textContent = `Margin ${fmt(margin)} · Free ${fmt(equity - margin)}`;
+    const fl = $('stFloat'); fl.textContent = `${signed(floating)} USC`; fl.className = `val ${cls(floating)}`;
+    $('stOpenCount').textContent = `${App.state.positions.length} ออเดอร์ · ≈ ${signed(this.toThb(floating))} บาท`;
+
+    const t = App.todayStats();
+    const td = $('stToday'); td.textContent = `${signed(t.pct)}%`; td.className = `val ${cls(t.pct)}`;
+    $('stTodayBar').style.width = `${clamp(t.pct / App.s.dailyTargetPct, 0, 1) * 100}%`;
+    const goal = t.day.open * App.s.dailyTargetPct / 100;
+    $('stTodaySub').textContent = `${signed(t.pnl)} / เป้า ${fmt(goal)} USC`;
+
+    const trades = App.state.trades;
+    const wins = trades.filter(x => x.pnl > 0), losses = trades.filter(x => x.pnl <= 0);
+    const gw = wins.reduce((s, x) => s + x.pnl, 0), gl = -losses.reduce((s, x) => s + x.pnl, 0);
+    $('stWin').textContent = trades.length ? `${fmt(wins.length / trades.length * 100, 1)}% Win` : '— Win';
+    $('stPerf').textContent = `${trades.length} ไม้ · PF ${gl > 0 ? fmt(gw / gl) : gw > 0 ? '∞' : '—'} · Max DD ${fmt(this.maxDrawdown(), 1)}%`;
+
+    this.renderPositions();
+  },
+
+  maxDrawdown() {
+    let peak = -Infinity, dd = 0;
+    for (const p of App.state.curve) { peak = Math.max(peak, p.b); if (peak > 0) dd = Math.max(dd, (peak - p.b) / peak * 100); }
+    return dd;
+  },
+
+  renderPositions() {
+    const md = App.md, list = App.state.positions;
+    $('posEmpty').hidden = list.length > 0;
+    $('posBody').innerHTML = list.map(p => {
+      const pnl = App.broker.pnl(p, md.bid, md.ask), px = p.side === 'BUY' ? md.bid : md.ask;
+      const tag = p.trailActive ? '<span class="tag tag-trail">TRAIL</span>' : p.beDone ? '<span class="tag tag-muted">BE</span>' : '';
+      return `<tr>
+        <td><span class="tag ${p.side === 'BUY' ? 'tag-buy' : 'tag-sell'}">${p.side}</span> <span class="tag tag-muted">${p.source}</span></td>
+        <td>${p.lot.toFixed(2)}</td><td>${fmt(p.entry)}</td>
+        <td>${fmt(p.sl)} ${tag}</td><td>${p.tp == null ? '<span class="muted">ปล่อยวิ่ง</span>' : fmt(p.tp)}</td>
+        <td>${fmt(px)}</td><td class="${cls(pnl)}">${signed(pnl)}</td>
+        <td><button type="button" class="btn btn-sm" data-close="${p.id}">ปิด</button></td></tr>`;
+    }).join('');
+  },
+
+  /* ----- per-second: matrix & signal ----- */
+  buildMatrix() {
+    $('matrix').innerHTML = TF.map(tf => `
+      <div class="tf-card" id="tf-${tf.key}" data-state="CONSOLIDATION">
+        <div class="flex items-center justify-between gap-2">
+          <div><div class="tf-label">${tf.label}</div><div class="muted text-xs">${tf.name}</div></div>
+          <span class="pill" data-role="state">—</span>
+        </div>
+        <div class="flex items-center justify-between gap-2">
+          <span class="arrow flat" data-role="arrow">◆</span>
+          <div class="text-right"><div class="display text-lg font-bold" data-role="action">WAIT</div>
+            <div class="num text-sm" data-role="score">0</div></div>
+        </div>
+        <div class="scorebar"><span data-role="bar"></span></div>
+        <div class="tf-meta num">
+          <span>RSI 14</span><span data-role="rsi">—</span>
+          <span>EMA 9/21</span><span data-role="ema">—</span>
+          <span>MACD hist</span><span data-role="macd">—</span>
+          <span>ATR 14</span><span data-role="atr">—</span>
+        </div>
+      </div>`).join('');
+  },
+
+  renderMatrix(m) {
+    for (const tf of TF) {
+      const r = m[tf.key], card = $(`tf-${tf.key}`), q = (role) => card.querySelector(`[data-role="${role}"]`);
+      card.dataset.state = r.state;
+      const color = r.state === 'BULLISH' ? 'up' : r.state === 'BEARISH' ? 'down' : 'flat';
+      q('state').textContent = r.state === 'BULLISH' ? 'Bullish' : r.state === 'BEARISH' ? 'Bearish' : 'Consolidation';
+      q('state').className = `pill ${color}`;
+      q('arrow').textContent = r.state === 'BULLISH' ? '▲' : r.state === 'BEARISH' ? '▼' : '◆';
+      q('arrow').className = `arrow ${color}`;
+      q('action').textContent = r.state === 'BULLISH' ? 'BUY' : r.state === 'BEARISH' ? 'SELL' : 'WAIT';
+      q('action').className = `display text-lg font-bold ${color}`;
+      q('score').textContent = signed(r.score, 1);
+      const bar = q('bar'), w = Math.abs(r.score) / 2;
+      bar.style.left = `${r.score >= 0 ? 50 : 50 - w}%`; bar.style.width = `${w}%`;
+      bar.style.background = `var(--${r.score >= 0 ? 'bull' : 'bear'})`;
+      q('rsi').textContent = fmt(r.rsi, 1);
+      q('ema').textContent = r.ema9 >= r.ema21 ? '9 > 21 ↑' : '9 < 21 ↓';
+      q('macd').textContent = signed(r.macd, 3);
+      q('atr').textContent = fmt(r.atr, 2);
+    }
+  },
+
+  renderSignal() {
+    const sig = App.signal, s = App.s;
+    const color = sig.action === 'BUY' ? 'up' : sig.action === 'SELL' ? 'down' : 'flat';
+    $('sigArrow').textContent = sig.action === 'BUY' ? '▲' : sig.action === 'SELL' ? '▼' : '◆';
+    $('sigArrow').className = `big-arrow ${color}`;
+    $('sigAction').textContent = sig.action;
+    $('sigAction').className = `display text-3xl font-bold ${color}`;
+    $('sigScore').textContent = signed(sig.score, 1);
+    $('sigMarker').style.left = `${50 + clamp(sig.score, -100, 100) / 2}%`;
+    $('thrLo').style.left = `${50 - s.entryThreshold / 2}%`; $('thrHi').style.left = `${50 + s.entryThreshold / 2}%`;
+    $('sigAligned').textContent = `${sig.aligned} / 4 TF ตรงกัน`;
+
+    const z = App.sizing();
+    $('pvSl').textContent = `$${fmt(z.slDist)}`;
+    $('pvTp').textContent = `$${fmt(z.slDist * s.rr)}`;
+    $('pvLot').textContent = `${z.lot.toFixed(2)} lot` + (z.belowMin ? ' (ขั้นต่ำ)' : '');
+    $('pvRisk').textContent = `${fmt(z.actualRisk)} USC ≈ ${fmt(this.toThb(z.actualRisk))} ฿`;
+  },
+
+  setBotStatus(text) { $('botStatus').textContent = text; },
+
+  notifyClose(tr) {
+    const label = { TP: 'ถึง TP', SL: 'โดน SL', TRAIL: 'Trailing Stop ล็อกกำไร', BE: 'ออกที่จุดคุ้มทุน', MANUAL: 'ปิดเอง', FEED: 'เปลี่ยนแหล่งราคา', RESET: 'เริ่มพอร์ตใหม่' }[tr.reason] || tr.reason;
+    toast(`${label}: ${tr.side} ${tr.lot.toFixed(2)} lot ${signed(tr.pnl)} USC`, tr.pnl > 0 ? 'good' : 'bad');
+  },
+
+  /* ----- journal tables ----- */
+  renderJournal() {
+    const rows = App.state.trades.slice(-100).reverse();
+    $('jEmpty').hidden = rows.length > 0;
+    const reasonTag = (r) => `<span class="tag ${r === 'TP' || r === 'TRAIL' ? 'tag-trail' : 'tag-muted'}">${r}</span>`;
+    $('jBody').innerHTML = rows.map(t => `<tr>
+      <td>${dateTimeStr(t.closeTs)}</td>
+      <td><span class="tag ${t.side === 'BUY' ? 'tag-buy' : 'tag-sell'}">${t.side}</span></td>
+      <td>${t.lot.toFixed(2)}</td><td>${fmt(t.entry)}</td><td>${fmt(t.exit)}</td>
+      <td>${reasonTag(t.reason)}</td><td class="muted">${t.source}</td>
+      <td class="${cls(t.pnl)}">${signed(t.pnl)}</td><td>${fmt(t.balanceAfter)}</td></tr>`).join('');
+  },
+
+  renderDays() {
+    const days = Object.entries(App.state.account.days).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 14);
+    const target = App.s.dailyTargetPct;
+    $('dayBody').innerHTML = days.map(([k, d]) => {
+      const pct = d.open > 0 ? (d.close - d.open) / d.open * 100 : 0;
+      return `<tr><td>${k.slice(5)}${pct >= target ? ' <span class="tag tag-trail">เป้า</span>' : ''}</td>
+        <td>${fmt(d.open, 0)}</td><td>${fmt(d.close, 0)}</td><td class="${cls(pct)}">${signed(pct, 1)}</td><td>${d.trades}</td></tr>`;
+    }).join('') || '<tr><td colspan="5" class="muted">ยังไม่มีข้อมูล</td></tr>';
+  },
+
+  renderProjection() {
+    const start = App.state.account.startBalance, r = 1 + App.s.dailyTargetPct / 100;
+    $('projBody').innerHTML = [1, 2, 3, 5, 7, 10, 14, 20, 30].map(d => {
+      const v = start * r ** d;
+      return `<tr><td>วันที่ ${d}</td><td>${fmt(v, 0)}</td><td>${fmt(this.toThb(v), 0)}</td></tr>`;
+    }).join('');
+  },
+
+  exportCsv() {
+    const head = ['closeTime', 'openTime', 'side', 'lot', 'entry', 'exit', 'sl', 'tp', 'reason', 'source', 'score', 'pnlUSC', 'balanceAfterUSC'];
+    const rows = App.state.trades.map(t => [new Date(t.closeTs).toISOString(), new Date(t.openTs).toISOString(), t.side, t.lot, t.entry.toFixed(2), t.exit.toFixed(2),
+      t.sl0.toFixed(2), t.tp0.toFixed(2), t.reason, t.source, (t.score || 0).toFixed(1), t.pnl.toFixed(2), t.balanceAfter.toFixed(2)]);
+    const csv = [head, ...rows].map(r => r.join(',')).join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    const a = Object.assign(document.createElement('a'), { href: url, download: `xau-journal-${dayKey(Date.now())}.csv` });
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast(`Export ${rows.length} ไม้`);
+  },
+};
+
+/* =====================================================================
+ * 12. CHARTS (Chart.js)
+ * ===================================================================== */
+const Charts = {
+  price: null, growth: null,
+
+  palette() {
+    return { fg: cssVar('--fg'), muted: cssVar('--muted'), line: cssVar('--line'), gold: cssVar('--gold'), bull: cssVar('--bull'), bear: cssVar('--bear'), flat: cssVar('--flat') };
+  },
+
+  baseOptions(c) {
+    return {
+      responsive: true, maintainAspectRatio: false, animation: false, normalized: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: c.muted, boxWidth: 12, boxHeight: 2, font: { family: 'IBM Plex Sans Thai', size: 11 } } },
+        tooltip: { backgroundColor: cssVar('--panel-2'), titleColor: c.fg, bodyColor: c.fg, borderColor: c.line, borderWidth: 1 },
+      },
+      scales: {
+        x: { ticks: { color: c.muted, maxTicksLimit: 6, maxRotation: 0, font: { family: 'JetBrains Mono', size: 10 } }, grid: { color: c.line, drawTicks: false } },
+        y: { position: 'right', ticks: { color: c.muted, font: { family: 'JetBrains Mono', size: 10 } }, grid: { color: c.line, drawTicks: false } },
+      },
+    };
+  },
+
+  init() {
+    if (typeof Chart === 'undefined') { toast('โหลด Chart.js ไม่สำเร็จ กราฟจะไม่แสดง', 'bad'); return; }
+    const c = this.palette();
+    const level = (label, color) => ({ label, data: [], borderColor: color, borderDash: [5, 4], borderWidth: 1, pointRadius: 0, fill: false, hidden: false });
+    this.price = new Chart($('priceChart'), {
+      type: 'line',
+      data: { labels: [], datasets: [
+        { label: 'ราคา', data: [], borderColor: c.gold, backgroundColor: c.gold + '22', borderWidth: 2, pointRadius: 0, fill: 'start', tension: 0.2 },
+        { label: 'EMA 9', data: [], borderColor: c.bull, borderWidth: 1, pointRadius: 0 },
+        { label: 'EMA 21', data: [], borderColor: c.bear, borderWidth: 1, pointRadius: 0 },
+        level('Entry', c.fg), level('SL', c.bear), level('TP', c.bull),
+      ] },
+      options: this.baseOptions(c),
+    });
+    const g = this.baseOptions(c);
+    g.scales.x = { ...g.scales.x, type: 'linear', title: { display: true, color: c.muted, text: '' } };
+    g.plugins.tooltip.callbacks = { title: (items) => items.length ? this.growthXLabel(items[0].parsed.x) : '' };
+    this.growth = new Chart($('growthChart'), {
+      type: 'line',
+      data: { datasets: [
+        { label: 'Equity จริง (USC)', data: [], borderColor: c.gold, backgroundColor: c.gold + '22', borderWidth: 2, pointRadius: 0, fill: 'start', stepped: false },
+        { label: 'เป้าหมายทบต้น', data: [], borderColor: c.muted, borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0 },
+      ] },
+      options: g,
+    });
+    this.updateGrowth();
+    const retheme = () => this.retheme();
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', retheme);
+    new MutationObserver(retheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  },
+
+  retheme() {
+    if (!this.price) return;
+    const c = this.palette();
+    for (const ch of [this.price, this.growth]) {
+      const o = this.baseOptions(c);
+      ch.options.plugins.legend.labels.color = c.muted;
+      Object.assign(ch.options.plugins.tooltip, { backgroundColor: o.plugins.tooltip.backgroundColor, titleColor: c.fg, bodyColor: c.fg, borderColor: c.line });
+      for (const ax of ['x', 'y']) { ch.options.scales[ax].ticks.color = c.muted; ch.options.scales[ax].grid.color = c.line; }
+    }
+    this.growth.options.scales.x.title.color = c.muted;
+    const [p, e9, e21, en, sl, tp] = this.price.data.datasets;
+    Object.assign(p, { borderColor: c.gold, backgroundColor: c.gold + '22' });
+    e9.borderColor = c.bull; e21.borderColor = c.bear; en.borderColor = c.fg; sl.borderColor = c.bear; tp.borderColor = c.bull;
+    const [ga, gt] = this.growth.data.datasets;
+    Object.assign(ga, { borderColor: c.gold, backgroundColor: c.gold + '22' }); gt.borderColor = c.muted;
+    this.price.update('none'); this.growth.update('none');
+  },
+
+  labelFor(t, tf) {
+    const d = new Date(t);
+    if (tf === '1d') return d.toLocaleDateString('th-TH', { day: '2-digit', month: 'short' });
+    if (tf === '1h') return d.toLocaleString('th-TH', { day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+    if (tf === '1m') return d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false });
+    return timeStr(t);
+  },
+
+  updatePrice() {
+    if (!this.price) return;
+    const candles = App.md.series[App.chartTf];
+    if (!candles.length) return;
+    const all = candles.map(c => c.c);
+    const e9 = Ind.emaSeries(all, 9), e21 = Ind.emaSeries(all, 21);
+    const from = Math.max(0, candles.length - CFG.chartBars);
+    const view = candles.slice(from), n = view.length;
+    const ds = this.price.data.datasets;
+    this.price.data.labels = view.map(c => this.labelFor(c.t, App.chartTf));
+    ds[0].data = view.map(c => c.c);
+    ds[1].data = e9.slice(from); ds[2].data = e21.slice(from);
+    const pos = App.state.positions[0];
+    const flat = (v) => (v == null ? [] : new Array(n).fill(v));
+    ds[3].data = flat(pos && pos.entry); ds[4].data = flat(pos && pos.sl); ds[5].data = flat(pos && pos.tp);
+    this.price.update('none');
+  },
+
+  growthXLabel(x) {
+    if (App.growthMode === 'daily') return `วันที่ ${x}`;
+    return x < 1 ? `${fmt(x * 60, 0)} นาทีหลังเริ่ม` : `${fmt(x, 1)} ชม. หลังเริ่ม`;
+  },
+
+  updateGrowth() {
+    if (!this.growth) return;
+    const acct = App.state.account, s = App.s, r = 1 + s.dailyTargetPct / 100;
+    const [actual, target] = this.growth.data.datasets;
+    const xAxis = this.growth.options.scales.x;
+    if (App.growthMode === 'daily') {
+      const days = Object.keys(acct.days).sort();
+      actual.data = [{ x: 0, y: acct.startBalance }, ...days.map((k, i) => ({ x: i + 1, y: acct.days[k].close }))];
+      const n = Math.max(days.length + 3, 7);
+      target.data = Array.from({ length: n + 1 }, (_, i) => ({ x: i, y: acct.startBalance * r ** i }));
+      xAxis.title.text = 'วันที่เทรด';
+      xAxis.ticks.stepSize = 1; xAxis.max = n;
+    } else {
+      const hrs = (t) => (t - acct.startTs) / 3600000;
+      const equity = acct.balance + App.broker.floating(App.md.bid, App.md.ask);
+      actual.data = [...App.state.curve.map(p => ({ x: hrs(p.t), y: p.b })), { x: hrs(Date.now()), y: equity }];
+      const end = Math.max(hrs(Date.now()) * 1.1, 0.25);
+      target.data = Array.from({ length: 41 }, (_, i) => { const h = end * i / 40; return { x: h, y: acct.startBalance * r ** (h / 24) }; });
+      xAxis.title.text = 'ชั่วโมงนับจากเริ่มพอร์ต';
+      xAxis.ticks.stepSize = undefined; xAxis.max = end;
+    }
+    xAxis.min = 0;
+    this.growth.update('none');
+  },
+};
+
+/* =====================================================================
+ * 13. BOOT
+ * ===================================================================== */
+document.addEventListener('DOMContentLoaded', () => App.init());
+</script>
+</body>
+</html>

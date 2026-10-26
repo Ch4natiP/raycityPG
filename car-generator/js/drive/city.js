@@ -22,7 +22,8 @@ function facadeTexture() {
   return t;
 }
 
-export function createCity(scene, data) {
+export function createCity(scene, data, opts = {}) {
+  const BUILD = opts.build || 2600; const TREES = opts.trees || 260;
   const tiles = new Map(); // 'A_B' → { cls: Uint8Array(256²), A, B, angle, built: { group, blocks } }
   const group = new THREE.Group(); scene.add(group);
   let ox = 0; let oy = 0;
@@ -171,7 +172,7 @@ export function createCity(scene, data) {
     };
     const taken = [];
     const overlaps = (cx, cy, rr) => taken.some((q) => Math.hypot(q[0] - cx, q[1] - cy) < q[2] + rr);
-    for (let i = 0; i < 2600; i++) {
+    for (let i = 0; i < BUILD; i++) {
       const cx = x0 + r() * TILE; const cy = y0 + r() * TILE;
       if (classRC(cx, cy) !== 1) continue;
       const hx = 4 + r() * 10; const hy = 4 + r() * 10; const rr = Math.hypot(hx, hy);
@@ -203,7 +204,7 @@ export function createCity(scene, data) {
     }
     // trees on the grass along the kerbs: green and the odd pink one
     const spots = [];
-    for (let i = 0; i < 1400 && spots.length < 260; i++) {
+    for (let i = 0; i < TREES * 5.4 && spots.length < TREES; i++) {
       const x = x0 + r() * TILE; const y = y0 + r() * TILE;
       if (classRC(x, y) !== 1) continue;
       let near = false; for (const [a, b] of [[6, 0], [-6, 0], [0, 6], [0, -6]]) if (classRC(x + a, y + b) >= 2) near = true;

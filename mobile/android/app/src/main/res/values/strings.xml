@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">RayCity PG</string>
+    <string name="title_activity_main">RayCity PG</string>
+    <string name="package_name">com.raycitypg.drive</string>
+    <string name="custom_url_scheme">com.raycitypg.drive</string>
+</resources>

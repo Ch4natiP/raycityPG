@@ -56,10 +56,30 @@
     #tools { position: fixed; left: 8px; bottom: 10px; display: flex; gap: 4px; }
     #tools button { width: 46px; height: 42px; padding: 0; font-size: 18px; border-radius: 6px; background: linear-gradient(#3b4560, #1f2536); }
 
-    #touch { position: fixed; bottom: 64px; left: 12px; display: none; gap: 8px; }
-    #touch button { width: 64px; height: 64px; font-size: 22px; border-radius: 50%; opacity: .85; touch-action: none; }
-    @media (pointer: coarse) { #touch { display: flex; } }
-    body.in-garage #minimap, body.in-garage #lap, body.in-garage #speed, body.in-garage #sp, body.in-garage #touch { display: none; }
+    /* touch pads (phones): steering on the left, pedals on the right */
+    .pad { position: fixed; bottom: 14px; display: none; gap: 10px; align-items: flex-end; touch-action: none; user-select: none; -webkit-user-select: none; }
+    .pad button { touch-action: none; border-radius: 50%; font-size: 26px; color: #fff; background: rgba(20, 26, 40, .55); border: 2px solid rgba(255, 255, 255, .35); box-shadow: 0 2px 8px rgba(0,0,0,.4); }
+    .pad button.on { background: rgba(255, 159, 26, .6); border-color: #ffd23f; }
+    #pad-left { left: 14px; }
+    #pad-left button { width: 92px; height: 92px; }
+    #pad-right { right: 14px; }
+    #pad-right .gas { width: 96px; height: 120px; border-radius: 22px; }
+    #pad-right .brake { width: 82px; height: 82px; border-radius: 18px; }
+    #pad-right .small { width: 64px; height: 64px; font-size: 22px; }
+    #pad-right .col { display: flex; flex-direction: column; gap: 10px; }
+    body.touch .pad { display: flex; }
+    body.touch.tilt #pad-left { display: none; }
+    body.touch #tools { left: auto; right: 220px; top: 10px; bottom: auto; }
+    body.touch #speed { right: 50%; transform: translateX(50%); bottom: 34px; width: 150px; padding: 4px 10px; }
+    body.touch #speed .v { font-size: 38px; }
+    body.touch #sp { bottom: 6px; width: min(240px, 40vw); }
+    body.touch #minimap { transform: scale(.72); transform-origin: top right; }
+    body.touch #lap { top: 150px; padding: 4px 8px; font-size: 12px; }
+    body.touch #plate .lv { width: 40px; height: 40px; font-size: 15px; }
+    body.touch #menu { top: 56px; }
+    #rotate { position: fixed; inset: 0; display: none; place-items: center; background: #0b0e14; color: #fff; font-size: 20px; text-align: center; z-index: 9; }
+    @media (orientation: portrait) { body.touch #rotate { display: grid; } }
+    body.in-garage #minimap, body.in-garage #lap, body.in-garage #speed, body.in-garage #sp, body.in-garage .pad { display: none !important; }
     body.in-garage #btn-garage { background: linear-gradient(#ff9f1a, #b86400); }
     @media (max-width: 640px) { #minimap { transform: scale(.7); transform-origin: top right; } #lap { top: 150px; } #plate .bars { min-width: 110px; } }
   </style>
@@ -89,6 +109,7 @@
         <div class="row"><span>สนาม</span><select id="track" style="max-width: 260px"><option value="practice">สนามฝึก (วงปิด)</option></select></div>
         <div id="track-info" class="hint"></div>
       </div>
+      <div class="box"><div class="row"><button id="btn-tilt">📱 เอียงเลี้ยว: ปิด</button><span>คุณภาพ</span><select id="quality"><option value="high">สูง</option><option value="mid">กลาง</option><option value="low">ต่ำ (มือถือ)</option></select></div></div>
       <div class="box hint">W/↑ เร่ง · S/↓ เบรก/ถอย · A D/← → เลี้ยว · Space เบรกมือ (ดริฟต์) · Shift บูสต์ (ใช้ SP) · R กลับจุดเริ่ม · C เปลี่ยนกล้อง</div>
     </div>
   </div>
@@ -100,7 +121,9 @@
   <div id="sp"><span class="lbl">SP</span><div class="bar"><i id="sp-fill" style="width: 100%"></i></div><div id="sp-text">8996/8996</div></div>
   <div id="tools"><button id="btn-garage" title="โรงรถ: เลือกรถ / ออกขับ">🏠</button><button id="btn-reset" title="กลับจุดเริ่ม (R)">↺</button><button id="btn-cam" title="เปลี่ยนกล้อง (C)">🎥</button></div>
 
-  <div id="touch"><button data-k="left">◀</button><button data-k="right">▶</button><button data-k="down">⏬</button><button data-k="up">⏫</button><button data-k="boost">⚡</button></div>
+  <div id="pad-left" class="pad"><button data-k="left">◀</button><button data-k="right">▶</button></div>
+  <div id="pad-right" class="pad"><div class="col"><button class="small" data-k="boost" title="บูสต์ (SP)">⚡</button><button class="small" data-k="hand" title="เบรกมือ / ดริฟต์">🅿</button></div><button class="brake" data-k="down" title="เบรก / ถอย">⏪</button><button class="gas" data-k="up" title="เร่ง">⏫</button></div>
+  <div id="rotate">📱↻<br>หมุนโทรศัพท์เป็นแนวนอน</div>
   <script type="importmap">
     { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
   </script>

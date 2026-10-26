@@ -14,9 +14,19 @@ const $ = (id) => document.getElementById(id);
 // ---------------------------------------------------------------------------------------------
 // Scene
 
+// phones first (the game is going on phones; the browser page is for testing): touch pads, lighter quality
+const TOUCH = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+const QUALITY = (() => { let q = null; try { q = localStorage.getItem('rc-quality'); } catch { /* private mode */ } return ['high', 'mid', 'low'].includes(q) ? q : TOUCH ? 'low' : 'high'; })();
+const Q = {
+  high: { pr: 2, shadow: 2048, traffic: 26, build: 2600, trees: 260, people: 1 },
+  mid: { pr: 1.5, shadow: 1024, traffic: 18, build: 1800, trees: 160, people: 0.7 },
+  low: { pr: 1.15, shadow: 1024, traffic: 12, build: 1100, trees: 90, people: 0.5 },
+}[QUALITY];
+if (TOUCH) document.body.classList.add('touch');
+
 const canvas = $('gl');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+renderer.setPixelRatio(Math.min(Q.pr, window.devicePixelRatio));
 renderer.shadowMap.enabled = true;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene();
@@ -26,7 +36,7 @@ const cam = new THREE.PerspectiveCamera(62, 1, 0.1, 3000);
 const hemi = new THREE.HemisphereLight('#dfe9ff', '#3b4a2c', 0.9); scene.add(hemi);
 const sun = new THREE.DirectionalLight('#ffffff', 1.6);
 sun.position.set(-60, 120, 40); sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.set(Q.shadow, Q.shadow);
 Object.assign(sun.shadow.camera, { left: -40, right: 40, top: 40, bottom: -40, near: 1, far: 300 });
 scene.add(sun, sun.target);
 // the game's sunset: its sky picture (etc/skydome/sunset, upper half = the sky down to the horizon) on a dome
@@ -395,7 +405,31 @@ const KEYMAP = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', Arr
 const SP = { v: 8996, max: 8996 }; // the game's SP bar, spent on the boost
 window.addEventListener('keydown', (e) => { if (KEYMAP[e.code]) { keys.add(KEYMAP[e.code]); e.preventDefault(); } if (e.code === 'KeyR') reset(); if (e.code === 'KeyC') camMode = (camMode + 1) % 2; });
 window.addEventListener('keyup', (e) => { if (KEYMAP[e.code]) keys.delete(KEYMAP[e.code]); });
-document.querySelectorAll('#touch button').forEach((b) => { const k = b.dataset.k; b.addEventListener('pointerdown', (e) => { e.preventDefault(); keys.add(k); }); for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(ev, () => keys.delete(k)); });
+// touch pads: every button its own pointer, so steering and pedals work together
+document.querySelectorAll('.pad button[data-k]').forEach((b) => {
+  const k = b.dataset.k;
+  b.addEventListener('pointerdown', (e) => { e.preventDefault(); keys.add(k); b.classList.add('on'); try { b.setPointerCapture(e.pointerId); } catch { /* no live pointer */ } });
+  for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) b.addEventListener(ev, () => { keys.delete(k); b.classList.remove('on'); });
+});
+// steering by tilting the phone like a wheel (landscape: the tilt is beta, its sign follows which way the phone lies)
+let tiltOn = false; let tilt = 0;
+window.addEventListener('deviceorientation', (e) => {
+  if (!tiltOn || e.beta == null) return;
+  const ang = (screen.orientation && screen.orientation.angle) || window.orientation || 90;
+  tilt = Math.max(-1, Math.min(1, (e.beta / 22) * (ang === 270 || ang === -90 ? 1 : -1)));
+});
+$('btn-tilt').addEventListener('click', async (e) => {
+  try { if (!tiltOn && typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission) await DeviceOrientationEvent.requestPermission(); } catch { /* refused */ }
+  tiltOn = !tiltOn; tilt = 0; e.currentTarget.textContent = tiltOn ? '📱 เอียงเลี้ยว: เปิด' : '📱 เอียงเลี้ยว: ปิด'; document.body.classList.toggle('tilt', tiltOn); e.currentTarget.blur();
+});
+// quality (phones start on low)
+$('quality').value = QUALITY;
+$('quality').addEventListener('change', (e) => { try { localStorage.setItem('rc-quality', e.target.value); } catch { /* private mode */ } location.reload(); });
+// on a phone: full screen and landscape at the first touch
+if (TOUCH) window.addEventListener('pointerdown', () => {
+  const el = document.documentElement;
+  if (!document.fullscreenElement && el.requestFullscreen) el.requestFullscreen({ navigationUI: 'hide' }).then(() => screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape')).catch(() => {});
+}, { once: true });
 let camMode = 0;
 $('btn-panel').addEventListener('click', () => $('panel').classList.toggle('hide'));
 $('btn-garage').addEventListener('click', (e) => { setGarage(!garageOn); e.currentTarget.blur(); });
@@ -409,9 +443,9 @@ function step(dt) {
   let vf = S.vx * fx + S.vz * fz; let vs = S.vx * fz - S.vz * fx; // forward / side speed
   const tr = onTrack(S.x, S.z); lastSeg = tr.seg;
   const off = tilesOn ? city.classAt(S.x, S.z) < 2 : tr.dist > ROAD_W / 2 + 1 && nearRoad(S.x, S.z) > 5;
-  const boost = keys.has('boost') && keys.has('up') && SP.v > 0;
+  const boost = keys.has('boost') && SP.v > 0;
   SP.v = Math.max(0, Math.min(SP.max, SP.v + (boost ? -2200 : 500) * dt));
-  const up = keys.has('up'); const down = keys.has('down'); const hand = keys.has('hand');
+  const up = keys.has('up') || keys.has('boost'); const down = keys.has('down'); const hand = keys.has('hand');
   let braking = false; let reversing = false;
   const H = HANDLING; const top = H.top * (boost ? 1.3 : 1);
   if (up) vf += (vf < 0 ? 18 : (boost ? 9.5 + 6.5 * H.boost : 9.5) * H.accel * Math.max(0.15, 1 - vf / top)) * dt;
@@ -421,7 +455,7 @@ function step(dt) {
   if (hand) { vf -= Math.sign(vf) * Math.min(Math.abs(vf), 5 * dt); braking = braking || Math.abs(vf) > 0.5; }
   if (vf < -0.2 && !down) reversing = false;
   // steering: less lock at speed
-  const want = (keys.has('left') ? 1 : 0) - (keys.has('right') ? 1 : 0);
+  const want = tiltOn && !keys.has('left') && !keys.has('right') ? tilt : (keys.has('left') ? 1 : 0) - (keys.has('right') ? 1 : 0);
   const lock = 0.55 / (1 + Math.abs(vf) / 18);
   S.steer += (want * lock - S.steer) * Math.min(1, dt * 8);
   S.h += (vf / 2.38) * Math.tan(S.steer) * dt * (hand ? 1.35 : 1);
@@ -506,6 +540,7 @@ function frame(now) {
   if (tilesOn) city.drawMinimap(g, S.x, S.z, S.h, mm.width, 260, TRACK);
   else { g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, mm.width, mm.height); }
   $('mini-n').style.transform = `rotate(${(-S.h * 180) / Math.PI + 180}deg)`;
+  $('lap').style.display = TRACK.length < 2 ? 'none' : ''; // (free roam: no laps)
   $('lap-n').textContent = LOOP ? `${lap.n}${LAPS ? `/${LAPS}` : ''}` : lap.done ? 'ถึงเส้นชัย' : '-';
   $('lap-t').textContent = lap.done ? fmt(lap.time) : lap.started ? fmt(now - lap.t0) : '0:00.00'; $('lap-best').textContent = Number.isFinite(lap.best) ? fmt(lap.best) : '-';
   renderer.render(scene, cam);
@@ -517,7 +552,7 @@ function frame(now) {
   CITY = await loadCity().catch(() => null);
   if (CITY && CITY.look) {
     gameSky(CITY.look);
-    city = createCity(scene, CITY); await city.load();
+    city = createCity(scene, CITY, { build: Q.build, trees: Q.trees }); await city.load();
   }
   if (CITY) {
     const sel = $('track'); const groups = {};
@@ -540,8 +575,8 @@ function frame(now) {
     await loadGameCar(first);
   } else { const esc = await escarabajo(); if (esc) await loadCar(esc, 'Escarabajo (ในตัว)'); }
   // traffic on the Seoul lanes, in the game's cars
-  if (GARAGE && city && city.count) people = createPeople(scene, GARAGE, city);
-  if (GARAGE && city && city.count && CITY.roads.kr) traffic = createTraffic(scene, GARAGE, CITY.roads.kr.map((l) => unpack(l)), wheelMaker(0.31));
+  if (GARAGE && city && city.count) people = createPeople(scene, GARAGE, city, Q.people);
+  if (GARAGE && city && city.count && CITY.roads.kr) traffic = createTraffic(scene, GARAGE, CITY.roads.kr.map((l) => unpack(l)), wheelMaker(0.31), Q.traffic);
   // the game's paints for the three colours
   $('btn-paint').addEventListener('click', (e) => {
     const P = GARAGE && GARAGE.paints.length ? GARAGE.paints : ['#e8e8e8', '#2a6bd8', '#d63a2f', '#111111', '#f2c230'];

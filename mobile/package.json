@@ -1,0 +1,18 @@
+{
+  "name": "raycity-pg-mobile",
+  "private": true,
+  "version": "0.1.0",
+  "description": "RayCity PG for phones: the Drive page (car-generator/RayCity-Drive.html) in an Android app",
+  "scripts": {
+    "web": "node copy-web.mjs",
+    "sync": "node copy-web.mjs && npx cap sync android",
+    "apk": "node copy-web.mjs && npx cap sync android && cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.5.3",
+    "@capacitor/core": "8.5.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.3"
+  }
+}

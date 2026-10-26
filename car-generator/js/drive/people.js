@@ -23,7 +23,7 @@ function label(text, color = '#ffe14d', quest = false) {
 }
 const pretty = (m) => m.replace(/_\d+$/, '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
-export function createPeople(scene, garage, city) {
+export function createPeople(scene, garage, city, density = 1) {
   const list = (garage && garage.people) || [];
   const geos = new Map(); const mats = [];
   const geoOf = (p) => {
@@ -47,7 +47,7 @@ export function createPeople(scene, garage, city) {
   function populate(A, B) {
     const g = new THREE.Group(); const spots = []; const r = rng(A * 7349 + B * 13);
     const x0 = (A - 1000) * 512; const y0 = (B - 1000) * 512; const [ox, oy] = city.origin;
-    let tries = 0; const want = 7 + Math.floor(r() * 5);
+    let tries = 0; const want = Math.round((7 + Math.floor(r() * 5)) * density);
     while (spots.length < want && tries++ < 4000) {
       const x = x0 + r() * TILE; const y = y0 + r() * TILE;
       if (city.classRC(x, y) !== 1) continue;

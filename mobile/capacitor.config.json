@@ -1,0 +1,6 @@
+{
+  "appId": "com.raycitypg.drive",
+  "appName": "RayCity PG",
+  "webDir": "www",
+  "android": { "backgroundColor": "#0b0e14" }
+}

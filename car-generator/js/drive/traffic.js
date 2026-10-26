@@ -5,9 +5,9 @@
 import * as THREE from 'three';
 import { compactParts } from './garage.js';
 
-const COUNT = 26; const NEAR = 380; const FAR = 520;
+const NEAR = 380; const FAR = 520;
 
-export function createTraffic(scene, garage, lines, makeWheel) {
+export function createTraffic(scene, garage, lines, makeWheel, COUNT = 26) {
   // lanes in RayCity metres with running lengths; lane ends joined to lane starts within 4 m
   const lanes = lines.filter((l) => l.length >= 2).map((p) => { const L = [0]; for (let i = 1; i < p.length; i++) L.push(L[i - 1] + Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1])); return { p, L, len: L[L.length - 1], next: [] }; }).filter((l) => l.len > 8);
   const starts = new Map(); const key = (x, y) => `${Math.round(x / 4)},${Math.round(y / 4)}`;

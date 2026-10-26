@@ -2822,3 +2822,344 @@ export function glassShell(meshes) {
   }
   return { positions: Float32Array.from(P), normals: Float32Array.from(N), indices: Uint32Array.from(I), cells };
 }
+
+// Triangles turned to face out of the car. Some models come with patches wound (and their normals pointing)
+// into the car (the owner's GLS: most of the front fascia, spots on the hood): in game they are seen from
+// behind, so the car looks holed there. Every triangle casts a few rays out of each face (its normal and four
+// tilted 35°); the side whose rays escape the car more often is the outside. Edge-connected triangles vote
+// together (a neighbour wound the other way counts reversed), so deep corners follow their panel. Both the
+// winding and the normals are turned (the game's files: counter-clockwise seen along the normal). Glass and
+// lamps are turned too but don't block the rays. meshes:
+// [{ rel, parts }] (omParts lists, changed in place); parts of 8 points or fewer (holders) are left alone.
+// Returns { flipped, tris }.
+export function orientOutward(meshes) {
+  const T = []; // [part, t]
+  for (const m of meshes) for (const p of m.parts) { if (p.positions.length / 3 <= 8) continue; for (let t = 0; t < p.indices.length; t += 3) T.push([p, t]); }
+  const n = T.length; if (!n) return { flipped: 0, tris: 0 };
+  const A = new Float32Array(n * 9); const FN = new Float32Array(n * 3); const C = new Float32Array(n * 3); const area = new Float32Array(n);
+  const lo = [Infinity, Infinity, Infinity]; const hi = [-Infinity, -Infinity, -Infinity];
+  T.forEach(([p, t], k) => {
+    const P = p.positions; const I = p.indices;
+    for (let j = 0; j < 3; j++) for (let q = 0; q < 3; q++) { const v = P[I[t + j] * 3 + q]; A[k * 9 + j * 3 + q] = v; lo[q] = Math.min(lo[q], v); hi[q] = Math.max(hi[q], v); }
+    const o = k * 9; const u = [A[o + 3] - A[o], A[o + 4] - A[o + 1], A[o + 5] - A[o + 2]]; const w = [A[o + 6] - A[o], A[o + 7] - A[o + 1], A[o + 8] - A[o + 2]];
+    const c = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]]; const L = Math.hypot(c[0], c[1], c[2]);
+    area[k] = L / 2; if (L > 0) FN.set([c[0] / L, c[1] / L, c[2] / L], k * 3);
+    for (let q = 0; q < 3; q++) C[k * 3 + q] = (A[o + q] + A[o + 3 + q] + A[o + 6 + q]) / 3;
+  });
+  // uniform grid of triangle boxes
+  const G = 0.06; const pad = 0.05; for (let q = 0; q < 3; q++) { lo[q] -= pad; hi[q] += pad; }
+  const dim = [0, 1, 2].map((q) => Math.max(1, Math.ceil((hi[q] - lo[q]) / G)));
+  const cellOf = (q, v) => Math.min(dim[q] - 1, Math.max(0, Math.floor((v - lo[q]) / G)));
+  const cells = new Map();
+  for (let k = 0; k < n; k++) {
+    if (T[k][0].flags[0] !== 0) continue; // glass and lamps are seen through / sit on the paint: not in the way
+    const o = k * 9; const a = [0, 1, 2].map((q) => cellOf(q, Math.min(A[o + q], A[o + 3 + q], A[o + 6 + q]))); const b = [0, 1, 2].map((q) => cellOf(q, Math.max(A[o + q], A[o + 3 + q], A[o + 6 + q])));
+    for (let x = a[0]; x <= b[0]; x++) for (let y = a[1]; y <= b[1]; y++) for (let z = a[2]; z <= b[2]; z++) { const key = (x * dim[1] + y) * dim[2] + z; let l = cells.get(key); if (!l) cells.set(key, (l = [])); l.push(k); }
+  }
+  const stamp = new Int32Array(n); let ray = 0;
+  const hit = (k, o, d) => { // Möller–Trumbore, t > 0
+    const b = k * 9; const e1 = [A[b + 3] - A[b], A[b + 4] - A[b + 1], A[b + 5] - A[b + 2]]; const e2 = [A[b + 6] - A[b], A[b + 7] - A[b + 1], A[b + 8] - A[b + 2]];
+    const p = [d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2], d[0] * e2[1] - d[1] * e2[0]]; const det = e1[0] * p[0] + e1[1] * p[1] + e1[2] * p[2];
+    if (Math.abs(det) < 1e-12) return false; const inv = 1 / det; const s = [o[0] - A[b], o[1] - A[b + 1], o[2] - A[b + 2]];
+    const u = (s[0] * p[0] + s[1] * p[1] + s[2] * p[2]) * inv; if (u < 0 || u > 1) return false;
+    const q = [s[1] * e1[2] - s[2] * e1[1], s[2] * e1[0] - s[0] * e1[2], s[0] * e1[1] - s[1] * e1[0]];
+    const v = (d[0] * q[0] + d[1] * q[1] + d[2] * q[2]) * inv; if (v < 0 || u + v > 1) return false;
+    const t = (e2[0] * q[0] + e2[1] * q[1] + e2[2] * q[2]) * inv; return t > 1e-5 ? t : false;
+  };
+  const firstHit = (self, o, d) => { // grid walk (Amanatides–Woo) until the ray leaves the box: distance to the nearest hit or Infinity
+    ray++; stamp[self] = ray; const c = [0, 1, 2].map((q) => cellOf(q, o[q]));
+    const step = d.map((x) => (x > 0 ? 1 : -1)); const tD = d.map((x) => (x ? Math.abs(G / x) : Infinity));
+    const tM = [0, 1, 2].map((q) => (d[q] ? ((lo[q] + (c[q] + (d[q] > 0 ? 1 : 0)) * G) - o[q]) / d[q] : Infinity));
+    let best = Infinity; hitTri = -1;
+    for (let guard = 0; guard < 2000; guard++) {
+      const l = cells.get((c[0] * dim[1] + c[1]) * dim[2] + c[2]);
+      if (l) for (const k of l) { if (stamp[k] === ray) continue; stamp[k] = ray; const t = hit(k, o, d); if (t !== false && t < best) { best = t; hitTri = k; } }
+      const q = tM[0] < tM[1] ? (tM[0] < tM[2] ? 0 : 2) : (tM[1] < tM[2] ? 1 : 2);
+      if (best <= Math.min(tM[0], tM[1], tM[2])) return best; // (nothing nearer in the cells still to come)
+      c[q] += step[q]; if (c[q] < 0 || c[q] >= dim[q]) return best; tM[q] += tD[q];
+    }
+    return best;
+  };
+  let hitTri = -1; // (the triangle firstHit met)
+  // a triangle with a parallel surface within 3 cm in front of or behind it (or one lying right on it) is one
+  // layer of a doubled panel (the GLS hood: paint over a black skin): turned, it would show through the other
+  // layer, so it stays
+  const score = new Float32Array(n); const covered = new Uint8Array(n); const tilt = Math.tan((35 * Math.PI) / 180);
+  for (let k = 0; k < n; k++) {
+    if (!area[k]) continue; const N = [FN[k * 3], FN[k * 3 + 1], FN[k * 3 + 2]];
+    const t1 = Math.abs(N[2]) < 0.9 ? [N[1], -N[0], 0] : [0, N[2], -N[1]]; const l1 = Math.hypot(...t1); for (let q = 0; q < 3; q++) t1[q] /= l1;
+    const t2 = [N[1] * t1[2] - N[2] * t1[1], N[2] * t1[0] - N[0] * t1[2], N[0] * t1[1] - N[1] * t1[0]];
+    let s = 0;
+    // a surface lying on this one (within 3 mm of its plane: a doubled skin, paint over black) also covers it
+    { const o = [0, 1, 2].map((q) => C[k * 3 + q] - N[q] * 0.003); if (firstHit(k, o, N) < 0.006) covered[k] = 1; }
+    for (const side of [1, -1]) {
+      const o = [0, 1, 2].map((q) => C[k * 3 + q] + side * N[q] * 1e-3);
+      for (const [a, b] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const d = [0, 1, 2].map((q) => side * N[q] + tilt * (a * t1[q] + b * t2[q])); const L = Math.hypot(...d);
+        const t = firstHit(k, o, d.map((x) => x / L)); if (t === Infinity) s += side;
+        else if (!a && !b && t < 0.03 && Math.abs(N[0] * FN[hitTri * 3] + N[1] * FN[hitTri * 3 + 1] + N[2] * FN[hitTri * 3 + 2]) > 0.85) covered[k] = 1;
+      }
+    }
+    score[k] = s;
+  }
+  // edge-connected groups wound alike (positions welded at 0.1 mm)
+  const vid = new Map(); const vk = (x, y, z) => `${Math.round(x * 1e4)},${Math.round(y * 1e4)},${Math.round(z * 1e4)}`;
+  const V = new Int32Array(n * 3);
+  for (let k = 0; k < n; k++) for (let j = 0; j < 3; j++) { const o = k * 9 + j * 3; const key = vk(A[o], A[o + 1], A[o + 2]); if (!vid.has(key)) vid.set(key, vid.size); V[k * 3 + j] = vid.get(key); }
+  const edges = new Map();
+  for (let k = 0; k < n; k++) for (let j = 0; j < 3; j++) { const a = V[k * 3 + j]; const b = V[k * 3 + (j + 1) % 3]; if (a === b) continue; const key = a < b ? a * 4194304 + b : b * 4194304 + a; let l = edges.get(key); if (!l) edges.set(key, (l = [])); l.push([k, a < b ? 1 : -1]); }
+  const rel = new Int8Array(n); const group = new Int32Array(n).fill(-1); const sums = []; const areas = []; const adj = new Map();
+  for (const l of edges.values()) if (l.length === 2) { const [[k0, d0], [k1, d1]] = l; const r = d0 === d1 ? 1 : 0; (adj.get(k0) || adj.set(k0, []).get(k0)).push([k1, r]); (adj.get(k1) || adj.set(k1, []).get(k1)).push([k0, r]); }
+  for (let s0 = 0; s0 < n; s0++) {
+    if (group[s0] >= 0) continue; const g = sums.length; let sum = 0; let ar = 0; group[s0] = g; rel[s0] = 0; const stack = [s0];
+    while (stack.length) { const k = stack.pop(); sum += score[k] * area[k] * (rel[k] ? -1 : 1); ar += area[k]; for (const [k2, r] of adj.get(k) || []) if (group[k2] < 0) { group[k2] = g; rel[k2] = rel[k] ^ r; stack.push(k2); } }
+    sums.push(sum); areas.push(ar);
+  }
+  // turn: winding swapped, normals made to agree (a corner shared with unturned triangles gets its own copy).
+  // Only on clear evidence: a group (or a lone triangle) whose rays escape the wrong way more than one in
+  // five on average, and never a triangle whose own rays clearly escape the way it faces.
+  const flip = new Uint8Array(n); let flipped = 0;
+  for (let k = 0; k < n; k++) {
+    const g = group[k]; const mean = areas[g] ? sums[g] / areas[g] : score[k];
+    const wrong = areas[g] ? mean < -1 : score[k] < -1;
+    flip[k] = covered[k] ? 0 : wrong ? rel[k] ^ 1 : rel[k] && mean > 1 ? 1 : 0;
+    if (flip[k] && score[k] >= 2) flip[k] = 0; // (its own rays clearly say it faces out already)
+    if (flip[k]) flipped++;
+  }
+  const byPart = new Map(); T.forEach(([p, t], k) => { if (!byPart.has(p)) byPart.set(p, []); byPart.get(p).push(k); });
+  for (const [p, ks] of byPart) {
+    if (!ks.some((k) => flip[k])) continue;
+    const I = Array.from(p.indices); const P = Array.from(p.positions); const Nn = Array.from(p.normals); const U = Array.from(p.uvs);
+    const acc = new Float32Array(P.length);
+    for (const k of ks) { const t = T[k][1]; if (flip[k]) { const x = I[t + 1]; I[t + 1] = I[t + 2]; I[t + 2] = x; } const s = flip[k] ? -1 : 1; for (let j = 0; j < 3; j++) for (let q = 0; q < 3; q++) acc[I[t + j] * 3 + q] += s * FN[k * 3 + q] * area[k]; }
+    for (let v = 0; v < P.length / 3; v++) if (acc[v * 3] * Nn[v * 3] + acc[v * 3 + 1] * Nn[v * 3 + 1] + acc[v * 3 + 2] * Nn[v * 3 + 2] < 0) for (let q = 0; q < 3; q++) Nn[v * 3 + q] = -Nn[v * 3 + q];
+    const dup = new Map();
+    for (const k of ks) { const t = T[k][1]; const s = flip[k] ? -1 : 1; for (let j = 0; j < 3; j++) { const v = I[t + j]; if (s * (FN[k * 3] * Nn[v * 3] + FN[k * 3 + 1] * Nn[v * 3 + 1] + FN[k * 3 + 2] * Nn[v * 3 + 2]) >= 0) continue;
+      if (!dup.has(v)) { dup.set(v, P.length / 3); P.push(P[v * 3], P[v * 3 + 1], P[v * 3 + 2]); Nn.push(-Nn[v * 3], -Nn[v * 3 + 1], -Nn[v * 3 + 2]); U.push(U[v * 2], U[v * 2 + 1]); }
+      I[t + j] = dup.get(v); } }
+    Object.assign(p, { positions: Float32Array.from(P), normals: Float32Array.from(Nn), uvs: Float32Array.from(U), indices: Uint32Array.from(I) }); delete p._sg; delete p._adj; delete p._isl;
+  }
+  for (const m of meshes) if (m.parts.some((p) => byPart.has(p) && byPart.get(p).some((k) => flip[k]))) m.dirty = true;
+  return { flipped, tris: n };
+}
+
+// Openings in the front and rear faces closed, so the car isn't see-through there: models made for renders
+// leave the headlights, grille and intakes as open holes into an empty car (the owner's GLS). Seen from the
+// front (and the rear) on a 1 cm grid, each cell keeps how deep the first surface facing that way lies; a cell much deeper
+// (3 cm) than the surface around it (the depth map opened with a 7 cm square: wider areas are the car's own
+// shape) is an opening. Openings high and to the side at the front are the headlights: a lens there (kind 2,
+// what the game lights, at Escarabajo's lens spot u 1, v 0.13-0.5) with a reflector 2 cm behind it (kind 0);
+// all the others get a black backing 5 cm in (kind 0). Backings and reflectors sit on `blackUV`, a black
+// spot of the paint mask; the headlight picture is silver there (headlightPicture), so the reflectors come
+// out silver if the game colours the headlight folder from its picture, dark if from the paint mask.
+// meshes: [{ rel, parts }] (not changed). Returns { lens, reflector, front, rear } (writeOM parts or null)
+// and cell counts.
+export function closeOpenings(meshes, { blackUV = [0, 0] } = {}) {
+  const tris = [];
+  for (const m of meshes) for (const p of m.parts) { if (p.flags[0] !== 0 || p.flags[1] || p.positions.length / 3 <= 8) continue; const P = p.positions; const I = p.indices;
+    for (let t = 0; t < I.length; t += 3) tris.push([0, 1, 2].map((j) => [P[I[t + j] * 3], P[I[t + j] * 3 + 1], P[I[t + j] * 3 + 2]])); }
+  if (!tris.length) return { lens: null, reflector: null, front: null, rear: null, cells: {} };
+  const lo = [Infinity, Infinity, Infinity]; const hi = [-Infinity, -Infinity, -Infinity];
+  for (const t of tris) for (const v of t) for (let q = 0; q < 3; q++) { lo[q] = Math.min(lo[q], v[q]); hi[q] = Math.max(hi[q], v[q]); }
+  const S = 0.01; const CAP = 0.6; const R = 7; const halfW = Math.max(-lo[0], hi[0]);
+  const out = { lens: null, reflector: null, front: null, rear: null, cells: {} };
+  for (const side of [-1, 1]) {
+    const dist = (y) => (side < 0 ? y - lo[1] : hi[1] - y);
+    // the face's top: the highest point of surfaces facing this way within 25 cm of the end
+    let zTop = lo[2];
+    for (const t of tris) { const u = t[1].map((x, q) => x - t[0][q]); const w = t[2].map((x, q) => x - t[0][q]); const ny = u[2] * w[0] - u[0] * w[2]; const L = Math.hypot(u[1] * w[2] - u[2] * w[1], ny, u[0] * w[1] - u[1] * w[0]);
+      if (L && Math.abs(ny / L) > 0.5) for (const v of t) if (dist(v[1]) < 0.25) zTop = Math.max(zTop, v[2]); }
+    zTop = Math.min(zTop, lo[2] + 0.8 * (hi[2] - lo[2]));
+    const nx = Math.ceil((hi[0] - lo[0]) / S); const nz = Math.ceil((zTop - lo[2]) / S); if (nx < 4 || nz < 4) continue;
+    const D = new Float32Array(nx * nz).fill(CAP);
+    for (const t of tris) {
+      const d = t.map((v) => dist(v[1])); if (Math.min(...d) >= CAP) continue;
+      // only surfaces facing this way count (the game doesn't draw a triangle seen from behind)
+      if (((t[1][2] - t[0][2]) * (t[2][0] - t[0][0]) - (t[1][0] - t[0][0]) * (t[2][2] - t[0][2])) * side <= 0) continue;
+      const X = t.map((v) => (v[0] - lo[0]) / S); const Z = t.map((v) => (v[2] - lo[2]) / S);
+      const den = (Z[1] - Z[2]) * (X[0] - X[2]) + (X[2] - X[1]) * (Z[0] - Z[2]); if (Math.abs(den) < 1e-9) continue;
+      for (let iz = Math.max(0, Math.floor(Math.min(...Z))); iz <= Math.min(nz - 1, Math.ceil(Math.max(...Z))); iz++) for (let ix = Math.max(0, Math.floor(Math.min(...X))); ix <= Math.min(nx - 1, Math.ceil(Math.max(...X))); ix++) {
+        const cx = ix + 0.5; const cz = iz + 0.5;
+        const a = ((Z[1] - Z[2]) * (cx - X[2]) + (X[2] - X[1]) * (cz - Z[2])) / den; const b = ((Z[2] - Z[0]) * (cx - X[2]) + (X[0] - X[2]) * (cz - Z[2])) / den; const c = 1 - a - b;
+        if (a < -1e-4 || b < -1e-4 || c < -1e-4) continue;
+        const v = a * d[0] + b * d[1] + c * d[2]; const k = iz * nx + ix; if (v < D[k]) D[k] = Math.max(0, v);
+      }
+    }
+    // opening of the depth map (min then max over a (2R+1)² square, row and column passes)
+    const pass = (src, fn, alongX) => { const r = new Float32Array(src.length); for (let iz = 0; iz < nz; iz++) for (let ix = 0; ix < nx; ix++) { let v = src[iz * nx + ix]; for (let o = -R; o <= R; o++) { const jx = alongX ? ix + o : ix; const jz = alongX ? iz : iz + o; if (jx < 0 || jz < 0 || jx >= nx || jz >= nz) continue; v = fn(v, src[jz * nx + jx]); } r[iz * nx + ix] = v; } return r; };
+    const env = pass(pass(pass(pass(D, Math.min, true), Math.min, false), Math.max, true), Math.max, false);
+    const solid = (ix, iz) => ix >= 0 && iz >= 0 && ix < nx && iz < nz && D[iz * nx + ix] < CAP - 0.01;
+    const hole = new Uint8Array(nx * nz);
+    for (let iz = 0; iz < nz; iz++) for (let ix = 0; ix < nx; ix++) {
+      const k = iz * nx + ix; if (!(D[k] - env[k] > 0.03 && env[k] < 0.3)) continue;
+      // surrounded: surface within 45 cm to the left, right, below and above (not a notch in the outline)
+      let ok = 0; for (const [sx, sz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) for (let o = 1; o <= 45; o++) if (solid(ix + sx * o, iz + sz * o)) { ok++; break; }
+      if (ok === 4) hole[k] = 1;
+    }
+    // headlights: front openings in the upper half of the face, out to the sides, 40 cm² or more each; their cells
+    // in the top 30 % of the face
+    const lamp = new Uint8Array(nx * nz);
+    if (side < 0) {
+      const seen = new Uint8Array(nx * nz);
+      for (let k0 = 0; k0 < nx * nz; k0++) {
+        if (!hole[k0] || seen[k0]) continue; const comp = [k0]; seen[k0] = 1;
+        for (let i = 0; i < comp.length; i++) { const k = comp[i]; const ix = k % nx; const iz = (k / nx) | 0; for (const [sx, sz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const jx = ix + sx; const jz = iz + sz; const j = jz * nx + jx; if (jx >= 0 && jz >= 0 && jx < nx && jz < nz && hole[j] && !seen[j]) { seen[j] = 1; comp.push(j); } } }
+        let cz = 0; let cx = 0; for (const k of comp) { cz += (k / nx) | 0; cx += Math.abs(lo[0] + (k % nx + 0.5) * S); } cz = lo[2] + (cz / comp.length + 0.5) * S; cx /= comp.length;
+        if (comp.length >= 40 && cz > lo[2] + 0.5 * (zTop - lo[2]) && cx > 0.45 * halfW) for (const k of comp) if (lo[2] + (((k / nx) | 0) + 0.5) * S > lo[2] + 0.7 * (zTop - lo[2])) lamp[k] = 1; // (the lamp band only: strips running down the bumper stay black)
+      }
+    }
+    // quads on the cells, corners at the opened surface's depth (+ offset), facing out of this end
+    const sheet = (sel, off, uvOf) => {
+      const P = []; const N = []; const U = []; const I = []; const node = new Map();
+      const depthAt = (jx, jz) => { let s = 0; let n = 0; for (const [ax, az] of [[0, 0], [-1, 0], [0, -1], [-1, -1]]) { const ix = jx + ax; const iz = jz + az; if (ix >= 0 && iz >= 0 && ix < nx && iz < nz && sel[iz * nx + ix]) { s += env[iz * nx + ix]; n++; } } return s / n; };
+      const at = (jx, jz) => { const key = jz * (nx + 1) + jx; if (node.has(key)) return node.get(key); const x = lo[0] + jx * S; const z = lo[2] + jz * S; const d = depthAt(jx, jz) + off; node.set(key, P.length / 3); P.push(x, side < 0 ? lo[1] + d : hi[1] - d, z); N.push(0, side, 0); U.push(...uvOf(x, z)); return node.get(key); };
+      for (let iz = 0; iz < nz; iz++) for (let ix = 0; ix < nx; ix++) { if (!sel[iz * nx + ix]) continue; const a = at(ix, iz); const b = at(ix + 1, iz); const c = at(ix + 1, iz + 1); const d = at(ix, iz + 1); I.push(...(side < 0 ? [a, b, c, a, c, d] : [a, c, b, a, d, c])); }
+      return I.length ? { positions: Float32Array.from(P), normals: Float32Array.from(N), uvs: Float32Array.from(U), indices: Uint32Array.from(I) } : null;
+    };
+    const rest = hole.map((h, k) => (h && !lamp[k] ? 1 : 0));
+    out[side < 0 ? 'front' : 'rear'] = sheet(rest, 0.05, () => blackUV);
+    out.cells[side < 0 ? 'front' : 'rear'] = rest.reduce((a, b) => a + b, 0);
+    if (side < 0) {
+      out.cells.lamp = lamp.reduce((a, b) => a + b, 0);
+      // per headlight (left / right) its own box on the picture
+      const box = [[Infinity, -Infinity, Infinity, -Infinity], [Infinity, -Infinity, Infinity, -Infinity]];
+      for (let k = 0; k < nx * nz; k++) if (lamp[k]) { const x = lo[0] + (k % nx + 0.5) * S; const z = lo[2] + (((k / nx) | 0) + 0.5) * S; const b = box[x > 0 ? 1 : 0]; b[0] = Math.min(b[0], x); b[1] = Math.max(b[1], x); b[2] = Math.min(b[2], z); b[3] = Math.max(b[3], z); }
+      const rel = (x, z) => { const b = box[x > 0 ? 1 : 0]; return [Math.min(1, Math.max(0, (x - b[0]) / (b[1] - b[0] || 1))), Math.min(1, Math.max(0, (b[3] - z) / (b[3] - b[2] || 1)))]; };
+      out.lens = sheet(lamp, 0.003, (x, z) => [1, 0.13 + 0.37 * rel(x, z)[0]]);
+      out.reflector = sheet(lamp, 0.02, () => blackUV);
+    }
+  }
+  return out;
+}
+
+// The headlight picture: Escarabajo's (its lens spot and lamp art) with a silver block around `at` (the
+// reflectors' UV spot, closeOpenings' blackUV), big enough for the half-size _s copy. esc: decoded picture or null.
+export function headlightPicture(esc, at) {
+  const w = esc ? esc.w : 128; const h = esc ? esc.h : 64; const px = esc ? new Uint8ClampedArray(esc.data) : new Uint8ClampedArray(w * h * 4);
+  const x0 = Math.max(0, Math.floor(at[0] * w) - 4); const x1 = Math.min(w, Math.ceil(at[0] * w) + 4); const y0 = Math.max(0, Math.floor(at[1] * h) - 4); const y1 = Math.min(h, Math.ceil(at[1] * h) + 4);
+  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) px.set([214, 216, 222, 255], (y * w + x) * 4);
+  return { w, h, data: px };
+}
+
+// The car's paint shared out over the part files the way Escarabajo has them (front bumper, side skirts,
+// rear bumper, the hood lid, the roof with the pillars and the doors, the body for the rest), so every
+// folder holds its own piece like a game car — builds since pack 44 had piled the front into hood / roof,
+// and a car turned round keeps its files on the wrong ends (pack 86: 'rearbumper' at the front, 'hood' at the
+// tail). By the triangle's middle, from the car's own measures: wheel arches (measureArches), the window
+// line (the side glass's bottom), the hood's front edge (top of the surfaces facing forward at the nose)
+// and the windshield's foot. Lamps, glass and moving pieces stay where they are; each file's biggest
+// still piece takes what lands there (a holder when it had none), a file left empty keeps one flat
+// triangle. The doors go to the roof as far as it stays under the .0m's 65,535 indices, the rest to the body.
+// meshes: [{ rel, parts }] with body_2.0m and <dir>/default_2.0m of every folder (holders included),
+// changed in place. Returns { counts: { file: triangles }, moved }.
+export function splitLikeEscarabajo(meshes) {
+  const fileOf = (rel) => (rel === 'body_2.0m' ? 'body' : rel.split('/')[0]);
+  const TARGETS = ['body', 'frontbumper', 'skirt', 'rearbumper', 'hood', 'roof'];
+  const byFile = new Map(meshes.filter((m) => /(^body|\/default)_2\.0m$/.test(m.rel)).map((m) => [fileOf(m.rel), m]));
+  for (const f of TARGETS) if (!byFile.has(f)) return { counts: {}, moved: 0, missing: f };
+  const still = (p) => p.flags[0] === 0 && !p.flags[1] && !p.flags[2];
+  // the car's measures
+  const lo = [Infinity, Infinity, Infinity]; const hi = [-Infinity, -Infinity, -Infinity]; const glass = [];
+  for (const m of meshes) for (const p of m.parts) { if (p.positions.length / 3 <= 8) continue; const P = p.positions;
+    for (let i = 0; i < P.length; i += 3) { if (p.flags[0] === 1) glass.push([P[i], P[i + 1], P[i + 2]]); else if (p.flags[0] === 0) for (let q = 0; q < 3; q++) { lo[q] = Math.min(lo[q], P[i + q]); hi[q] = Math.max(hi[q], P[i + q]); } } }
+  const H = hi[2] - lo[2]; const halfW = Math.max(-lo[0], hi[0]);
+  const arch = measureArches(meshes) || { front: lo[1] + 0.22 * (hi[1] - lo[1]), rear: hi[1] - 0.22 * (hi[1] - lo[1]) };
+  const q = (a, f) => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); return s[Math.floor(f * (s.length - 1))]; };
+  const zBelt = q(glass.filter((v) => Math.abs(v[0]) > 0.6 * halfW).map((v) => v[2]), 0.05) ?? lo[2] + 0.64 * H;
+  const yWS = q(glass.filter((v) => Math.abs(v[0]) < 0.4 * halfW && v[1] < 0).map((v) => v[1]), 0.02) ?? lo[1] + 0.3 * (hi[1] - lo[1]);
+  const zSill = lo[2] + 0.22 * H;
+  const tri = []; // { m, p, t, c, n }
+  for (const f of TARGETS) for (const p of byFile.get(f).parts) { if (!still(p) || p.positions.length / 3 <= 8) continue; const P = p.positions; const I = p.indices;
+    for (let t = 0; t < I.length; t += 3) {
+      const a = I[t] * 3; const b = I[t + 1] * 3; const c = I[t + 2] * 3;
+      const u = [P[b] - P[a], P[b + 1] - P[a + 1], P[b + 2] - P[a + 2]]; const w = [P[c] - P[a], P[c + 1] - P[a + 1], P[c + 2] - P[a + 2]];
+      const n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]]; const L = Math.hypot(...n) || 1;
+      tri.push({ f, p, t, c: [0, 1, 2].map((k) => (P[a + k] + P[b + k] + P[c + k]) / 3), n: n.map((x) => x / L) });
+    } }
+  // the hood's front edge: top of the surfaces facing forward within 30 cm of the nose
+  let zHood = lo[2]; for (const x of tri) if (x.c[1] < lo[1] + 0.3 && x.n[1] < -0.5) zHood = Math.max(zHood, x.c[2]);
+  zHood = Math.min(zHood, zBelt - 0.05);
+  const place = (x) => {
+    const [cx, cy, cz] = x.c; const [nx, , nz] = x.n;
+    if (cz > zBelt - 0.02) return 'roof';
+    if (cy < arch.front - 0.3 && cz < zHood && nz < 0.6) return 'frontbumper';
+    if (cy < yWS && cz >= zHood - 0.05 && nz > 0.35 && Math.abs(cx) < 0.85 * halfW) return 'hood';
+    if (cy > arch.rear + 0.3 && cz < lo[2] + 0.45 * H) return 'rearbumper';
+    if (cz < zSill && cy > arch.front + 0.38 && cy < arch.rear - 0.38 && Math.abs(cx) > 0.6 * halfW) return 'skirt';
+    if (cz > zSill && cy > arch.front + 0.45 && cy < arch.rear - 0.42 && Math.abs(nx) > 0.4) return 'door';
+    return 'body';
+  };
+  for (const x of tri) x.to = place(x);
+  // number plates (8 points on the plate cell): the front one in the front bumper, the rear one in the rear bumper
+  const onPlate = (p) => { for (let i = 0; i < p.uvs.length; i += 2) if (p.uvs[i] < PLATE_RECT[0] - 0.01 || p.uvs[i + 1] < PLATE_RECT[1] - 0.01) return false; return p.uvs.length > 0; };
+  for (const f of TARGETS) { const m = byFile.get(f);
+    for (const p of [...m.parts]) { if (!still(p) || p.positions.length / 3 > 8 || p.indices.length < 6 || !onPlate(p)) continue;
+      let y = 0; for (let i = 1; i < p.positions.length; i += 3) y += p.positions[i]; const to = y < 0 ? 'frontbumper' : 'rearbumper';
+      if (to !== f) { m.parts.splice(m.parts.indexOf(p), 1); byFile.get(to).parts.push(p); byFile.get(to).dirty = true; m.dirty = true; } } }
+  // the .0m's limits (65,535 indices a file; room kept for the UV cuts): the doors go to the roof (Escarabajo's
+  // place for them) as far as it holds them, the rest stay in the body
+  const kept = (f) => byFile.get(f).parts.filter((p) => !still(p) || p.positions.length / 3 <= 8).reduce((s, p) => s + p.indices.length, 0);
+  let roofSize = kept('roof') + tri.filter((x) => x.to === 'roof').length * 3;
+  for (const x of tri.filter((d) => d.to === 'door').sort((a, b) => a.c[1] - b.c[1])) { if (roofSize + 3 <= 60000) { x.to = 'roof'; roofSize += 3; } else x.to = 'body'; }
+  // new parts per file (points copied with their normals and UVs)
+  const build = (list) => {
+    const P = []; const N = []; const U = []; const I = []; const maps = new Map();
+    for (const x of list) { let mp = maps.get(x.p); if (!mp) maps.set(x.p, (mp = new Map()));
+      for (let j = 0; j < 3; j++) { const v = x.p.indices[x.t + j]; let k = mp.get(v); if (k === undefined) { k = P.length / 3; mp.set(v, k); P.push(x.p.positions[v * 3], x.p.positions[v * 3 + 1], x.p.positions[v * 3 + 2]); N.push(x.p.normals[v * 3], x.p.normals[v * 3 + 1], x.p.normals[v * 3 + 2]); U.push(x.p.uvs[v * 2], x.p.uvs[v * 2 + 1]); } I.push(k); } }
+    return { positions: Float32Array.from(P), normals: Float32Array.from(N), uvs: Float32Array.from(U), indices: Uint32Array.from(I) };
+  };
+  const counts = {}; let moved = 0;
+  for (const x of tri) if (x.to !== x.f) moved++;
+  const geos = new Map(TARGETS.map((f) => { const mine = tri.filter((x) => x.to === f); counts[f] = mine.length; return [f, mine.length ? build(mine) : null]; })); // (all built before any part is replaced)
+  for (const f of TARGETS) {
+    const m = byFile.get(f);
+    const geo = geos.get(f) || { positions: new Float32Array(9).fill(0).map((_, i) => [lo[0], lo[1], lo[2]][i % 3]), normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]), uvs: new Float32Array(6), indices: Uint32Array.from([0, 1, 2]) };
+    // the file's still pieces with geometry go; the biggest (or a holder) takes the new piece
+    const real = m.parts.filter((p) => still(p) && p.positions.length / 3 > 8);
+    const host = real.sort((a, b) => b.indices.length - a.indices.length)[0] || m.parts.find((p) => still(p) && !(p.indices.length >= 6 && onPlate(p))) || null; // (never the number plate)
+    if (host) Object.assign(host, geo); else m.parts.push({ ...geo, flags: [0, 0, 0] });
+    m.parts = m.parts.filter((p) => p === host || !real.includes(p));
+    for (const p of m.parts) { delete p._sg; delete p._adj; delete p._isl; }
+    m.dirty = true;
+  }
+  return { counts, moved, measures: { zBelt, zHood, zSill, yWS, front: arch.front, rear: arch.rear } };
+}
+
+// A black spot of the paint mask (no garage colour) for pieces that must stay black: the biggest square of
+// black texels (9 × 9, else 5 × 5, else 3 × 3: the owner's canyon has one 3 × 3 spot, where its black trim
+// points), looked for left of the decal sheet first (u < 0.10, shop decals don't reach it), then below it,
+// then anywhere; clear of the game's block, the film and plate cells. Pieces put there take its middle (flat
+// UVs on one black texel are fine, like polestar1's). mask: decoded _base.png. Returns [u, v] or null.
+export function blackSpot(mask) {
+  const { w, h, data } = mask; const black = (x, y) => { const o = (y * w + x) * 4; return data[o] < 128 && data[o + 1] < 128 && data[o + 2] < 128; };
+  const free = (u, v) => !(u < 0.17 && v > 0.66) && !(u >= FILM_RECT[0] && u <= FILM_RECT[2] && v >= FILM_RECT[1] && v <= FILM_RECT[3]) && !(u >= PLATE_RECT[0] && v >= PLATE_RECT[1]);
+  const areas = [[0, 0.02, 0.1, 0.65], [0.17, 0.8, 1, 1], [0, 0, 1, 1]];
+  for (const r of [4, 2, 1]) for (const [u0, v0, u1, v1] of areas) for (let y = Math.ceil(v0 * h) + r; y < Math.floor(v1 * h) - r; y++) for (let x = Math.ceil(u0 * w) + r; x < Math.floor(u1 * w) - r; x++) {
+    const u = (x + 0.5) / w; const v = (y + 0.5) / h; if (!free(u, v)) continue;
+    let ok = true; for (let dy = -r; dy <= r && ok; dy++) for (let dx = -r; dx <= r && ok; dx++) ok = black(x + dx, y + dy);
+    if (ok) return [u, v];
+  }
+  return null;
+}
+
+// closeOpenings' pieces into the car's files: the lens (kind 2) and the reflector into the headlight's
+// default and base meshes (in place of their lens / still holders), the black backings as pieces of their
+// own in the front and rear bumpers. meshes: [{ rel, parts }] (changed in place). Returns the files changed.
+export function addOpenings(meshes, op) {
+  const changed = [];
+  const find = (rel) => meshes.find((m) => m.rel === rel);
+  for (const rel of ['headlight/default_2.0m', 'headlight/base_2.0m']) {
+    const m = find(rel); if (!m || !op.lens) continue;
+    const lens = m.parts.find((p) => p.flags[0] === 2 && !p.flags[1]); const hold = m.parts.find((p) => p.flags[0] === 0 && !p.flags[1] && !p.flags[2]);
+    const copy = (g) => ({ positions: g.positions.slice(), normals: g.normals.slice(), uvs: g.uvs.slice(), indices: g.indices.slice() });
+    if (lens) Object.assign(lens, copy(op.lens)); else m.parts.push({ ...copy(op.lens), flags: [2, 0, 0] });
+    if (op.reflector) { if (hold) Object.assign(hold, copy(op.reflector)); else m.parts.push({ ...copy(op.reflector), flags: [0, 0, 0] }); }
+    for (const p of m.parts) { delete p._sg; delete p._adj; delete p._isl; }
+    m.dirty = true; changed.push(rel);
+  }
+  for (const [key, rel] of [['front', 'frontbumper/default_2.0m'], ['rear', 'rearbumper/default_2.0m']]) {
+    const m = find(rel); if (!m || !op[key]) continue;
+    m.parts.push({ ...op[key], flags: [0, 0, 0] }); m.dirty = true; changed.push(rel);
+  }
+  return changed;
+}

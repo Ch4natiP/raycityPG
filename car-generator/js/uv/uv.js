@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { parseOM, writeOM, omParts } from '../om.js';
 import { makeZip, readZip } from '../zip.js';
-import { decodePNG, png, dds, chartsLayout, underTris, filmGlass, plateQuad, FILM_RECT, PLATE_RECT, applyOBJ, capFileVerts, VERT_CAP, turnCar, measureArches, glassShell } from '../convert.js';
+import { decodePNG, png, dds, chartsLayout, underTris, filmGlass, plateQuad, FILM_RECT, PLATE_RECT, applyOBJ, capFileVerts, VERT_CAP, turnCar, measureArches, glassShell, orientOutward, splitLikeEscarabajo, blackSpot, closeOpenings, addOpenings, headlightPicture } from '../convert.js';
 import { decodeSpec, encodeSpec } from '../carSpec.js';
 
 const $ = (id) => document.getElementById(id);
@@ -57,12 +57,12 @@ async function openFiles(entries) {
   const root = body.path.replace(/body_2\.0m$/i, '');
   car.files = new Map(entries.filter((e) => e.path.startsWith(root)).map((e) => [e.path.slice(root.length), e.data]));
   car.name = (([...car.files.keys()].find((r) => !r.includes('/') && /_base\.png$/i.test(r)) || 'car_base.png').replace(/_base\.png$/i, ''));
-  car.meshes = [];
+  car.meshes = []; car.headlightPic = null;
   for (const rel of [...car.files.keys()].filter((r) => r === 'body_2.0m' || /^[^/]+\/default_2\.0m$/.test(r)).sort()) {
     const b = car.files.get(rel);
     const om = parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
     const parts = omParts(om);
-    if (!parts.some((q) => q.positions.length / 3 > 8) && !/^(front|rear)bumper\/|^(head|rear)light\//.test(rel)) continue; // (bumpers / lamps of only a holder stay: plates and lamps go there)
+    if (!parts.some((q) => q.positions.length / 3 > 8) && !/^(front|rear)bumper\/|^(head|rear)light\/|^(skirt|hood|roof)\//.test(rel)) continue; // (bumpers / lamps / skirt / hood / roof of only a holder stay: plates, lamps and Escarabajo's parts go there)
     // a part with its own texture (list.xml tex, e.g. the tail lamps' red / amber bands) doesn't use the
     // body's paint mask: left off the sheet and not painted
     const dir = rel.includes('/') ? rel.split('/')[0] : '';
@@ -926,6 +926,12 @@ async function saveZip() {
     const lodBase = m.rel.replace(/_2\.0m$/, ''); // (LOD 0 / 1 of the same mesh get it too, even when they differed)
     for (const [rel, b] of car.files) if ((dir(rel) === dir(m.rel) && b.length === m.orig.length && b.every((x, i) => x === m.orig[i])) || /_[01]\.0m$/.test(rel) && rel.replace(/_[01]\.0m$/, '') === lodBase) { out.set(rel, bytes); n++; }
   }
+  // the headlight folder's own picture (🧩: Escarabajo's with the reflectors' silver), named in its list
+  if (car.headlightPic && out.has('headlight/list.xml')) {
+    const { w, h, data } = car.headlightPic; const tex = `${car.name}_headlight`;
+    out.set(`headlight/${tex}.png`, await png(data, w, h)); out.set(`headlight/${tex}_s.dds`, dds(data, w, h, 'half'));
+    out.set('headlight/list.xml', encodeSpec(decodeSpec(out.get('headlight/list.xml')).replace(/(name='(?:base|default)'[^>]*tex=')[^']*'/g, `$1${tex}'`)));
+  }
   const lampN = await lampPictures(out);
   // a lamp folder whose list has a 'base' part (the game's default for Escarabajo-style folders): base = the
   // edited default mesh and its picture, so the car shows the same lamps whichever part the game picks
@@ -1329,10 +1335,39 @@ async function readyForGame() {
   await toSheet(); steps.push('🎯 ' + $('status').textContent.split('·')[0].trim());
   initPlateSliders(); plateUndo = false; plateNow(); steps.push('🔖 ' + $('plate-info').textContent);
   tailAuto(); steps.push('🔴 ' + $('status').textContent.split('·')[0].trim());
+  if ($('esc-complete').checked) steps.push('🧩 ' + await completeLikeEscarabajo());
   await saveZip();
   status(`⚡ พร้อมใส่เกม · ดาวน์โหลด ${car.name}.zip แล้ว — ${steps.join(' | ')}`);
 }
 $('btn-ready-game').addEventListener('click', readyForGame);
+// 🧩 Complete like Escarabajo: triangles wound into the car turned out, the paint shared out over the part files
+// the way Escarabajo has them (front bumper, skirts, rear bumper, hood lid, roof + pillars, body), the open
+// headlights closed with a lens the game lights (and a reflector), the other openings (grille, intakes, around
+// the tail lamps) backed with black so the car isn't see-through, the headlight folder its own picture.
+async function completeLikeEscarabajo() {
+  const o = orientOutward(car.meshes);
+  const s = splitLikeEscarabajo(car.meshes);
+  if (s.missing) return `แยกชิ้นไม่ได้: ไม่มีโฟลเดอร์ ${s.missing}`;
+  // a black spot of the mask for the backings / reflectors (painted in the free strip if the mask has none)
+  let black = car.mask ? blackSpot(car.mask) : null;
+  if (!black && car.mask) {
+    const { w, h, data } = car.mask; const cx = Math.floor(0.03 * w); const cy = Math.floor(0.45 * h);
+    for (let y = cy - 2; y <= cy + 2; y++) for (let x = cx - 2; x <= cx + 2; x++) data.set([0, 0, 0, 255], (y * w + x) * 4);
+    paint.dirty = true; maskChanged(); black = [(cx + 0.5) / w, (cy + 0.5) / h];
+  }
+  const op = closeOpenings(car.meshes, { blackUV: black || [0.03, 0.45] });
+  addOpenings(car.meshes, op);
+  if (op.lens) {
+    let esc = null; try { const tpl = await escarabajoTemplate(); const b = tpl && tpl.get('headlight/escarabajo_headlight.png'); if (b) esc = await decodePNG(b); } catch { /* no template */ }
+    car.headlightPic = headlightPicture(esc, black || [0.03, 0.45]);
+  }
+  for (const m of car.meshes) m.isl = m.parts.map(islandsOf);
+  carMid = null; build3D(); refresh();
+  const c = s.counts; const sz = (n) => n.toLocaleString();
+  return `ครบแบบ Escarabajo: กลับด้าน ${sz(o.flipped)} สามเหลี่ยม · กันชนหน้า ${sz(c.frontbumper)} · สเกิร์ต ${sz(c.skirt)} · กันชนหลัง ${sz(c.rearbumper)} · ฝากระโปรง ${sz(c.hood)} · หลังคา ${sz(c.roof)} · ตัวถัง ${sz(c.body)}${op.lens ? ` · ไฟหน้า ${sz(op.cells.lamp)} ซม²` : ''} · ปิดช่องเปิด ${sz((op.cells.front || 0) + (op.cells.rear || 0))} ซม²`;
+}
+try { $('esc-complete').checked = localStorage.getItem('rc-esc-complete') !== '0'; } catch { /* private mode */ }
+$('esc-complete').addEventListener('change', (e) => { try { localStorage.setItem('rc-esc-complete', e.target.checked ? '1' : '0'); } catch { /* private mode */ } });
 try { $('no-cap').checked = localStorage.getItem('rc-no-cap') === '1'; } catch { /* private mode */ }
 $('no-cap').addEventListener('change', (e) => { try { localStorage.setItem('rc-no-cap', e.target.checked ? '1' : '0'); } catch { /* private mode */ } });
 window.addEventListener('message', async (e) => { if (e.data?.type === 'rc-car' && Array.isArray(e.data.files)) { await openFiles(e.data.files); if (e.data.auto) await readyForGame(); else setPaint(true); } });

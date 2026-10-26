@@ -452,3 +452,24 @@ the game's wheels, 2 cm lower, glass, tail lamps from the black rear corners) wi
 "ไม่ลดจุด" box: body 18,755 points / 62,508 indices, hood 11,757, rear bumper 10,296, roof 8,693, rear lamps 7,593;
 car 64,783 points / 207,579 indices (pack 85: 20,036 / 54,420). Only the body was trimmed, 6 %, because one .0m file
 holds at most 65,535 indices (the file format, not the game's limit).
+2026-10-26: "not complete like Escarabajo". Pack 86 looked at against Escarabajo: frontbumper / headlight / skirt held
+only holders (builds since pack 44 piled the front into hood / roof, INTO_DRAWN); the car turned round in pack 84 kept
+its files on the wrong ends ('rearbumper' at the nose, 'hood' at the tail); the headlights, grille and intakes were
+open holes into an empty car (see-through in game, the headlight's lens only a holder, so nothing to light); the hood
+is a doubled skin (paint over a black layer lying right on it). Pack 40's dark front was most likely its UVs in the
+game's top band (v < 0.33, found with pack 48), not the files left undrawn: Escarabajo draws all of them.
+87_your_gls_complete_like_escarabajo.zip  pack 86 with:
+  - triangles wound into the car turned out (rays out of each face; edge-connected groups vote; a layer lying on
+    another one, like the hood's black skin, stays): 141 triangles;
+  - the paint shared out like Escarabajo's files: front bumper (nose below the hood edge) 11,807 triangles, skirts
+    (sills between the arches) 2,764, rear bumper 8,213, hood lid 1,753, roof (above the window line + pillars +
+    front doors, up to 60,000 indices) 19,796, body the rest 17,453; plates kept (front in frontbumper part 0,
+    rear in rearbumper part 1), lamps / glass / moving holders untouched;
+  - openings closed: headlights a lens (kind 2, Escarabajo's lens spot u 1, v 0.13-0.5) with a reflector 2 cm
+    behind, 434 cm²; grille / intakes / around the tail lamps a black backing 5 cm in, 4,540 cm²; both on the
+    mask's only black spot (3 × 3 texels at 0.069, 0.601, where the black trim points);
+  - headlight/canyon_headlight(.png / _s.dds half + mips) = Escarabajo's headlight picture with a silver block on
+    that spot, named in headlight/list.xml for base and default.
+  Every file under 65,535 points / indices (body 58,242, roof 60,000, frontbumper 53,268). 87_vs_86_preview.png:
+  both seen the way the game draws (no back faces): the front closed, grey headlight lenses.
+RayCity UV: ⚡ has a 🧩 box (on by default) doing the same after the tail lamps.

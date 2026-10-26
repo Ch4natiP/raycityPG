@@ -447,3 +447,8 @@ The owner: pack 84 crashes. Known-good: pack 80 (file ≤ 7,087 points / 18,918 
 25,887, car 31,408 / 93,192). capFileVerts now also caps indices (17,000 per file) with points at 5,400.
 85_your_gls_84_smaller.zip  pack 84 rebuilt under those: file ≤ 5,219 points / 14,628 indices, part ≤ 4,186,
 car 20,036 / 54,420 — all below pack 80.
+2026-10-26: the owner lifted the game's polygon limit. 86_your_gls_canyon_full_detail.zip  pack 84 (turned, arches on
+the game's wheels, 2 cm lower, glass, tail lamps from the black rear corners) with no point cap, then ⚡ with the new
+"ไม่ลดจุด" box: body 18,755 points / 62,508 indices, hood 11,757, rear bumper 10,296, roof 8,693, rear lamps 7,593;
+car 64,783 points / 207,579 indices (pack 85: 20,036 / 54,420). Only the body was trimmed, 6 %, because one .0m file
+holds at most 65,535 indices (the file format, not the game's limit).

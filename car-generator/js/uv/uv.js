@@ -1322,8 +1322,9 @@ async function readyForGame() {
   // no glass in the model (its glass part only a holder): glass made over the open windows
   { const bm = car.meshes.find((m) => m.rel === 'body_2.0m'); const gp = bm && bm.parts.find((p) => p.flags[0] === 1);
     if (gp && gp.positions.length / 3 <= 8 && !car.meshes.some((m) => m.parts.some((p) => p.flags[0] === 1 && p.positions.length / 3 > 8))) { const g = glassShell(car.meshes); if (g.cells) { Object.assign(gp, { positions: g.positions, normals: g.normals, uvs: new Float32Array(g.positions.length / 3 * 2), indices: g.indices }); delete gp._sg; bm.dirty = true; steps.push(`🪟 สร้างกระจกให้ (${g.cells} ช่อง)`); } } }
-  // files over the game's point limit (they crash the game) reduced first
-  const cut = []; for (const m of car.meshes) { const [a, b] = await capFileVerts(m.parts, VERT_CAP); if (b < a) { m.dirty = true; m.isl = m.parts.map(islandsOf); cut.push(`${m.rel.replace('_2.0m', '')} ${a.toLocaleString()}→${b.toLocaleString()}`); } }
+  // files over the game's point limit (they crash the game) reduced first, unless the server's client has the
+  // limit lifted (the box under ⚡); a .0m part still holds at most 65,535 points
+  const cut = []; if (!$('no-cap').checked) for (const m of car.meshes) { const [a, b] = await capFileVerts(m.parts, VERT_CAP); if (b < a) { m.dirty = true; m.isl = m.parts.map(islandsOf); cut.push(`${m.rel.replace('_2.0m', '')} ${a.toLocaleString()}→${b.toLocaleString()}`); } }
   if (cut.length) { carMid = null; build3D(); steps.push(`🔻 ลดจุด (เกมเด้งถ้าเกิน): ${cut.join(', ')}`); }
   await toSheet(); steps.push('🎯 ' + $('status').textContent.split('·')[0].trim());
   initPlateSliders(); plateUndo = false; plateNow(); steps.push('🔖 ' + $('plate-info').textContent);
@@ -1332,6 +1333,8 @@ async function readyForGame() {
   status(`⚡ พร้อมใส่เกม · ดาวน์โหลด ${car.name}.zip แล้ว — ${steps.join(' | ')}`);
 }
 $('btn-ready-game').addEventListener('click', readyForGame);
+try { $('no-cap').checked = localStorage.getItem('rc-no-cap') === '1'; } catch { /* private mode */ }
+$('no-cap').addEventListener('change', (e) => { try { localStorage.setItem('rc-no-cap', e.target.checked ? '1' : '0'); } catch { /* private mode */ } });
 window.addEventListener('message', async (e) => { if (e.data?.type === 'rc-car' && Array.isArray(e.data.files)) { await openFiles(e.data.files); if (e.data.auto) await readyForGame(); else setPaint(true); } });
 for (const w of [window.opener, window.parent !== window ? window.parent : null]) if (w) try { w.postMessage({ type: 'rc-uv-ready' }, '*'); } catch { /* gone */ }
 

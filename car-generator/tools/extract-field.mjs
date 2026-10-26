@@ -39,7 +39,7 @@ for (const c of fs.readdirSync(field).filter((x) => x.startsWith('common')).sort
 console.log(`shared pictures: ${lib.size}`);
 const fileCache = new Map(); const readCached = (f) => { if (!fileCache.has(f)) { if (fileCache.size > 8) fileCache.clear(); fileCache.set(f, fs.readFileSync(f)); } return fileCache.get(f); };
 
-const dir = path.join(field, region); const used = new Set(); const sectors = []; let missingPics = 0; let total = 0;
+const dir = path.join(field, region); const used = new Set(); const sectors = []; let missingPics = 0; const missingNames = new Map(); let total = 0;
 for (const f of fs.readdirSync(dir).sort()) {
   const m = new RegExp(`^${region}_(\\d{4})_(\\d{4})\\.jmd$`, 'i').exec(f); if (!m) continue;
   const A = +m[1]; const B = +m[2]; const x0 = (A - 1000) * 512; const y0 = (B - 1000) * 512;
@@ -88,7 +88,7 @@ for (const f of fs.readdirSync(dir).sort()) {
   const pics = []; let at = blobs.reduce((a, x) => a + x.length, 0); const want = new Set(mats.flatMap((x) => [x.tex, x.light]).filter(Boolean));
   for (const n of want) {
     if (own.has(n)) { const mp = ddsMip(tb, own.get(n), MIP); if (!mp) continue; pics.push({ name: n, w: mp.w, h: mp.h, fmt: mp.fourcc, at, len: mp.data.length }); blobs.push(mp.data); at += mp.data.length; }
-    else if (lib.has(n)) used.add(n); else missingPics++;
+    else if (lib.has(n)) used.add(n); else { missingPics++; missingNames.set(n, (missingNames.get(n) || 0) + 1); }
   }
   const json = Buffer.from(JSON.stringify({ A, B, x0, y0, mats, meshes, pics })); const hd = Buffer.alloc(8); hd.write('RCS1', 0, 'latin1'); hd.writeUInt32LE(json.length, 4);
   const gz = zlib.gzipSync(Buffer.concat([hd, json, ...blobs]), { level: 9 });
@@ -108,4 +108,5 @@ for (const f of fs.readdirSync(dir).sort()) {
   console.log(`lib.bin: ${pics.length} pictures, ${(gz.length / 1048576).toFixed(1)} MB`);
 }
 fs.writeFileSync(path.join(out, 'index.json'), JSON.stringify({ region, sectors: sectors.map((s) => [s.A, s.B]) }));
+console.log(`not found, most used: ${[...missingNames].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([n, c]) => `${n} ×${c}`).join(', ')}`);
 console.log(`${region}: ${sectors.length} sectors, ${(total / 1048576).toFixed(0)} MB; pictures not found ${missingPics}`);

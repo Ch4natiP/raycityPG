@@ -8,6 +8,7 @@ import { createCity } from './city.js';
 import { loadGarage, compactParts, handling, garageScene } from './garage.js';
 import { createTraffic } from './traffic.js';
 import { createPeople } from './people.js';
+import { createField } from './field.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -69,7 +70,8 @@ window.addEventListener('resize', resize); resize();
 const world = new THREE.Group(); scene.add(world);
 let TRACK = []; let HEIGHT = []; let LOOP = true; let LAPS = 0; let ROAD_W = 14; let BOUND = 317;
 let nearRoad = () => Infinity; // distance to the closest other road (city roads)
-let city = null; let tilesOn = false; let traffic = null; let people = null; // the minimap city (js/drive/city.js), when the world is built from it
+let city = null; let tilesOn = false; let traffic = null; let people = null;
+let field = null; let REAL = false; // the game's real city (city/<region>/, tools/extract-field.mjs), when its files are there // the minimap city (js/drive/city.js), when the world is built from it
 let SPAWN = null; // free roam: where R puts the car back
 let blocks = []; let blockGrid = new Map(); // building footprints [x0, z0, x1, z1] for collisions
 const unpack = (a) => { const o = []; let x = 0; let y = 0; let z = 0; for (let i = 0; i < a.length; i += 3) { x += a[i]; y += a[i + 1]; z += a[i + 2]; o.push([x / 10, y / 10, z / 10]); } return o; };
@@ -85,7 +87,8 @@ function buildFree() {
   const t = CITY.tracks.find((q) => q.file === 'gwanghwamun') || CITY.tracks.find((q) => q.region === 'kr');
   const raw = unpack(t.path); const [ox, oy] = raw[0];
   city.setOrigin(ox, oy); tilesOn = true; LOOP = true; LAPS = 0; ROAD_W = 12; BOUND = 1e9;
-  const b = raw[3] || raw[1]; SPAWN = { x: 0, z: 0, h: Math.atan2(b[0] - ox, -(b[1] - oy)) };
+  const b = raw[3] || raw[1]; SPAWN = { x: 0, z: 0, y: REAL ? raw[0][2] : 0, h: Math.atan2(b[0] - ox, -(b[1] - oy)) };
+  if (field) field.setOrigin(ox, oy);
   $('track-info').textContent = 'ขับเล่นในเมือง (โซล) · ถนนและบล็อกจากแผนที่ในเกม · Shift = บูสต์ SP';
 }
 
@@ -185,12 +188,12 @@ async function loadCity() {
 function buildCity(t) {
   clearWorld();
   const raw = unpack(t.path); const [ox, oy, oz] = raw[0];
-  const flat = t.region === 'kr' && city && city.count > 0; // the minimap city is flat
-  const W = (q) => [q[0] - ox, -(q[1] - oy), flat ? 0 : q[2] - oz]; // → [x, z, height]
+  const onCity = t.region === 'kr' && city && city.count > 0; const flat = onCity && !REAL; // the minimap city is flat, the real one is not
+  const W = (q) => [q[0] - ox, -(q[1] - oy), flat ? 0 : REAL && onCity ? q[2] : q[2] - oz]; // → [x, z, height]
   const route = raw.map(W);
   TRACK = route.map((q) => new THREE.Vector2(q[0], q[1])); HEIGHT = route.map((q) => q[2]);
   LOOP = t.loop; LAPS = t.laps; ROAD_W = 12;
-  if (flat) return cityRoute(t, route, ox, oy);
+  if (onCity) return cityRoute(t, route, ox, oy);
   let x0 = Infinity; let z0 = Infinity; let x1 = -Infinity; let z1 = -Infinity; let hmin = Infinity;
   for (const q of route) { x0 = Math.min(x0, q[0]); z0 = Math.min(z0, q[1]); x1 = Math.max(x1, q[0]); z1 = Math.max(z1, q[1]); hmin = Math.min(hmin, q[2]); }
   const M = 400; BOUND = Math.max(Math.abs(x0), Math.abs(x1), Math.abs(z0), Math.abs(z1)) + M;
@@ -238,14 +241,14 @@ function buildCity(t) {
 
 // a kr route raced through the minimap city: the route drawn as the game's glowing guide, start / finish lines
 function cityRoute(t, route, ox, oy) {
-  city.setOrigin(ox, oy); tilesOn = true; BOUND = 1e9;
+  city.setOrigin(ox, oy); if (field) field.setOrigin(ox, oy); tilesOn = true; BOUND = 1e9;
   const glow = new THREE.MeshBasicMaterial({ color: '#3fe0ff', transparent: true, opacity: 0.28, depthWrite: false });
   ribbonMesh([route], 3.2, 0.12, glow).renderOrder = 1;
   const chk = (() => { const c = document.createElement('canvas'); c.width = 12; c.height = 2; const g = c.getContext('2d'); for (let i = 0; i < 12; i++) for (let j = 0; j < 2; j++) { g.fillStyle = (i + j) % 2 ? '#111' : '#fff'; g.fillRect(i, j, 1, 1); } const tx = new THREE.CanvasTexture(c); tx.magFilter = THREE.NearestFilter; return tx; })();
   const line = (i) => {
     const a = route[Math.min(i, route.length - 2)]; const b = route[Math.min(i, route.length - 2) + 1]; const p = route[i];
     const m = new THREE.Mesh(new THREE.PlaneGeometry(ROAD_W, 2.4), new THREE.MeshStandardMaterial({ map: chk }));
-    m.rotation.order = 'YXZ'; m.rotation.set(-Math.PI / 2, Math.atan2(b[0] - a[0], b[1] - a[1]), 0); m.position.set(p[0], 0.1, p[1]); world.add(m);
+    m.rotation.order = 'YXZ'; m.rotation.set(-Math.PI / 2, Math.atan2(b[0] - a[0], b[1] - a[1]), 0); m.position.set(p[0], p[2] + 0.1, p[1]); world.add(m);
   };
   line(0); if (!LOOP) line(route.length - 1);
   const km = (t.length || 0) / 1000;
@@ -394,7 +397,7 @@ $('file-car').addEventListener('change', async (e) => {
 
 const S = { x: 0, z: 0, y: 0, h: 0, vx: 0, vz: 0, steer: 0, wheelSpin: 0 };
 function reset() {
-  if (SPAWN) Object.assign(S, { x: SPAWN.x, z: SPAWN.z, y: 0, h: SPAWN.h, vx: 0, vz: 0, steer: 0 });
+  if (SPAWN) Object.assign(S, { x: SPAWN.x, z: SPAWN.z, y: SPAWN.y || 0, h: SPAWN.h, vx: 0, vz: 0, steer: 0 });
   else { const a = TRACK[0]; const b = TRACK[1]; Object.assign(S, { x: a.x, z: a.y, y: HEIGHT[0], h: Math.atan2(b.x - a.x, b.y - a.y), vx: 0, vz: 0, steer: 0 }); }
   SP.v = SP.max;
   // a sprint's clock runs from the start; a loop's from the first time over the line
@@ -467,6 +470,7 @@ function step(dt) {
   // buildings: back out of the wall, losing most of the speed into it
   const hb = hitBlock(S.x, S.z, 1.1); let hc = !hb && tilesOn ? city.hit(S.x, S.z, 1.1) : null;
   if (!hb && !hc && tilesOn && traffic) hc = traffic.hit(S.x, S.z, 1.0, ...city.origin);
+  if (!hb && !hc && tilesOn && REAL) { const sp = Math.hypot(S.vx, S.vz); if (sp > 0.05) hc = field.wall(S.x - S.vx * dt, S.y + 0.6, S.z - S.vz * dt, S.vx, S.vz, sp * dt + 1.2); }
   if (!hb && !hc && tilesOn && people) hc = people.hit(S.x, S.z, 0.9);
   if (hb || hc) {
     S.x -= S.vx * dt; S.z -= S.vz * dt;
@@ -476,7 +480,9 @@ function step(dt) {
     S.vx *= 0.6; S.vz *= 0.6;
   }
   S.x = Math.max(-BOUND, Math.min(BOUND, S.x)); S.z = Math.max(-BOUND, Math.min(BOUND, S.z));
-  S.y += (tr.h - S.y) * Math.min(1, dt * 10);
+  let gy = tr.h;
+  if (tilesOn && REAL) { const g = field.ground(S.x, S.z, S.y + 2.5); gy = g === null ? (TRACK.length > 1 ? tr.h : S.y) : g; }
+  S.y += (gy - S.y) * Math.min(1, dt * 12);
   S.wheelSpin += (vf / 0.27) * dt;
   // lamps like the game's: brake red while slowing down going forward, reverse white going backwards
   for (const m of lamps.brake) m.emissiveIntensity = braking ? 2.2 : 0.15;
@@ -531,6 +537,7 @@ function frame(now) {
   cam.position.copy(camPos); cam.lookAt(camLook);
   sun.position.set(S.x - 70, S.y + 60, S.z - 50); sun.target.position.set(S.x, S.y, S.z);
   sky.position.copy(cam.position);
+  if (field) { field.show(tilesOn && REAL); if (tilesOn && REAL) field.update(S.x, S.z); }
   if (tilesOn) { city.update(S.x, S.z); if (people) people.update(S.x, S.z); if (traffic) { const [ox, oy] = city.origin; traffic.update(dt, S.x + ox, oy - S.z, ox, oy, S); } }
   // HUD: speed, SP, the round minimap
   const kmh = Math.round(Math.abs(r.vf) * 3.6);
@@ -553,6 +560,8 @@ function frame(now) {
   if (CITY && CITY.look) {
     gameSky(CITY.look);
     city = createCity(scene, CITY, { build: Q.build, trees: Q.trees }); await city.load();
+    // the real city's files beside the page? (city/kr/: served over http, or inside the phone app)
+    try { field = createField(scene, renderer); await field.open('kr'); REAL = true; city.visuals = false; } catch { field = null; REAL = false; }
   }
   if (CITY) {
     const sel = $('track'); const groups = {};
@@ -575,8 +584,9 @@ function frame(now) {
     await loadGameCar(first);
   } else { const esc = await escarabajo(); if (esc) await loadCar(esc, 'Escarabajo (ในตัว)'); }
   // traffic on the Seoul lanes, in the game's cars
-  if (GARAGE && city && city.count) people = createPeople(scene, GARAGE, city, Q.people);
+  if (GARAGE && city && city.count) people = createPeople(scene, GARAGE, city, Q.people, REAL ? (X, Z) => field.ground(X, Z, 150) : null);
   if (GARAGE && city && city.count && CITY.roads.kr) traffic = createTraffic(scene, GARAGE, CITY.roads.kr.map((l) => unpack(l)), wheelMaker(0.31), Q.traffic);
+  if (traffic) traffic.heights = REAL;
   // the game's paints for the three colours
   $('btn-paint').addEventListener('click', (e) => {
     const P = GARAGE && GARAGE.paints.length ? GARAGE.paints : ['#e8e8e8', '#2a6bd8', '#d63a2f', '#111111', '#f2c230'];
@@ -585,5 +595,5 @@ function frame(now) {
   });
   reset(); camPos.set(S.x, S.y + 3, S.z - 8);
   requestAnimationFrame(frame);
-  window.drive = { S, keys, lap, car, cam: (m) => { camMode = m; }, city: () => city, traffic: () => traffic, SP, get track() { return { pts: TRACK, loop: LOOP, seg: lastSeg } } };
+  window.drive = { S, keys, lap, car, field: () => field, cam: (m) => { camMode = m; }, city: () => city, traffic: () => traffic, SP, get track() { return { pts: TRACK, loop: LOOP, seg: lastSeg } } };
 })();

@@ -23,7 +23,7 @@ function label(text, color = '#ffe14d', quest = false) {
 }
 const pretty = (m) => m.replace(/_\d+$/, '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
-export function createPeople(scene, garage, city, density = 1) {
+export function createPeople(scene, garage, city, density = 1, groundAt = null) {
   const list = (garage && garage.people) || [];
   const geos = new Map(); const mats = [];
   const geoOf = (p) => {
@@ -57,9 +57,10 @@ export function createPeople(scene, garage, city, density = 1) {
       if (!face) continue;
       const isNamed = named.length && r() < 0.45; const [p, i] = isNamed ? named[Math.floor(r() * named.length)] : crowd[Math.floor(r() * crowd.length)] || named[0];
       const m = new THREE.Mesh(geoOf(p), matOf(i)); m.castShadow = true;
-      const X = x - ox; const Z = -(y - oy); m.position.set(X, 0, Z); m.rotation.y = Math.atan2(face[0], -face[1]) + Math.PI;
+      const X = x - ox; const Z = -(y - oy); const gy = groundAt ? groundAt(X, Z) : 0; if (gy === null) continue;
+      m.position.set(X, gy, Z); m.rotation.y = Math.atan2(face[0], -face[1]) + Math.PI;
       g.add(m);
-      if (isNamed) { const s = label(pretty(p.model), '#ffe14d', r() < 0.35); s.position.set(X, 2.35, Z); g.add(s); }
+      if (isNamed) { const s = label(pretty(p.model), '#ffe14d', r() < 0.35); s.position.set(X, gy + 2.35, Z); g.add(s); }
       spots.push([X, Z]);
     }
     group.add(g); tiles.set(`${A}_${B}`, { group: g, spots });
@@ -72,7 +73,7 @@ export function createPeople(scene, garage, city, density = 1) {
       if (!list.length) return;
       const [ox, oy] = city.origin; const x = X + ox; const y = oy - Z; const A = 1000 + 2 * Math.floor(x / TILE); const B = 1000 + 2 * Math.floor(y / TILE);
       for (const k of [...tiles.keys()]) { const [a, b] = k.split('_').map(Number); if (Math.abs(a - A) > 4 || Math.abs(b - B) > 4) drop(k); }
-      for (let a = A - 2; a <= A + 2; a += 2) for (let b = B - 2; b <= B + 2; b += 2) if (!tiles.has(`${a}_${b}`) && city.hasTile(a, b) && city.isBuilt(a, b)) { populate(a, b); return; }
+      for (let a = A - 2; a <= A + 2; a += 2) for (let b = B - 2; b <= B + 2; b += 2) if (!tiles.has(`${a}_${b}`) && city.hasTile(a, b) && (city.isBuilt(a, b) || (!city.visuals && groundAt && groundAt(X, Z) !== null))) { populate(a, b); return; }
     },
     hit(X, Z, r) {
       for (const t of tiles.values()) for (const [x, z] of t.spots) { const dx = X - x; const dz = Z - z; const d = Math.hypot(dx, dz); if (d < r + 0.35) return { nx: dx / (d || 1), nz: dz / (d || 1) }; }

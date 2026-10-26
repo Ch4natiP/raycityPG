@@ -61,7 +61,7 @@ export function createTraffic(scene, garage, lines, makeWheel, COUNT = 26) {
   const at = (c) => { // position and heading along the lane
     const l = lanes[c.lane]; let i = 1; while (i < l.L.length - 1 && l.L[i] < c.s) i++;
     const a = l.p[i - 1]; const b = l.p[i]; const t = Math.min(1, Math.max(0, (c.s - l.L[i - 1]) / (l.L[i] - l.L[i - 1] || 1)));
-    c.x = a[0] + (b[0] - a[0]) * t; c.y = a[1] + (b[1] - a[1]) * t; c.h = Math.atan2(b[0] - a[0], -(b[1] - a[1])); // three heading: forward (sin h, cos h) in x, z
+    c.x = a[0] + (b[0] - a[0]) * t; c.y = a[1] + (b[1] - a[1]) * t; c.z = (a[2] || 0) + ((b[2] || 0) - (a[2] || 0)) * t; c.h = Math.atan2(b[0] - a[0], -(b[1] - a[1])); // three heading: forward (sin h, cos h) in x, z
   };
   function place(c, px, py) {
     // a lane in a cell around the player, the car NEAR·(0.3…1) away
@@ -76,7 +76,8 @@ export function createTraffic(scene, garage, lines, makeWheel, COUNT = 26) {
     c.o.visible = false; c.lane = -1; return false;
   }
 
-  return {
+  const api = {
+    heights: false, // true: on the lanes' own heights (the real city), else flat
     // px, py: the player in RayCity metres; ox, oy: the world origin; P: the player's state (three x, z, vx, vz)
     update(dt, px, py, ox, oy, P) {
       for (const c of cars) {
@@ -92,7 +93,7 @@ export function createTraffic(scene, garage, lines, makeWheel, COUNT = 26) {
         const l = lanes[c.lane];
         if (c.s >= l.len) { if (l.next.length) { c.s -= l.len; c.lane = l.next[Math.floor(Math.random() * l.next.length)]; } else { place(c, px, py); continue; } }
         at(c);
-        c.o.position.set(c.x - ox, 0, -(c.y - oy)); c.o.rotation.y = c.h;
+        c.o.position.set(c.x - ox, api.heights ? c.z : 0, -(c.y - oy)); c.o.rotation.y = c.h;
         for (const w of c.ws) w.rotation.x += (c.v / 0.31) * dt;
       }
     },
@@ -110,4 +111,5 @@ export function createTraffic(scene, garage, lines, makeWheel, COUNT = 26) {
     clear() { for (const c of cars) { c.lane = -1; c.o.visible = false; } },
     get cars() { return cars; },
   };
+  return api;
 }

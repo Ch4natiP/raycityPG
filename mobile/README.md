@@ -1,6 +1,6 @@
 # RayCity PG บนมือถือ (Android)
 
-แอปนี้คือหน้า RayCity Drive (`car-generator/RayCity-Drive.html`) ใส่ไว้ในแอป Android (Capacitor)
+แอปนี้คือหน้า RayCity Drive (`car-generator/RayCity-Drive.html`) กับเมืองจริงของเกม (`car-generator/city/`) ใส่ไว้ในแอป Android (Capacitor)
 หน้าเว็บใช้ทดสอบ/สำหรับแอดมิน ส่วนผู้เล่นใช้แอป
 
 ## เอาไฟล์ APK

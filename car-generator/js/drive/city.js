@@ -247,7 +247,10 @@ export function createCity(scene, data, opts = {}) {
     setOrigin(x, y) { for (const t of tiles.values()) if (t.built) dropTile(t); ox = x; oy = y; },
     clear() { for (const t of tiles.values()) if (t.built) dropTile(t); },
     // build the tiles within reach of the car (one per call, nearest first), drop the far ones
+    // false: no ground, buildings or trees (the real city is shown instead); the map data stays for the minimap
+    visuals: true,
     update(X, Z, reach = 1) {
+      if (!this.visuals) { for (const t of tiles.values()) if (t.built) dropTile(t); return false; }
       const x = X + ox; const y = oy - Z; const A = 1000 + 2 * Math.floor(x / TILE); const B = 1000 + 2 * Math.floor(y / TILE);
       let best = null; let bd = Infinity;
       for (const t of tiles.values()) {

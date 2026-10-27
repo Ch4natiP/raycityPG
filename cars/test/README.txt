@@ -473,3 +473,26 @@ game's top band (v < 0.33, found with pack 48), not the files left undrawn: Esca
   Every file under 65,535 points / indices (body 58,242, roof 60,000, frontbumper 53,268). 87_vs_86_preview.png:
   both seen the way the game draws (no back faces): the front closed, grey headlight lenses.
 RayCity UV: ⚡ has a 🧩 box (on by default) doing the same after the tail lamps.
+2026-10-27: evo.jmd (a working custom car from another server, NEKO-packed like the common tex.jmd) opened and studied
+(not shipped here). What it does:
+- body 11,523 points in 22 pieces (paint, 4 glass pieces kind 1, small pieces as they came from the model); every
+  folder its own geometry (frontbumper 356, hood 381 in 10 pieces, skirt 327, rearbumper 1,649); headlight and grill
+  have no .0m at all (list.xml + picture only: the game copes with a missing mesh, no holders needed); LODs equal.
+- roof = the doors: door 0 [0,1,0] 21 pieces, door 1 [0,1,1] 25 pieces, one still piece; the real roof is in the
+  body. The roof header carries a node per door (see om.js omNodes): hinge = −Aᵀb of the node's inverse world
+  matrix. evo's doors hinge on the roof at (±0.303, −0.262, 1.085) with turned axes (gull wings); Escarabajo's at
+  (±0.849, −1.097, 0.747) (front edge, mid height), its rear quarter windows [0,5,x] at (±0.535, 1.160, 1.014);
+  polestar1's at (±0.891, −0.577, 0.785) plus its tailgate (0, 2.118, 0.976). The hood lid's node is in the body
+  header (Escarabajo (0, −1.381, 0.779), its rear edge). dooropen/default.xml lists doors 0-4.
+  Our canyon's roof carries Escarabajo's header (Beetle hinges) and only holders as door pieces: nothing opens.
+- rearlight: the lamp shape three times (kind 3, 0, 4, 64 points each); the 'steal' rear wing has kind 3 / 4 lamps.
+- 'steal' variants (shop kit) for frontbumper, rearbumper, skirt, mainspoiler.
+- UVs on the game's decal sheet (sides top / bottom, top view middle), glass in the film cell, lamps in the bottom
+  strip; the mask is the standard layout (red, green band, blue block); _base 512 with a full-size _s.dds + mips.
+- _color 128 × 64 fully opaque dark cabin art (wheel, dials, belts): the colour layer is not a plain cover over the
+  paint (polestar1 does the same), so clearing it is not needed.
+- part pictures mostly see-through dark (alpha 19-77); hood / roof / skirt pictures named in their lists but
+  missing — tolerated.
+- winding and normals agree (25 of 16,981 triangles off); the model is closed (no see-through openings).
+om.js: the roof's geometry box doesn't hold its points (the doors' swing): the reader now also finds the block by
+its layout; omNodes reads the hinges.

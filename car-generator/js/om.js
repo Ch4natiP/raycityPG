@@ -1,7 +1,9 @@
 // Reader / writer for RayCity ".0m" mesh files (reverse-engineered from car body files).
 //
 // Layout as understood so far (little endian):
-//   header       magic AA 47 47 03, then scene/transform data (not decoded; kept as-is when writing)
+//   header       magic AA 47 47 03, then scene data (kept as-is when writing): per moving piece a node —
+//                rotation 3 × 3, translation, scale (≈ 1, 1, 1), the piece's offset 3 × 4 and the inverse of its
+//                world matrix 3 × 4, then animation keys — see omNodes
 //   submeshes    0xFF, u8 count, 4 unknown bytes, then `count` records placed 28 bytes apart
 //                (the last one is 25 bytes, the 3 bytes in between are copied from the template).
 //                Record fields: +1 u16 vertexCount, +3 u16 indexCount,
@@ -44,6 +46,18 @@ function findGeometry(dv) {
       }
     }
     if (inside) return o;
+  }
+  // Some tools write a box that doesn't hold the points (evo's roof: the doors' swing): the block found by its
+  // layout alone — positions, normals, the empty block, as many UVs as points and the indices up to the file's end
+  for (let o = 0; o + 30 < len; o++) {
+    const n = dv.getUint16(o + 24, true);
+    if (n < 3) continue;
+    const end = o + 26 + 12 * n;
+    if (end + 2 > len || dv.getUint16(end, true) !== n) continue;
+    const nEnd = end + 2 + 12 * n;
+    if (nEnd + 4 > len || dv.getUint16(nEnd, true) !== 0 || dv.getUint16(nEnd + 2, true) !== n) continue;
+    const iAt = nEnd + 4 + 8 * n;
+    if (iAt + 2 <= len && iAt + 2 + 2 * dv.getUint16(iAt, true) === len) return o;
   }
   throw new Error('ไม่พบข้อมูลโมเดลในไฟล์ .0m');
 }
@@ -324,4 +338,24 @@ export function matchTemplateSubmeshes(template, parts) {
     return i >= 0 ? own.splice(i, 1)[0] : placeholder(s);
   });
   return out.concat(own);
+}
+
+// The nodes in a .0m's header: where the game turns the moving pieces (doors [0,1,0] / [0,1,1] in the roof file,
+// the hood lid in the body file, a tailgate...). Each node: rotation R (3 × 3), translation T, scale ≈ 1,
+// offset O (3 × 4, its first row 1 0 0 0) and the inverse world matrix [A | b] (3 × 4); the hinge (the node's
+// origin in car space) is −Aᵀb. Escarabajo's left door: (0.849, −1.097, 0.747), its front edge; evo's doors hinge
+// on the roof (±0.303, −0.262, 1.085) with turned axes (gull wings). Returns [{ at, pivot, axes: A rows }].
+export function omNodes(om) {
+  const dv = new DataView(om.buffer); const end = Math.min(om.tableOffset > 0 ? om.tableOffset : 8000, dv.byteLength - 108);
+  const f = (o) => dv.getFloat32(o, true);
+  const ortho = (o, stride) => { for (let r = 0; r < 3; r++) { let n = 0; for (let c = 0; c < 3; c++) n += f(o + (r * stride + c) * 4) ** 2; if (Math.abs(n - 1) > 0.02) return false; } return true; };
+  const out = [];
+  for (let o = 48; o < end; o++) {
+    if (![0, 1, 2].every((k) => Math.abs(f(o + k * 4) - 1) < 1e-3)) continue; // scale
+    const st = o - 48; const O = o + 12; const W = o + 60;
+    if (!ortho(st, 3) || Math.abs(f(O) - 1) > 1e-3 || !ortho(W, 4)) continue;
+    const A = [0, 1, 2].map((r) => [0, 1, 2].map((c) => f(W + (r * 4 + c) * 4))); const b = [0, 1, 2].map((r) => f(W + (r * 4 + 3) * 4));
+    out.push({ at: st, pivot: [0, 1, 2].map((c) => -(A[0][c] * b[0] + A[1][c] * b[1] + A[2][c] * b[2])), axes: A });
+  }
+  return out;
 }

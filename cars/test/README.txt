@@ -496,3 +496,21 @@ RayCity UV: ⚡ has a 🧩 box (on by default) doing the same after the tail lam
 - winding and normals agree (25 of 16,981 triangles off); the model is closed (no see-through openings).
 om.js: the roof's geometry box doesn't hold its points (the doors' swing): the reader now also finds the block by
 its layout; omNodes reads the hinges.
+88_your_gls_doors_hood_open_full_detail.zip  the owner's GLS rebuilt from their zip like pack 86 (turned, arches on the
+  game's wheels, 2 cm lower, glass, tail lamps) but nothing trimmed: the paint shared out like Escarabajo's files first
+  (body over the .0m's limit hands its rear to the rear bumper), so the 6 % pack 86 lost is back; then ⚡ in RayCity UV
+  with 🧩, which now also makes the front doors and the hood open (convert.js openingParts):
+  - front doors: skin, inner panel, handle and window frame from 48 cm behind the front wheel to the rear seam (the
+    groove ahead of the B pillar, y 0.07), 10 % up the car to the window line, the frame along the window opening
+    (found from the side: the paint deep inside until the A pillar); their windows with them. Left (+x) door 0
+    [0,1,0] 2,267 triangles + glass [1,1,0], right door 1 [0,1,1] 2,513 + [1,1,1], in the roof file.
+  - hinges written into the roof header's door nodes (om.js setNodePivot): (±0.716, −0.715, 0.755) — front edge, mid
+    height, 10 cm in from the skin; the hood lid (1,766 triangles) is the hood file's [0,1,2], its hinge (the body
+    header's node) at its rear edge (0, −1.092, 0.879).
+  - every file under 65,535 (roof 61,998, body 59,487); 88_doors_hood_open_preview.png: doors and hood turned open
+    about those hinges (60° / 46°) to check them; in game the angle and direction are Escarabajo's animation.
+88_TEST_colour_layer_silver_on_black_trim.zip  pack 88 with only canyon_color.png / _s.dds changed: 5 × 5 texels silver
+  (200, 202, 208, opaque) at the mask's black spot (u 0.069, v 0.601), where the black trim, grille, backings and
+  headlight reflectors point. Test: if the black trim comes out silver, the colour layer draws on the parts the mask
+  leaves black (evo's / polestar1's fully opaque dark colour layers would then only show there) and those parts can
+  get real colours / chrome from it; if nothing changes, it doesn't reach them.

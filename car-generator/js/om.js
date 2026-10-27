@@ -359,3 +359,13 @@ export function omNodes(om) {
   }
   return out;
 }
+
+// Moves a node's hinge to `pivot` (car space), keeping its axes: the translation shifts by the same amount and the
+// inverse world matrix gets b = −A·pivot. The animation keys turn about the node, so they follow. node: from
+// omNodes (updated). Changes om.buffer, which writeOM copies the header from.
+export function setNodePivot(om, node, pivot) {
+  const dv = new DataView(om.buffer); const st = node.at; const W = st + 108;
+  for (let i = 0; i < 3; i++) dv.setFloat32(st + 36 + i * 4, dv.getFloat32(st + 36 + i * 4, true) + pivot[i] - node.pivot[i], true);
+  for (let r = 0; r < 3; r++) dv.setFloat32(W + (r * 4 + 3) * 4, -(node.axes[r][0] * pivot[0] + node.axes[r][1] * pivot[1] + node.axes[r][2] * pivot[2]), true);
+  node.pivot = pivot.slice();
+}

@@ -77,6 +77,66 @@
     body.touch #lap { top: 150px; padding: 4px 8px; font-size: 12px; }
     body.touch #plate .lv { width: 40px; height: 40px; font-size: 15px; }
     body.touch #menu { top: 56px; }
+    /* the game's own pictures (js/drive/hud.js, rc-ui.js): canvases at the pictures' size, no boxes */
+    :root { --ui: 1; }
+    #plate.game { left: 2px; top: 2px; display: block; }
+    #sp.game { width: auto; bottom: 8px; }
+    #sp.game canvas, #plate.game canvas, #speed.game canvas { display: block; }
+    #speed.game { width: auto; padding: 0; border: 0; border-radius: 0; background: none; right: 0; bottom: 4px; }
+    #minimap.game .ring { display: none; }
+    #minimap.game #mini { inset: 13px; width: 170px; height: 170px; }
+    #mini-n .compass { position: absolute; inset: 0; width: 100%; height: 100%; }
+    #minimap .me.game { width: 22px; height: 22px; border: 0; background-size: contain; background-repeat: no-repeat; transform: translate(-50%, -50%); filter: drop-shadow(0 0 2px #000); }
+    #menubar { position: fixed; left: 6px; bottom: 6px; display: flex; gap: 3px; transform: scale(var(--ui)); transform-origin: bottom left; }
+    #menubar .gbtn { padding: 0; border: 0; border-radius: 0; background-color: transparent; background-repeat: no-repeat; min-width: 34px; min-height: 34px; }
+    #menubar .gbtn:not([style]) { width: auto; padding: 0 8px; background: #2b3242; border: 1px solid #44506a; border-radius: 6px; }
+    body.game-ui #btn-panel { display: none; }
+    body.game-ui #menu { top: calc(84px * var(--ui)); }
+    body.game-ui #tools { left: calc(10px + 202px * var(--ui)); bottom: 6px; }
+    body.touch.game-ui #tools { right: auto; bottom: auto; top: calc(84px * var(--ui)); }
+    body.game-ui #tools button { width: 36px; height: 36px; font-size: 16px; }
+    body.touch #menubar { bottom: auto; top: calc(84px * var(--ui)); transform-origin: top left; }
+    body.touch.game-ui #menu { top: calc(128px * var(--ui)); }
+    body.touch #sp.game { bottom: 4px; }
+    body.touch #speed.game { right: 50%; transform: translateX(50%); bottom: 22px; width: auto; padding: 0; }
+    body.in-garage #menubar { display: none; }
+    /* field play (js/drive/play.js): the Enter prompt, quest window, timer, arrow, stamps, level up, shop */
+    #play .hide { display: none !important; }
+    #prompt { position: fixed; left: 50%; bottom: 22%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; cursor: pointer; font: 800 18px system-ui; color: #fff; text-shadow: 0 1px 3px #000, 0 0 8px rgba(0,0,0,.7); }
+    #prompt .key { width: 70px; height: 60px; background-repeat: no-repeat; }
+    #qwin { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(440px, 92vw); padding: 22px 26px 18px; box-sizing: border-box; background: #efe6d0 center / cover; color: #3b2a14; border-radius: 6px; box-shadow: 0 8px 30px rgba(0,0,0,.6); z-index: 5; }
+    #qwin .who { display: flex; align-items: center; gap: 10px; font-size: 18px; }
+    #qwin .face { width: 56px; height: 56px; image-rendering: auto; border: 2px solid #8a6a3a; border-radius: 6px; background: #fff; }
+    #qwin p { font-size: 16px; line-height: 1.5; margin: 12px 0; }
+    #qwin .rew { font-size: 14px; background: rgba(120,90,40,.12); border-radius: 6px; padding: 6px 10px; }
+    #qwin .rew b { color: #b5500a; }
+    #qwin .row { justify-content: flex-end; margin-top: 12px; }
+    #qwin button { font-weight: 700; }
+    #qwin .ok { background: linear-gradient(#ffd23f, #e09a00); color: #3b2a14; border-color: #a86c00; }
+    #qbar { position: fixed; left: 50%; top: 8px; transform: translateX(-50%); text-align: center; pointer-events: none; }
+    #qbar .goal { font: 700 14px system-ui; color: #fff; text-shadow: 0 1px 3px #000; }
+    #qbar.late canvas { filter: hue-rotate(-50deg) saturate(3); animation: blink .5s infinite alternate; }
+    @keyframes blink { to { opacity: .45; } }
+    #qarrow { position: fixed; left: 50%; top: 64px; width: 54px; height: 54px; transform-origin: 50% 50%; pointer-events: none; filter: drop-shadow(0 2px 3px #000); }
+    #stamp { position: fixed; left: 50%; top: 42%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; z-index: 4; }
+    #stamp img { width: 256px; }
+    #stamp.pop img { animation: stamp .35s cubic-bezier(.2, 1.6, .4, 1); }
+    @keyframes stamp { from { transform: scale(2.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    #stamp .txt { font: 800 17px system-ui; color: #fff; text-shadow: 0 1px 3px #000, 0 0 8px #000; }
+    #lvup { position: fixed; left: 50%; top: 17%; transform: translate(-50%, -50%); width: 512px; max-width: 90vw; pointer-events: none; z-index: 4; }
+    #toast { position: fixed; left: 50%; top: 29%; transform: translateX(-50%); font: 800 16px system-ui; color: #ffe24a; text-shadow: 0 1px 3px #000, 0 0 8px #000; pointer-events: none; white-space: nowrap; }
+    .gwin { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(560px, 94vw); max-height: 80vh; display: flex; flex-direction: column; background: rgba(14, 18, 28, .94); border: 2px solid #e0b800; border-radius: 8px; z-index: 5; }
+    .gwin.race { border-color: #c04ae8; }
+    .gwin.race .head { background: linear-gradient(#d070f0, #8a2ab8); color: #fff; }
+    .gwin .head { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: linear-gradient(#f0d23c, #c99a00); color: #2a1c00; }
+    .gwin .head .rp { margin-left: auto; font-weight: 800; }
+    .gwin .list { overflow: auto; padding: 6px 10px; }
+    .gwin .car { display: grid; grid-template-columns: 1fr auto auto; gap: 2px 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid #2b3242; }
+    .gwin .car .st { grid-column: 1; color: #a9b0bb; font-size: 12px; }
+    .gwin .car .pr { grid-row: 1 / 3; grid-column: 2; color: #ffd23f; font-weight: 700; }
+    .gwin .car button { grid-row: 1 / 3; grid-column: 3; }
+    .gwin .car button:disabled { opacity: .4; }
+    body.in-garage #play { display: none; }
     #rotate { position: fixed; inset: 0; display: none; place-items: center; background: #0b0e14; color: #fff; font-size: 20px; text-align: center; z-index: 9; }
     @media (orientation: portrait) { body.touch #rotate { display: grid; } }
     body.in-garage #minimap, body.in-garage #lap, body.in-garage #speed, body.in-garage #sp, body.in-garage .pad { display: none !important; }
@@ -115,6 +175,8 @@
   </div>
 
   <div id="minimap"><canvas id="mini" width="180" height="180"></canvas><div class="ring"></div><div id="mini-n"><span>N</span></div><div class="me"></div></div>
+  <div id="menubar"></div>
+  <div id="play"></div>
   <div id="lap" class="box"><div>รอบ <b id="lap-n">0</b></div><div>เวลา <span id="lap-t">0:00.00</span></div><div class="hint">ดีสุด <span id="lap-best">-</span></div></div>
 
   <div id="speed"><div class="gear" id="gear">N</div><div class="v" id="kmh">0</div><div class="u">km/h</div></div>
@@ -130,6 +192,7 @@
   <script src="js/embedded-cars.js"></script>
   <script src="js/drive/rc-city.js"></script>
   <script src="js/drive/rc-cars.js"></script>
+  <script src="js/drive/rc-ui.js"></script>
   <script type="module" src="js/drive/drive.js"></script>
 </body>
 </html>

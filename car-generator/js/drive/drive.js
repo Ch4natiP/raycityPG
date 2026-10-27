@@ -9,6 +9,8 @@ import { loadGarage, compactParts, handling, garageScene } from './garage.js';
 import { createTraffic } from './traffic.js';
 import { createPeople } from './people.js';
 import { createField } from './field.js';
+import { createHud } from './hud.js';
+import { createPlay } from './play.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -24,6 +26,9 @@ const Q = {
   low: { pr: 1.15, shadow: 1024, traffic: 12, build: 1100, trees: 90, people: 0.5 },
 }[QUALITY];
 if (TOUCH) document.body.classList.add('touch');
+// the game's own screen (its pictures from js/drive/rc-ui.js)
+const hud = createHud();
+if (hud.game) document.body.classList.add('game-ui');
 
 const canvas = $('gl');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -73,6 +78,7 @@ let nearRoad = () => Infinity; // distance to the closest other road (city roads
 let city = null; let tilesOn = false; let traffic = null; let people = null;
 let field = null; let REAL = false; // the game's real city (city/<region>/, tools/extract-field.mjs), when its files are there // the minimap city (js/drive/city.js), when the world is built from it
 let SPAWN = null; // free roam: where R puts the car back
+let play = null; let PORTALS = []; let RACE_M = 0; // field play (js/drive/play.js): the portals by the start, a race's length
 let blocks = []; let blockGrid = new Map(); // building footprints [x0, z0, x1, z1] for collisions
 const unpack = (a) => { const o = []; let x = 0; let y = 0; let z = 0; for (let i = 0; i < a.length; i += 3) { x += a[i]; y += a[i + 1]; z += a[i + 2]; o.push([x / 10, y / 10, z / 10]); } return o; };
 function clearWorld() {
@@ -89,6 +95,17 @@ function buildFree() {
   city.setOrigin(ox, oy); tilesOn = true; LOOP = true; LAPS = 0; ROAD_W = 12; BOUND = 1e9;
   const b = raw[3] || raw[1]; SPAWN = { x: 0, z: 0, y: REAL ? raw[0][2] : 0, h: Math.atan2(b[0] - ox, -(b[1] - oy)) };
   if (field) field.setOrigin(ox, oy);
+  // the portals by the road ahead of the start, on its right: shop, garage, race, gas station, town
+  PORTALS = []; const kinds = ['shop', 'garage', 'racing', 'gassta', 'town']; const at = [60, 170, 290, 420, 560]; let acc = 0;
+  for (let i = 0; i + 1 < raw.length && PORTALS.length < kinds.length; i++) {
+    const a = raw[i]; const c = raw[i + 1]; const dx = c[0] - a[0]; const dz = -(c[1] - a[1]); const L = Math.hypot(dx, dz) || 1;
+    while (PORTALS.length < kinds.length && acc + L >= at[PORTALS.length]) {
+      const t = (at[PORTALS.length] - acc) / L; const X = a[0] - ox + dx * t - (dz / L) * 6; const Z = -(a[1] - oy) + dz * t + (dx / L) * 6;
+      PORTALS.push({ kind: kinds[PORTALS.length], X, Z, y: REAL ? a[2] + (c[2] - a[2]) * t : 0 });
+    }
+    acc += L;
+  }
+  if (play) play.setPortals(PORTALS);
   $('track-info').textContent = 'ขับเล่นในเมือง (โซล) · ถนนและบล็อกจากแผนที่ในเกม · Shift = บูสต์ SP';
 }
 
@@ -193,6 +210,7 @@ function buildCity(t) {
   const route = raw.map(W);
   TRACK = route.map((q) => new THREE.Vector2(q[0], q[1])); HEIGHT = route.map((q) => q[2]);
   LOOP = t.loop; LAPS = t.laps; ROAD_W = 12;
+  RACE_M = (t.length || 0) * (LOOP ? LAPS : 1); // (an endless loop pays nothing)
   if (onCity) return cityRoute(t, route, ox, oy);
   let x0 = Infinity; let z0 = Infinity; let x1 = -Infinity; let z1 = -Infinity; let hmin = Infinity;
   for (const q of route) { x0 = Math.min(x0, q[0]); z0 = Math.min(z0, q[1]); x1 = Math.max(x1, q[0]); z1 = Math.max(z1, q[1]); hmin = Math.min(hmin, q[2]); }
@@ -357,6 +375,7 @@ async function buildCar(parts, maskBytes, colorBytes, label, wheelPos, spec) {
   // chase camera back and up by the car's size (a bus needs more room than a coupe)
   const box = new THREE.Box3().setFromObject(car); const sz = box.getSize(new THREE.Vector3());
   CAMD.d = Math.max(6.5, sz.z * 1.45); CAMD.h = Math.max(2.4, sz.y * 1.5);
+  hud.plate({ car: label.charAt(0).toUpperCase() + label.slice(1) });
   $('car-info').textContent = `รถ: ${label} · ${tris.toLocaleString()} สามเหลี่ยม · ไฟเบรก ${lamps.brake.length} · ไฟถอย ${lamps.reverse.length}${spec && spec.BD_Mass ? ` · ${spec.BD_Mass} กก.` : ''}`;
 }
 let wheelGeo = null; let wheelMat = null;
@@ -401,7 +420,7 @@ function reset() {
   else { const a = TRACK[0]; const b = TRACK[1]; Object.assign(S, { x: a.x, z: a.y, y: HEIGHT[0], h: Math.atan2(b.x - a.x, b.y - a.y), vx: 0, vz: 0, steer: 0 }); }
   SP.v = SP.max;
   // a sprint's clock runs from the start; a loop's from the first time over the line
-  lastSeg = 0; lap.n = 0; lap.t0 = performance.now(); lap.next = 1; lap.started = !LOOP; lap.done = false;
+  lastSeg = 0; lap.n = 0; lap.t0 = performance.now(); lap.next = 1; lap.started = !LOOP; lap.done = false; lap.paid = false;
 }
 const keys = new Set();
 const KEYMAP = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', Space: 'hand', ShiftLeft: 'boost', ShiftRight: 'boost' };
@@ -435,6 +454,12 @@ if (TOUCH) window.addEventListener('pointerdown', () => {
 }, { once: true });
 let camMode = 0;
 $('btn-panel').addEventListener('click', () => $('panel').classList.toggle('hide'));
+// the game's menu buttons: MENU = settings, TOWN = back to the city's start, race = pick a route
+hud.buttons.menu.addEventListener('click', (e) => { $('panel').classList.toggle('hide'); e.currentTarget.blur(); });
+window.addEventListener('keydown', (e) => { if (e.code === 'Escape') $('panel').classList.toggle('hide'); });
+function goTown() { const sel = $('track'); if (sel.querySelector('option[value="city"]')) { sel.value = 'city'; sel.dispatchEvent(new Event('change')); } }
+hud.buttons.town.addEventListener('click', (e) => { goTown(); e.currentTarget.blur(); });
+hud.buttons.race.addEventListener('click', (e) => { if (play) play.openRaces(); else { $('panel').classList.remove('hide'); $('track').focus(); } e.currentTarget.blur(); });
 $('btn-garage').addEventListener('click', (e) => { setGarage(!garageOn); e.currentTarget.blur(); });
 $('btn-reset').addEventListener('click', (e) => { reset(); e.currentTarget.blur(); });
 $('btn-cam').addEventListener('click', (e) => { camMode = (camMode + 1) % 2; e.currentTarget.blur(); });
@@ -527,7 +552,8 @@ function frame(now) {
     sun.position.set(4, -2000 + 8, 3); sun.target.position.set(0, -2000, 0);
     renderer.render(scene, cam); requestAnimationFrame(frame); return;
   }
-  let r = { vf: 0 }; for (let i = 0; i < 4; i++) r = step(dt / 4);
+  // (a quest window or the shop open: the car waits)
+  let r = { vf: 0 }; if (!(play && play.busy())) for (let i = 0; i < 4; i++) r = step(dt / 4);
   car.position.set(S.x, S.y, S.z); car.rotation.y = S.h;
   for (const w of wheels) { w.w.rotation.x = S.wheelSpin; if (w.front) w.pivot.rotation.y = S.steer; }
   const fx = Math.sin(S.h); const fz = Math.cos(S.h);
@@ -541,13 +567,19 @@ function frame(now) {
   if (tilesOn) { city.update(S.x, S.z); if (people) people.update(S.x, S.z); if (traffic) { const [ox, oy] = city.origin; traffic.update(dt, S.x + ox, oy - S.z, ox, oy, S); } }
   // HUD: speed, SP, the round minimap
   const kmh = Math.round(Math.abs(r.vf) * 3.6);
-  $('kmh').textContent = kmh; $('gear').textContent = r.vf < -0.2 ? 'R' : kmh < 3 ? 'N' : Math.min(6, 1 + Math.floor(kmh / 38));
-  $('sp-fill').style.width = `${(SP.v / SP.max) * 100}%`; $('sp-text').textContent = `${Math.round(SP.v)}/${SP.max}`; $('sp').classList.toggle('on', !!r.boost);
+  // gears every 38 km/h; the RPM climbs through each one (idle at the bottom)
+  const gear = r.vf < -0.2 ? 'R' : kmh < 3 ? 'N' : Math.min(6, 1 + Math.floor(kmh / 38));
+  const rpm = typeof gear === 'number' ? 0.25 + 0.75 * Math.min(1, gear === 6 ? (kmh - 190) / 60 : (kmh % 38) / 38) : 0.12 + (keys.has('up') ? 0.3 : 0);
+  hud.dash(kmh, gear, rpm); hud.sp(SP.v, SP.max, !!r.boost);
   const mm = $('mini'); const g = mm.getContext('2d');
-  if (tilesOn) city.drawMinimap(g, S.x, S.z, S.h, mm.width, 260, TRACK);
+  if (tilesOn) { city.drawMinimap(g, S.x, S.z, S.h, mm.width, 260, TRACK); if (play) play.drawMinimap(g, S, mm.width, 260); }
   else { g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, mm.width, mm.height); }
   $('mini-n').style.transform = `rotate(${(-S.h * 180) / Math.PI + 180}deg)`;
   $('lap').style.display = TRACK.length < 2 ? 'none' : ''; // (free roam: no laps)
+  if (play) {
+    play.update(dt, S, kmh, tilesOn && TRACK.length < 2);
+    if (lap.done && !lap.paid && RACE_M > 0) { lap.paid = true; play.raceDone(lap.time, RACE_M); }
+  }
   $('lap-n').textContent = LOOP ? `${lap.n}${LAPS ? `/${LAPS}` : ''}` : lap.done ? 'ถึงเส้นชัย' : '-';
   $('lap-t').textContent = lap.done ? fmt(lap.time) : lap.started ? fmt(now - lap.t0) : '0:00.00'; $('lap-best').textContent = Number.isFinite(lap.best) ? fmt(lap.best) : '-';
   renderer.render(scene, cam);
@@ -575,7 +607,30 @@ function frame(now) {
     sel.addEventListener('change', () => { if (sel.value === 'practice') buildPractice(); else if (sel.value === 'city') buildFree(); else buildCity(CITY.tracks[+sel.value]); reset(); camPos.set(S.x, S.y + 3, S.z - 8); sel.blur(); });
   }
   GARAGE = await loadGarage().catch(() => null);
-  const first = GARAGE && (GARAGE.cars.find((c) => c.name === 'escarabajo') || GARAGE.cars[0]);
+  // traffic on the Seoul lanes, in the game's cars; people on the pavements; the field play (portals, quests)
+  const krRoads = CITY && CITY.roads.kr ? CITY.roads.kr.map((l) => unpack(l)) : null;
+  if (GARAGE && city && city.count) people = createPeople(scene, GARAGE, city, Q.people, REAL ? (X, Z) => field.ground(X, Z, 150) : null);
+  if (GARAGE && city && city.count && krRoads) traffic = createTraffic(scene, GARAGE, krRoads, wheelMaker(0.31), Q.traffic);
+  if (traffic) traffic.heights = REAL;
+  if (GARAGE && city && city.count && krRoads) {
+    play = createPlay({ scene, hud, city, people, roads: krRoads, actions: {
+      stop: () => { S.vx = 0; S.vz = 0; },
+      garage: () => setGarage(true),
+      town: () => goTown(),
+      // the game's Seoul routes, their starts in this free-roam map's coordinates
+      races: () => { const [ox, oy] = city.origin; return CITY.tracks.map((t, i) => ({ t, i })).filter(({ t }) => t.region === 'kr' && !t.hidden && t.path.length > 3).map(({ t, i }) => ({ i, name: t.name, length: t.length || 0, loop: t.loop, laps: t.laps, X: t.path[0] / 10 - ox, Z: -(t.path[1] / 10 - oy), pay: play.racePay((t.length || 0) * (t.loop ? t.laps : 1)) })); },
+      startRace: (i) => { const sel = $('track'); sel.value = String(i); sel.dispatchEvent(new Event('change')); },
+      refill: () => { SP.v = SP.max; },
+      cars: () => GARAGE.cars,
+      handling,
+      useCar: async (name) => { const c = GARAGE.cars.find((q) => q.name === name); if (c) { await loadGameCar(c); $('car-pick').value = GARAGE.cars.indexOf(c); } },
+    } });
+    play.setPortals(PORTALS);
+    hud.buttons.cash.addEventListener('click', (e) => { play.openShop(); e.currentTarget.blur(); });
+    hud.buttons.quest.addEventListener('click', (e) => { play.questInfo(); e.currentTarget.blur(); });
+  }
+  const mine = play && GARAGE.cars.find((c) => c.name === play.profile.car && play.profile.owned.includes(c.name));
+  const first = GARAGE && (mine || GARAGE.cars.find((c) => c.name === 'escarabajo') || GARAGE.cars[0]);
   if (first) {
     const pick = $('car-pick');
     GARAGE.cars.forEach((c, i) => { const o = document.createElement('option'); o.value = i; o.textContent = c.name + (c.spec.BD_Mass ? ` · ${c.spec.BD_Mass} กก.` : ''); pick.append(o); });
@@ -583,10 +638,6 @@ function frame(now) {
     pick.addEventListener('change', async () => { await loadGameCar(GARAGE.cars[+pick.value]); pick.blur(); });
     await loadGameCar(first);
   } else { const esc = await escarabajo(); if (esc) await loadCar(esc, 'Escarabajo (ในตัว)'); }
-  // traffic on the Seoul lanes, in the game's cars
-  if (GARAGE && city && city.count) people = createPeople(scene, GARAGE, city, Q.people, REAL ? (X, Z) => field.ground(X, Z, 150) : null);
-  if (GARAGE && city && city.count && CITY.roads.kr) traffic = createTraffic(scene, GARAGE, CITY.roads.kr.map((l) => unpack(l)), wheelMaker(0.31), Q.traffic);
-  if (traffic) traffic.heights = REAL;
   // the game's paints for the three colours
   $('btn-paint').addEventListener('click', (e) => {
     const P = GARAGE && GARAGE.paints.length ? GARAGE.paints : ['#e8e8e8', '#2a6bd8', '#d63a2f', '#111111', '#f2c230'];
@@ -595,5 +646,5 @@ function frame(now) {
   });
   reset(); camPos.set(S.x, S.y + 3, S.z - 8);
   requestAnimationFrame(frame);
-  window.drive = { S, keys, lap, car, field: () => field, cam: (m) => { camMode = m; }, city: () => city, traffic: () => traffic, SP, get track() { return { pts: TRACK, loop: LOOP, seg: lastSeg } } };
+  window.drive = { S, keys, lap, car, play: () => play, people: () => people, field: () => field, cam: (m) => { camMode = m; }, city: () => city, traffic: () => traffic, SP, get track() { return { pts: TRACK, loop: LOOP, seg: lastSeg } } };
 })();

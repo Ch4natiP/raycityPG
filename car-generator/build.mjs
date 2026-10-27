@@ -85,6 +85,8 @@ fs.writeFileSync('RayCity-Easy.html', ehtml);
     // the game's race routes and roads (tools/extract-city.mjs), when pulled out
     .replace('<script src="js/drive/rc-city.js"></script>', () => (fs.existsSync('js/drive/rc-city.js') ? `<script>${fs.readFileSync('js/drive/rc-city.js', 'utf8')}</script>` : ''))
     .replace('<script src="js/drive/rc-cars.js"></script>', () => (fs.existsSync('js/drive/rc-cars.js') ? `<script>${fs.readFileSync('js/drive/rc-cars.js', 'utf8')}</script>` : ''))
+    // the game's interface pictures (tools/extract-ui.mjs)
+    .replace('<script src="js/drive/rc-ui.js"></script>', () => (fs.existsSync('js/drive/rc-ui.js') ? `<script>${fs.readFileSync('js/drive/rc-ui.js', 'utf8')}</script>` : ''))
     .replace('<script type="module" src="js/drive/drive.js"></script>', () => `<script>${embedTemplates()}</script>\n<script>${djs}</script>`);
   dhtml = withHelper(dhtml);
   fs.writeFileSync('RayCity-Drive.html', dhtml);

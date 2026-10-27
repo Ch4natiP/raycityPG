@@ -1,6 +1,7 @@
 // People on the pavements, in the game's own models and skins (person/, pulled out into js/drive/rc-cars.js):
 // named characters with a name tag (some offering a quest, like the game's green "!"), and the street crowd.
 // Each city tile near the car gets its people on the kerbside, facing the road; they leave with the tile.
+// The quest givers are listed for js/drive/play.js (questNear, take); one taken stays taken while the page is open.
 import * as THREE from 'three';
 import { compactParts } from './garage.js';
 
@@ -43,6 +44,7 @@ export function createPeople(scene, garage, city, density = 1, groundAt = null) 
   const named = list.map((p, i) => [p, i]).filter(([p]) => p.named); const crowd = list.map((p, i) => [p, i]).filter(([p]) => !p.named);
   const group = new THREE.Group(); scene.add(group);
   const tiles = new Map(); // 'A_B' → { group, spots: [[X, Z]] }
+  const givers = []; const taken = new Set(); // quest givers near the car: { id, X, Z, y, name, face, sprite, group }
 
   function populate(A, B) {
     const g = new THREE.Group(); const spots = []; const r = rng(A * 7349 + B * 13);
@@ -60,13 +62,18 @@ export function createPeople(scene, garage, city, density = 1, groundAt = null) 
       const X = x - ox; const Z = -(y - oy); const gy = groundAt ? groundAt(X, Z) : 0; if (gy === null) continue;
       m.position.set(X, gy, Z); m.rotation.y = Math.atan2(face[0], -face[1]) + Math.PI;
       g.add(m);
-      if (isNamed) { const s = label(pretty(p.model), '#ffe14d', r() < 0.35); s.position.set(X, gy + 2.35, Z); g.add(s); }
+      if (isNamed) {
+        const id = `${A}_${B}_${spots.length}`; const quest = r() < 0.35 && !taken.has(id); const face = Math.floor(r() * 1000);
+        const s = label(pretty(p.model), '#ffe14d', quest); s.position.set(X, gy + 2.35, Z); g.add(s);
+        if (quest) givers.push({ id, key: `${A}_${B}`, X, Z, y: gy, name: pretty(p.model), face, sprite: s, group: g });
+      }
       spots.push([X, Z]);
     }
     group.add(g); tiles.set(`${A}_${B}`, { group: g, spots });
   }
   function drop(k) {
     const t = tiles.get(k); t.group.traverse((o) => { if (o.isSprite) { o.material.map.dispose(); o.material.dispose(); } }); group.remove(t.group); tiles.delete(k);
+    for (let i = givers.length - 1; i >= 0; i--) if (givers[i].key === k) givers.splice(i, 1);
   }
   return {
     update(X, Z) {
@@ -80,5 +87,14 @@ export function createPeople(scene, garage, city, density = 1, groundAt = null) 
       return null;
     },
     clear() { for (const k of [...tiles.keys()]) drop(k); },
+    givers,
+    // the nearest quest giver within r metres
+    questNear(X, Z, r) { let best = null; let bd = r; for (const q of givers) { const d = Math.hypot(q.X - X, q.Z - Z); if (d < bd) { bd = d; best = q; } } return best; },
+    // a giver whose quest was accepted: the "!" becomes a plain name tag
+    take(q) {
+      taken.add(q.id); const i = givers.indexOf(q); if (i >= 0) givers.splice(i, 1);
+      const s = label(q.name); s.position.copy(q.sprite.position); s.position.y -= 0.5; q.group.add(s);
+      q.group.remove(q.sprite); q.sprite.material.map.dispose(); q.sprite.material.dispose();
+    },
   };
 }

@@ -1,4 +1,13 @@
-Every pack unpacks to rc_canyon/; pack it to rc_canyon.jmd as usual.
+2026-10-27: the owner switched canyon to a Plymouth Hemi Cuda 1971 (90_canyon_plymouth_hemi_cuda_1971.zip) and asked
+for the old, unused cars to go: packs 17-89, their previews, cars/rc_canyon (+ .zip, _extra) and cars/rc_mcqueen were
+removed from the tree (still in the git history). The notes below are kept: they record what the game does.
+90_canyon_plymouth_hemi_cuda_1971.zip unpacks to canyon/ (pack it to canyon.jmd), built in the web tool: RayCity-Easy ->
+RayCity-UV ⚡ with 🧩. Doors (left 2,317 / right 1,259 triangles + glass, frameless like the real hardtop) and hood
+(2,747) open; hinges: doors (±0.717, −0.590, 0.484), hood (0, −0.669, 0.741). Biggest file roof 17,056 points /
+62,001 indices. Seen through (front / rear / left / right / top / front-left): 0.2 / 0.3 / 0.5 / 0.4 / 0.0 / 2.2 %
+(Escarabajo 0.5 / 3.2 / 0.3 / 0.3 / 0.0 / 1.0). 90_canyon_cuda_preview.png.
+
+Packs 17-89 unpacked to rc_canyon/ (packed to rc_canyon.jmd).
 
 In game (2026-10-09): 17 and 21 load (21 up to 3,631 verts per file); 18 (25k) and 19 (8k) crash.
 The dark triangle patches in 17/21: the game reads the paint mask per vertex (the original cars' masks are

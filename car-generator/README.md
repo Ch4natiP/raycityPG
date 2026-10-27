@@ -245,7 +245,7 @@ escarabajo เก็บประตูไว้ในไฟล์ `roof` เก�
 ถ้ารถเด้งออกจากเกมตอนเปิดในโรงรถ ให้ลดลง (กระบะ `rc_canyon` ใช้ `--raw --budget 0.5 --max-verts 7000` รวม LOD2 ≈ 44k จุด)
 `--keep-logos` เก็บโลโก้/ตัวอักษรยี่ห้อไว้ (ไม่งั้นจะลบ ซึ่งอาจทิ้งรูไว้) · ป้ายทะเบียนลบเสมอ เพราะเกมใส่ป้ายเอง
 
-ตัวอย่างที่สร้างแล้ว: `cars/rc_canyon/` (พร้อมไฟล์ .zip) — เครดิตโมเดลอยู่ใน `cars/rc_canyon_extra/CREDITS.txt`
+รถที่ใช้อยู่ตอนนี้: `cars/test/90_canyon_plymouth_hemi_cuda_1971.zip` (Plymouth Hemi Cuda 1971 ชื่อ canyon) · รถตัวอย่าง/แพ็กทดสอบเก่าถูกลบออกแล้ว (ดูย้อนได้ในประวัติ git)
 
 ## RayCity Drive (`drive.html` / `RayCity-Drive.html`) — ขับบนเว็บ
 

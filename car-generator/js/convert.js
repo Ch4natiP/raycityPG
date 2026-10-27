@@ -807,10 +807,11 @@ function slotParts(P, idx, mats) {
   }
   return parts;
 }
-// In game these part files are not drawn with the car's paint (pack 40: the front and lower sides stayed
-// dark whatever their texture); the same geometry in the hood / roof files came out white and
-// repaintable (pack 44). Builds in the template layout put it there.
-export const INTO_DRAWN = { frontbumper: 'hood', headlight: 'hood', grill: 'hood', skirt: 'roof' };
+// Packs 44-86 moved the front bumper / headlight / grill into the hood and the skirt into the roof (pack 40's
+// front came out dark). Escarabajo and evo draw those files with the paint, pack 40's dark front was its UVs
+// in the game's top band (pack 48), and the files merged went over the .0m's limit (trimmed); every part
+// stays in its own file now (🧩 shares the paint out like Escarabajo). Kept as the place to map one if needed.
+export const INTO_DRAWN = {};
 
 const vertsOf = (parts) => parts.reduce((s, q) => s + q.positions.length / 3, 0);
 // A .0m holds at most 65,535 indices (u16 counts): about 21,000 triangles per file.
@@ -1549,6 +1550,22 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, s
       out.set(`${dir ? `${dir}/` : ''}${mesh}_${l}.0m`, writeOM(t, matchTemplateSubmeshes(t, parts)));
     }
   };
+  // a file over the .0m's limit (65,535 indices; 62,000 kept for the stand-ins and UV cuts) hands its rear-most
+  // paint to the file with the most room instead of being simplified (🧩 later shares the paint out like Escarabajo)
+  {
+    const CAP = 62000; const size = (list) => (list || []).reduce((t, q) => t + Math.max(q.indices.length, q.positions.length / 3), 0);
+    const hosts = ['body', 'frontbumper', 'rearbumper', 'skirt', 'hood', 'roof'];
+    for (const slot of Object.keys(lod)) for (let guard = 0; guard < 8 && size(lod[slot]) > CAP; guard++) {
+      const to = hosts.filter((h) => h !== slot).sort((a, b) => size(lod[a]) - size(lod[b]))[0]; const room = CAP - size(lod[to]); if (room < 3000) break;
+      const p = lod[slot].filter((q) => (q.kind || 0) === 0).sort((a, b) => b.indices.length - a.indices.length)[0]; if (!p) break;
+      const n = Math.min(Math.ceil((size(lod[slot]) - CAP) / 3) + 100, Math.floor(room / 6), p.indices.length / 3 - 1); if (n <= 0) break;
+      const ys = []; for (let t = 0; t < p.indices.length; t += 3) ys.push(p.positions[p.indices[t] * 3 + 1] + p.positions[p.indices[t + 1] * 3 + 1] + p.positions[p.indices[t + 2] * 3 + 1]);
+      const cut = [...ys].sort((a, b) => b - a)[n - 1];
+      const g = takeTris(p, (c, nn, t) => ys[t / 3] >= cut); if (!g) break;
+      (lod[to] ||= []).push({ ...g, name: p.name, kind: p.kind || 0 });
+      log(`${slot}: ${(g.indices.length / 3).toLocaleString()} สามเหลี่ยมไปไฟล์ ${to} (เกินที่ไฟล์ .0m เก็บได้ · ไม่ลดจุด)`);
+    }
+  }
   log('เขียนไฟล์ตามแม่แบบ…');
   await tick();
   // One merged piece per kind the template file has (paint, glass, lamps); other kinds join the paint.
@@ -2770,6 +2787,9 @@ export function measureArches(meshes) {
   for (const m of meshes) for (const p of m.parts) { if (p.flags[0] !== 0 || p.positions.length / 3 <= 8) continue; const P = p.positions;
     for (let i = 0; i < P.length; i += 3) { if (Math.abs(P[i]) < 0.6) continue; const b = Math.round(P[i + 1] * 20); bins.set(b, Math.min(bins.get(b) ?? 9, P[i + 2])); } }
   const ks = [...bins.keys()].sort((a, b) => a - b); if (ks.length < 10) return null;
+  // a lone low point inside an arch (a liner, a mud flap) doesn't cut it in two: each bin the middle of itself
+  // and its neighbours
+  { const raw = new Map(bins); for (const k of ks) { const v = [k - 1, k, k + 1].filter((j) => raw.has(j)).map((j) => raw.get(j)).sort((a, b) => a - b); bins.set(k, v[Math.floor(v.length / 2)]); } }
   const low = Math.min(...ks.map((k) => bins.get(k)));
   const runs = []; let cur = null;
   for (let k = ks[0]; k <= ks[ks.length - 1]; k++) { if (!bins.has(k)) { if (cur && k === cur.end + 1) cur.end = k; continue; } // (a missing 5 cm bin keeps the run)
@@ -3070,7 +3090,9 @@ export function splitLikeEscarabajo(meshes) {
   const yWS = q(glass.filter((v) => Math.abs(v[0]) < 0.4 * halfW && v[1] < 0).map((v) => v[1]), 0.02) ?? lo[1] + 0.3 * (hi[1] - lo[1]);
   const zSill = lo[2] + 0.22 * H;
   const tri = []; // { m, p, t, c, n }
-  for (const f of TARGETS) for (const p of byFile.get(f).parts) { if (!still(p) || p.positions.length / 3 <= 8) continue; const P = p.positions; const I = p.indices;
+  // the headlight file's paint too (a template layout can file the whole nose there): shared out with the rest
+  const SOURCES = [...TARGETS, ...(byFile.has('headlight') ? ['headlight'] : [])];
+  for (const f of SOURCES) for (const p of byFile.get(f).parts) { if (!still(p) || p.positions.length / 3 <= 8 || p.flags[0] !== 0) continue; const P = p.positions; const I = p.indices;
     for (let t = 0; t < I.length; t += 3) {
       const a = I[t] * 3; const b = I[t + 1] * 3; const c = I[t + 2] * 3;
       const u = [P[b] - P[a], P[b + 1] - P[a + 1], P[b + 2] - P[a + 2]]; const w = [P[c] - P[a], P[c + 1] - P[a + 1], P[c + 2] - P[a + 2]];
@@ -3135,6 +3157,7 @@ export function splitLikeEscarabajo(meshes) {
     for (const p of m.parts) { delete p._sg; delete p._adj; delete p._isl; }
     m.dirty = true;
   }
+  if (byFile.has('headlight')) { const hm = byFile.get('headlight'); const n0 = hm.parts.length; hm.parts = hm.parts.filter((p) => !(still(p) && p.flags[0] === 0 && p.positions.length / 3 > 8)); if (hm.parts.length !== n0) hm.dirty = true; }
   return { counts, moved, measures: { zBelt, zHood, zSill, yWS, front: arch.front, rear: arch.rear } };
 }
 
@@ -3163,15 +3186,20 @@ export function addOpenings(meshes, op) {
   const find = (rel) => meshes.find((m) => m.rel === rel);
   for (const rel of ['headlight/default_2.0m', 'headlight/base_2.0m']) {
     const m = find(rel); if (!m || !op.lens) continue;
-    const lens = m.parts.find((p) => p.flags[0] === 2 && !p.flags[1]); const hold = m.parts.find((p) => p.flags[0] === 0 && !p.flags[1] && !p.flags[2]);
+    // only stand-ins (8 points or fewer) are replaced: a headlight file with real pieces keeps them
+    const lens = m.parts.find((p) => p.flags[0] === 2 && !p.flags[1] && p.positions.length / 3 <= 8); const hold = m.parts.find((p) => p.flags[0] === 0 && !p.flags[1] && !p.flags[2] && p.positions.length / 3 <= 8);
     const copy = (g) => ({ positions: g.positions.slice(), normals: g.normals.slice(), uvs: g.uvs.slice(), indices: g.indices.slice() });
+    const size = () => Math.max(m.parts.reduce((t, q) => t + q.indices.length, 0), m.parts.reduce((t, q) => t + q.positions.length / 3, 0));
+    const fits = (g, was) => size() - (was ? Math.max(was.indices.length, was.positions.length / 3) : 0) + Math.max(g.indices.length, g.positions.length / 3) <= 64000; // (the .0m's limit)
+    if (!fits(op.lens, lens)) continue;
     if (lens) Object.assign(lens, copy(op.lens)); else m.parts.push({ ...copy(op.lens), flags: [2, 0, 0] });
-    if (op.reflector) { if (hold) Object.assign(hold, copy(op.reflector)); else m.parts.push({ ...copy(op.reflector), flags: [0, 0, 0] }); }
+    if (op.reflector && fits(op.reflector, hold)) { if (hold) Object.assign(hold, copy(op.reflector)); else m.parts.push({ ...copy(op.reflector), flags: [0, 0, 0] }); }
     for (const p of m.parts) { delete p._sg; delete p._adj; delete p._isl; }
     m.dirty = true; changed.push(rel);
   }
   for (const [key, rel] of [['front', 'frontbumper/default_2.0m'], ['rear', 'rearbumper/default_2.0m']]) {
     const m = find(rel); if (!m || !op[key]) continue;
+    if (m.parts.reduce((t, q) => t + q.indices.length, 0) + op[key].indices.length > 64000) continue; // (the .0m's limit: lineSeenInside covers it then)
     m.parts.push({ ...op[key], flags: [0, 0, 0] }); m.dirty = true; changed.push(rel);
   }
   return changed;
@@ -3205,9 +3233,10 @@ const catGeo = (a, b) => { if (!a) return b; if (!b) return a; const base = a.po
 // down to the rocker) and their windows become the roof file's moving pieces (door 0 [0,1,0] + glass [1,1,0] on
 // the left, +x; door 1 [0,1,1] + [1,1,1] on the right), the hood lid the hood file's [0,1,2]; the hinges go into
 // the headers' nodes (omNodes / setNodePivot): each door at its front edge, mid height, 10 cm in from its outer
-// skin (Escarabajo's and polestar1's place), the hood at its rear edge. The front door: from 48 cm behind the front
-// wheel to its rear seam (the groove in the side skin ahead of the B pillar, the first gap in the side glass), from
-// 10 % up the car to the window line, its frame along the glass's edge. A roof over the .0m's limits hands its rear to the body.
+// skin (Escarabajo's and polestar1's place), the hood at its rear edge. The front door: between its seams (grooves in
+// the side skin: the front one about 55 cm behind the front wheel, the rear one the deepest ahead of the B pillar's
+// gap in the side glass), from 10 % up the car to the window line; a framed door (a B pillar behind it) takes its
+// window frame along the opening, a frameless one (a pillarless hardtop like the Cuda) only its glass. A roof over the .0m's limits hands its rear to the body.
 // meshes: [{ rel, om, parts }] (LOD 2: body, roof and hood default with their om), changed in place.
 // Returns { doors: [left, right] triangles, glass, hood, pivots } or { error }.
 export function openingParts(meshes) {
@@ -3225,48 +3254,58 @@ export function openingParts(meshes) {
   const zs = side.map((v) => v[2]).sort((a, b) => a - b); if (zs.length < 20) return { error: 'ไม่มีกระจกข้าง' };
   const zBelt = zs[Math.floor(zs.length * 0.05)];
   // the B pillar: going back along the side glass (1 cm steps it covers, a band above the window line), the first
-  // gap of 3 cm or more after 30 cm of glass
+  // gap of 2 cm or more after 30 cm of glass — none on a pillarless hardtop (the Cuda: door glass meets the quarter's)
   const cover = new Set();
   for (const t of glassT) { const c = t.reduce((a, v) => a.map((x, k) => x + v[k] / 3), [0, 0, 0]); if (Math.abs(c[0]) < 0.5 * halfW || c[2] < zBelt + 0.03 || c[2] > zBelt + 0.3) continue;
     const y0 = Math.min(...t.map((v) => v[1])); const y1 = Math.max(...t.map((v) => v[1])); for (let b = Math.floor(y0 / 0.01); b <= Math.floor(y1 / 0.01); b++) cover.add(b); }
   if (!cover.size) return { error: 'ไม่มีกระจกข้าง' };
-  const b0 = Math.min(...cover); let yB = null; let run = 0;
-  for (let b = b0; b < b0 + 400; b++) { if (cover.has(b)) { run++; continue; } if (run >= 30 && !cover.has(b + 1)) { yB = b * 0.01; break; } run = 0; }
-  if (yB === null) return { error: 'หาเสา B ไม่เจอ' };
-  // the door's rear seam: the groove in the side skin (mid door height) just ahead of that gap, else 3 cm ahead
-  { const top = new Map(); for (const m of meshes) for (const p of m.parts) { if (p.flags[0] !== 0 || !still(p) || p.positions.length / 3 <= 8) continue; const P = p.positions;
-      for (let i = 0; i < P.length; i += 3) { const ax = Math.abs(P[i]); if (ax < 0.5 * halfW || P[i + 2] < lo[2] + 0.25 * H || P[i + 2] > lo[2] + 0.45 * H || P[i + 1] < yB - 0.6 || P[i + 1] > yB + 0.02) continue; const b = Math.floor(P[i + 1] / 0.01); top.set(b, Math.max(top.get(b) ?? 0, ax)); } }
-    const xs = [...top.values()].sort((a, b) => a - b); const med = xs[Math.floor(xs.length / 2)] ?? 0;
-    const dips = [...top].filter(([b, x]) => b * 0.01 >= yB - 0.16 && x < med - 0.03).map(([b]) => b * 0.01).sort((a, b) => a - b);
-    yB = dips.length ? dips[0] : yB - 0.03; }
-  const yF = arch.front + 0.48; const zBot = lo[2] + 0.10 * H;
-  // the window opening's front edge per 1 cm row above the window line: seen from the side, going forward from the
-  // seam the paint lies deep inside (the open window) until the A pillar comes out to the B pillar's line
-  const S = 0.01; const zTopSide = lo[2] + 0.98 * H; const ny = Math.ceil((yB + 0.16 - yF) / S); const nB = Math.round((yB - yF) / S); const nz = Math.ceil((zTopSide - zBelt) / S); // (to 16 cm behind the seam: the B pillar)
-  const depth = [new Float32Array(ny * nz), new Float32Array(ny * nz)];
-  for (const m of meshes) for (const p of m.parts) { if (p.flags[0] !== 0 || !still(p) || p.positions.length / 3 <= 8) continue; const P = p.positions; const I = p.indices;
-    for (let t = 0; t < I.length; t += 3) {
-      const v = [I[t], I[t + 1], I[t + 2]].map((i) => [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]); const sd = v[0][0] + v[1][0] + v[2][0] > 0 ? 0 : 1;
-      const Y = v.map((q) => (q[1] - yF) / S); const Z = v.map((q) => (q[2] - zBelt) / S); const den = (Z[1] - Z[2]) * (Y[0] - Y[2]) + (Y[2] - Y[1]) * (Z[0] - Z[2]); if (Math.abs(den) < 1e-9) continue;
-      for (let iz = Math.max(0, Math.floor(Math.min(...Z))); iz <= Math.min(nz - 1, Math.ceil(Math.max(...Z))); iz++) for (let iy = Math.max(0, Math.floor(Math.min(...Y))); iy <= Math.min(ny - 1, Math.ceil(Math.max(...Y))); iy++) {
-        const a = ((Z[1] - Z[2]) * (iy + 0.5 - Y[2]) + (Y[2] - Y[1]) * (iz + 0.5 - Z[2])) / den; const b = ((Z[2] - Z[0]) * (iy + 0.5 - Y[2]) + (Y[0] - Y[2]) * (iz + 0.5 - Z[2])) / den; if (a < 0 || b < 0 || a + b > 1) continue;
-        const x = Math.abs(a * v[0][0] + b * v[1][0] + (1 - a - b) * v[2][0]); const k = iz * ny + iy; if (x > depth[sd][k]) depth[sd][k] = x;
-      } } }
-  const front = [[], []]; let glassTop = zBelt;
-  for (const sd of [0, 1]) for (let iz = 0; iz < nz; iz++) {
-    let ref = 0; for (let iy = nB; iy < ny; iy++) ref = Math.max(ref, depth[sd][iz * ny + iy]); // (the B pillar's line)
-    let iy = nB - 2; while (iy > 0 && depth[sd][iz * ny + iy] < ref - 0.08) iy--;
-    front[sd][iz] = iy < nB - 4 ? yF + (iy + 1) * S : Infinity; // (no opening in this row: above the window)
-    if (front[sd][iz] < Infinity) glassTop = Math.max(glassTop, zBelt + (iz + 1) * S);
+  const b0 = Math.min(...cover); let yGap = null; let run = 0;
+  for (let b = b0; b < b0 + 400; b++) { if (cover.has(b)) { run++; continue; } if (run >= 30 && !cover.has(b + 1) && b + 2 <= Math.max(...cover)) { yGap = b * 0.01; break; } run = 0; }
+  // the door's seams: grooves in the side skin at mid door height (1 cm columns of the outer skin 3 cm in)
+  const top = new Map();
+  for (const m of meshes) for (const p of m.parts) { if (p.flags[0] !== 0 || !still(p) || p.positions.length / 3 <= 8) continue; const P = p.positions;
+    for (let i = 0; i < P.length; i += 3) { const ax = Math.abs(P[i]); if (ax < 0.5 * halfW || P[i + 2] < lo[2] + 0.25 * H || P[i + 2] > lo[2] + 0.45 * H) continue; const b = Math.floor(P[i + 1] / 0.01); top.set(b, Math.max(top.get(b) ?? 0, ax)); } }
+  const med = [...top.values()].sort((a, b) => a - b)[Math.floor(top.size / 2)] ?? 0;
+  const groove = (y0, y1) => [...top].filter(([b, x]) => b * 0.01 >= y0 && b * 0.01 <= y1 && x < med - 0.03).map(([b, x]) => [b * 0.01, x]);
+  // front seam: the groove nearest 55 cm behind the front wheel (42-80 cm), else 48 cm
+  const gF = groove(arch.front + 0.42, arch.front + 0.80).sort((a, b) => Math.abs(a[0] - arch.front - 0.55) - Math.abs(b[0] - arch.front - 0.55));
+  const yF = gF.length ? gF[0][0] : arch.front + 0.48;
+  // rear seam: the deepest groove from 80 cm behind the front seam to the B pillar's gap (or 42 cm ahead of the rear wheel)
+  const gB = groove(yF + 0.8, Math.min(yGap ?? Infinity, arch.rear - 0.42)).sort((a, b) => a[1] - b[1]);
+  const yB = gB.length ? gB[0][0] : (yGap ?? arch.rear - 0.5) - 0.03;
+  if (yB - yF < 0.6) return { error: 'หารอยต่อประตูไม่เจอ' };
+  // a framed door (a B pillar right behind its seam) takes its window frame along; a frameless one only its glass
+  const framed = yGap !== null && yGap > yB - 0.05 && yGap < yB + 0.12;
+  const zBot = lo[2] + 0.10 * H;
+  let glassTop = zBelt; const S = 0.01; let nz = 0; const front = [[], []];
+  if (framed) {
+    // the window opening's front edge per 1 cm row above the window line: seen from the side, going forward from the
+    // seam the paint lies deep inside (the open window) until the A pillar comes out to the B pillar's line
+    const zTopSide = lo[2] + 0.98 * H; const ny = Math.ceil((yB + 0.16 - yF) / S); const nB = Math.round((yB - yF) / S); nz = Math.ceil((zTopSide - zBelt) / S); // (to 16 cm behind the seam: the B pillar)
+    const depth = [new Float32Array(ny * nz), new Float32Array(ny * nz)];
+    for (const m of meshes) for (const p of m.parts) { if (p.flags[0] !== 0 || !still(p) || p.positions.length / 3 <= 8) continue; const P = p.positions; const I = p.indices;
+      for (let t = 0; t < I.length; t += 3) {
+        const v = [I[t], I[t + 1], I[t + 2]].map((i) => [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]); const sd = v[0][0] + v[1][0] + v[2][0] > 0 ? 0 : 1;
+        const Y = v.map((q) => (q[1] - yF) / S); const Z = v.map((q) => (q[2] - zBelt) / S); const den = (Z[1] - Z[2]) * (Y[0] - Y[2]) + (Y[2] - Y[1]) * (Z[0] - Z[2]); if (Math.abs(den) < 1e-9) continue;
+        for (let iz = Math.max(0, Math.floor(Math.min(...Z))); iz <= Math.min(nz - 1, Math.ceil(Math.max(...Z))); iz++) for (let iy = Math.max(0, Math.floor(Math.min(...Y))); iy <= Math.min(ny - 1, Math.ceil(Math.max(...Y))); iy++) {
+          const a = ((Z[1] - Z[2]) * (iy + 0.5 - Y[2]) + (Y[2] - Y[1]) * (iz + 0.5 - Z[2])) / den; const b = ((Z[2] - Z[0]) * (iy + 0.5 - Y[2]) + (Y[0] - Y[2]) * (iz + 0.5 - Z[2])) / den; if (a < 0 || b < 0 || a + b > 1) continue;
+          const x = Math.abs(a * v[0][0] + b * v[1][0] + (1 - a - b) * v[2][0]); const k = iz * ny + iy; if (x > depth[sd][k]) depth[sd][k] = x;
+        } } }
+    for (const sd of [0, 1]) for (let iz = 0; iz < nz; iz++) {
+      let ref = 0; for (let iy = nB; iy < ny; iy++) ref = Math.max(ref, depth[sd][iz * ny + iy]); // (the B pillar's line)
+      let iy = nB - 2; while (iy > 0 && depth[sd][iz * ny + iy] < ref - 0.08) iy--;
+      front[sd][iz] = iy < nB - 4 ? yF + (iy + 1) * S : Infinity; // (no opening in this row: above the window)
+      if (front[sd][iz] < Infinity) glassTop = Math.max(glassTop, zBelt + (iz + 1) * S);
+    }
+    // rows under the top of the opening where the inner door trim hid it: the opening's most forward edge
+    for (const sd of [0, 1]) { const seen = front[sd].filter((v) => v < Infinity); if (!seen.length) continue; const fwd = Math.min(...seen);
+      for (let iz = 0; iz < nz && zBelt + iz * S < glassTop; iz++) if (front[sd][iz] === Infinity) front[sd][iz] = fwd; }
   }
-  // rows under the top of the opening where the inner door trim hid it: the opening's most forward edge
-  for (const sd of [0, 1]) { const seen = front[sd].filter((v) => v < Infinity); if (!seen.length) continue; const fwd = Math.min(...seen);
-    for (let iz = 0; iz < nz && zBelt + iz * S < glassTop; iz++) if (front[sd][iz] === Infinity) front[sd][iz] = fwd; }
-  const winFront = (c) => { const iz = Math.floor((c[2] - zBelt) / S); return iz < 0 || iz >= nz ? Infinity : front[c[0] > 0 ? 0 : 1][iz]; };
+  const winFront = (c) => { if (!framed) return yF; const iz = Math.floor((c[2] - zBelt) / S); return iz < 0 || iz >= nz ? Infinity : front[c[0] > 0 ? 0 : 1][iz]; };
   const inDoor = (c) => {
     if (Math.abs(c[0]) < 0.6 * halfW || c[1] > yB) return false;
     if (c[2] >= zBot && c[2] <= zBelt) return c[1] >= yF;
-    if (c[2] <= zBelt || c[2] > glassTop + 0.03) return false;
+    if (!framed || c[2] <= zBelt || c[2] > glassTop + 0.03) return false;
     const iz = Math.floor((c[2] - zBelt) / S); const rows = [iz - 3, iz, iz + 3].map((r) => (r < 0 || r >= nz ? Infinity : front[c[0] > 0 ? 0 : 1][r])); // (the frame along the opening's edge)
     return c[1] >= Math.min(...rows) - 0.04;
   };
@@ -3320,7 +3359,7 @@ export function openingParts(meshes) {
     }
   }
   for (const m of meshes) for (const p of m.parts) { delete p._sg; delete p._adj; delete p._isl; }
-  return { doors: counts, glass: [gotGlass[0] ? gotGlass[0].indices.length / 3 : 0, gotGlass[1] ? gotGlass[1].indices.length / 3 : 0], hood: hoodTris, pivots, measures: { yF, yB, zBot, zBelt, glassTop } };
+  return { doors: counts, glass: [gotGlass[0] ? gotGlass[0].indices.length / 3 : 0, gotGlass[1] ? gotGlass[1].indices.length / 3 : 0], hood: hoodTris, pivots, measures: { yF, yB, yGap, framed, zBot, zBelt, glassTop } };
 }
 
 // What still shows through the car from outside, lined the way game cars are built (Escarabajo / evo: no holes):

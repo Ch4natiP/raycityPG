@@ -124,25 +124,7 @@ export async function checkCar(files, name, template = null) {
       if (moving(t) !== moving(om)) flagsDiff++;
     }
   }
-  // Pack 40: these part files stay dark in game whatever their texture; pack 44 (moved into hood / roof) white.
-  const undrawn = ['frontbumper', 'headlight', 'grill', 'skirt'].filter((d) => {
-    const b = files.get(`${d}/default_2.0m`) || files.get(`${d}/rbrc_001_2.0m`);
-    if (!b) return false;
-    // the template's own pieces there (old body mode: gtv98 bent) are drawn like on the template
-    const t = template && template.files.get(`${d}/default_2.0m`);
-    try {
-      if (t && omOf(t).submeshes.map((s) => s.vertexCount).join() === omOf(b).submeshes.map((s) => s.vertexCount).join()) return false;
-      // pieces with all points on one spot (stand-ins) draw nothing
-      const om = omOf(b);
-      return om.submeshes.some((s) => {
-        if (s.vertexCount <= 8) return false;
-        let ext = 0; const P = om.positions; const o = s.vertexStart * 3;
-        for (let i = 3; i < s.vertexCount * 3; i++) ext = Math.max(ext, Math.abs(P[o + i] - P[o + (i % 3)]));
-        return ext > 1e-3;
-      });
-    } catch { return false; }
-  });
-  if (undrawn.length) warn(`มีชิ้นรถอยู่ในไฟล์ ${undrawn.join(', ')} ที่เกมไม่ทาสี (ชุด 40 ออกมาดำ) สร้างใหม่ด้วยแบบ "ตามรถแม่แบบ" จะย้ายไปไว้ใน hood / roof ให้`);
+  // (frontbumper / headlight / grill / skirt geometry is fine: Escarabajo and evo draw those files with the paint)
   if (broken) bad(`ไฟล์ .0m เสีย ${broken} ไฟล์ (อ่านไม่ได้)`);
   // The file format holds 65,535 vertices; the game's own limit was lifted (2026-10-10, the owner).
   if (worst > 65535) bad(`${worstRel} มี ${worst.toLocaleString()} จุด เกิน 65,535 ที่ไฟล์ .0m เก็บได้`);

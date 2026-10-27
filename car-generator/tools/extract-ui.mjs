@@ -1,6 +1,7 @@
 // Pulls the game's own interface pictures out of the game folder for RayCity Drive's screen (ui/): the player plate,
 // SP gauge, dashboard, minimap ring, menu buttons, the portal signs (shop, garage, town, race, gas), the quest
-// windows, stamps and timer digits, the level-up effect. Writes js/drive/rc-ui.js:
+// windows, stamps and timer digits, the level-up effect; from effect/ the boost flame, drift smoke, the quest "!"
+// and the ground ring. Writes js/drive/rc-ui.js:
 //   window.RC_UI = { pics: { name: PNG data URL }, digits: { name: font }, buttons: { name: frames } }
 // digits from the game's <valdigit> files: { pic, str, u: [[u0, u1] per char], v: [[v0, v1] per char], space }
 // buttons from its <button> files: { pic, w, h, x, y, dx, dy, rows } (frame i: column i / rows, row i % rows)
@@ -13,9 +14,10 @@ const game = process.argv[2];
 const UI = game && path.join(game, 'ui');
 if (!UI || !fs.existsSync(UI)) { console.error('usage: node tools/extract-ui.mjs <game folder>'); process.exit(1); }
 
-// file names in the game differ in case from the lists; find them without it
+// file names in the game differ in case from the lists; find them without it (under ui/, or effect/ for fx/...)
 const find = (rel) => {
   let dir = UI;
+  if (rel.startsWith('fx/')) { dir = path.join(game, 'effect'); rel = rel.slice(3); }
   for (const part of rel.split('/')) {
     const hit = fs.existsSync(dir) && fs.readdirSync(dir).find((x) => x.toLowerCase() === part.toLowerCase());
     if (!hit) return null; dir = path.join(dir, hit);
@@ -27,7 +29,7 @@ const attrs = (t, tag) => { const m = new RegExp(`<${tag}\\b([^>]*)>`, 's').exec
 
 // RGBA → PNG data URL, box-filtered down by an integer factor when asked
 function pic(rel, down = 1) {
-  const f = find(rel); if (!f) { console.warn(`missing ui/${rel}`); return null; }
+  const f = find(rel); if (!f) { console.warn(`missing ${rel}`); return null; }
   const b = fs.readFileSync(f); const ext = path.extname(f).toLowerCase();
   if (ext === '.png') return `data:image/png;base64,${b.toString('base64')}`;
   let { w, h, data } = ext === '.dds' ? dds(b) : tga(b);
@@ -75,6 +77,8 @@ for (const [k, f] of [['menu', 'main'], ['cash', 'ingame_cut_cash'], ['town', 'i
 // portal signs: the octagon (left half) and its light column (right half)
 for (const k of ['shop', 'garage', 'town', 'racing', 'gassta']) add(`p_${k}`, `portal/${k}_icon.tga`);
 add('enter', 'portal/enterkey.png'); buttons.enter = button('portal/enterkey.xml', 'enter');
+// the skill keys (Ctrl boost, Shift drift, Space jump): ready / on / not now
+for (const k of ['boost', 'drift', 'jump']) { add(`s_${k}`, `skill/skill_${k}_b.png`); buttons[`s_${k}`] = button(`skill/skill_${k}_b.xml`, `s_${k}`); }
 // quests: the paper window, name strip, NPC faces, timer digits, the result stamps, the arrow to the goal
 add('q_paper', 'missionquest/quest_dialog_info_bg.png'); add('q_name', 'missionquest/quest_npc_name_back.png'); add('q_icon', 'missionquest/quest_green_icon.png');
 add('q_done', 'missionquest/questcompletedstamp.png'); add('q_bar', 'missionquest/quest_bar.png');
@@ -86,6 +90,9 @@ for (const f of fs.readdirSync(find('missionquest/quest')).sort()) {
   const m = /^quest_([a-z.-]+)\.png$/i.exec(f); if (!m || /^(back|baese|call|level|name|new|npc_bg|phone|qra|rp|small_x|favorites|cellphone)/i.test(m[1])) continue;
   add(`face_${faces.length}`, `missionquest/quest/${f}`); faces.push(m[1]);
 }
+// effects: boost flame and drift smoke (8 × 8 frame sheets), the quest "!" (white, tinted green in the field),
+// the ground ring's arc (halved)
+add('fx_boost', 'fx/boostfire_blue.dds'); add('fx_smoke', 'fx/driftsmoke.dds'); add('fx_mark', 'fx/admiremark.dds'); add('fx_ring', 'fx/groundrange.dds', 2);
 // level up: the game's 14-frame burst, halved
 const lv = [];
 for (let i = 1; i <= 14; i++) { const k = `lvup_${i}`; add(k, `portrait/levelupeffect/user_levelup_${String(i).padStart(5, '0')}.dds`, 2); if (pics[k]) lv.push(k); }

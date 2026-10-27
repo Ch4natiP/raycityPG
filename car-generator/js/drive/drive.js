@@ -1,5 +1,5 @@
 // RayCity Drive: a browser racing prototype. A RayCity car folder (.zip, the game's own .0m meshes, mask and
-// colour layer) driven on a closed track: arcade physics, drift on the handbrake, lap timer, brake / reverse
+// colour layer) driven on a closed track: arcade physics, the game's keys (Shift drift, Ctrl boost, Space jump), lap timer, brake / reverse
 // lamps lit like in the game (kind 4 red braking, kind 3 white reversing).
 import * as THREE from 'three';
 import { parseOM, omParts } from '../om.js';
@@ -11,6 +11,7 @@ import { createPeople } from './people.js';
 import { createField } from './field.js';
 import { createHud } from './hud.js';
 import { createPlay } from './play.js';
+import { createFx } from './fx.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -45,6 +46,7 @@ sun.position.set(-60, 120, 40); sun.castShadow = true;
 sun.shadow.mapSize.set(Q.shadow, Q.shadow);
 Object.assign(sun.shadow.camera, { left: -40, right: 40, top: 40, bottom: -40, near: 1, far: 300 });
 scene.add(sun, sun.target);
+const effects = createFx(scene, hud.img); // the game's boost flame and drift smoke
 // the game's sunset: its sky picture (etc/skydome/sunset, upper half = the sky down to the horizon) on a dome
 // that follows the camera, its fog colour and range (etc/env/sunset.xml), a low warm sun
 const sky = new THREE.Mesh(new THREE.SphereGeometry(2000, 48, 24), new THREE.MeshBasicMaterial({ side: THREE.BackSide, fog: false, depthWrite: false }));
@@ -106,7 +108,7 @@ function buildFree() {
     acc += L;
   }
   if (play) play.setPortals(PORTALS);
-  $('track-info').textContent = 'ขับเล่นในเมือง (โซล) · ถนนและบล็อกจากแผนที่ในเกม · Shift = บูสต์ SP';
+  $('track-info').textContent = 'ขับเล่นในเมือง (โซล) · ถนนและบล็อกจากแผนที่ในเกม · Ctrl = บูสต์ (SP 50)';
 }
 
 function buildPractice() {
@@ -297,7 +299,7 @@ function onTrack(x, z, all = false) {
 // Car: the folder's body_2.0m and */default_2.0m, painted from the mask (R/G/B = colours 1/2/3, black = trim)
 // and the colour layer on top; RayCity (x, y back, z up) → three (x, z, −y), so the car faces +z
 
-const car = new THREE.Group(); scene.add(car);
+const car = new THREE.Group(); car.rotation.order = 'YXZ'; scene.add(car);
 const lamps = { brake: [], reverse: [], head: [] };
 let files = null;
 async function imageData(bytes) {
@@ -348,9 +350,10 @@ async function buildCar(parts, maskBytes, colorBytes, label, wheelPos, spec) {
   const paint = new THREE.MeshStandardMaterial({ map: paintTex, roughness: 0.35, metalness: 0.2 });
   const glass = new THREE.MeshStandardMaterial({ color: '#1d2a3a', transparent: true, opacity: 0.55, roughness: 0.05, metalness: 0.6 });
   const shell = new THREE.Group(); shell.rotation.x = -Math.PI / 2; car.add(shell);
-  let tris = 0;
+  let tris = 0; let back = 0; // the car's rearmost point (RayCity y), for the boost flames
   for (const p of parts) {
     if (p.positions.length / 3 <= 8 || !p.indices.length) continue;
+    for (let i = 1; i < p.positions.length; i += 3) back = Math.max(back, p.positions[i]);
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(p.positions), 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(p.normals), 3));
@@ -372,6 +375,7 @@ async function buildCar(parts, maskBytes, colorBytes, label, wheelPos, spec) {
     const w = make(x > 0); pivot.add(w); car.add(pivot); wheels.push({ pivot, w, front: y < 0 });
   }
   HANDLING = handling(spec);
+  effects.setCar(car, -back);
   // chase camera back and up by the car's size (a bus needs more room than a coupe)
   const box = new THREE.Box3().setFromObject(car); const sz = box.getSize(new THREE.Vector3());
   CAMD.d = Math.max(6.5, sz.z * 1.45); CAMD.h = Math.max(2.4, sz.y * 1.5);
@@ -412,25 +416,40 @@ $('file-car').addEventListener('change', async (e) => {
 
 // ---------------------------------------------------------------------------------------------
 // Driving: arcade model — velocity kept apart from the heading, the side slip bled off by tyre grip
-// (much less on the handbrake: drifts), engine / brakes / drag, slower off the road
+// (much less in a drift), engine / brakes / drag, slower off the road; airborne after a jump or off a ledge
 
-const S = { x: 0, z: 0, y: 0, h: 0, vx: 0, vz: 0, steer: 0, wheelSpin: 0 };
+const S = { x: 0, z: 0, y: 0, h: 0, vx: 0, vz: 0, vy: 0, air: false, boostT: 0, steer: 0, wheelSpin: 0 };
 function reset() {
   if (SPAWN) Object.assign(S, { x: SPAWN.x, z: SPAWN.z, y: SPAWN.y || 0, h: SPAWN.h, vx: 0, vz: 0, steer: 0 });
   else { const a = TRACK[0]; const b = TRACK[1]; Object.assign(S, { x: a.x, z: a.y, y: HEIGHT[0], h: Math.atan2(b.x - a.x, b.y - a.y), vx: 0, vz: 0, steer: 0 }); }
+  Object.assign(S, { vy: 0, air: false, boostT: 0 });
   SP.v = SP.max;
   // a sprint's clock runs from the start; a loop's from the first time over the line
   lastSeg = 0; lap.n = 0; lap.t0 = performance.now(); lap.next = 1; lap.started = !LOOP; lap.done = false; lap.paid = false;
 }
-const keys = new Set();
-const KEYMAP = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', Space: 'hand', ShiftLeft: 'boost', ShiftRight: 'boost' };
-const SP = { v: 8996, max: 8996 }; // the game's SP bar, spent on the boost
-window.addEventListener('keydown', (e) => { if (KEYMAP[e.code]) { keys.add(KEYMAP[e.code]); e.preventDefault(); } if (e.code === 'KeyR') reset(); if (e.code === 'KeyC') camMode = (camMode + 1) % 2; });
+// the game's keys: arrows (or WASD) drive, Shift drifts, Ctrl boosts (one press, one boost), Space jumps
+const keys = new Set(); const taps = new Set(); // held / pressed (boost and jump act once per press)
+const KEYMAP = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ShiftLeft: 'hand', ShiftRight: 'hand', ControlLeft: 'boost', ControlRight: 'boost', Space: 'jump' };
+const SP = { v: 8996, max: 8996, cost: 50 }; // the game's SP bar; a boost costs 50
+// SP back while driving, by the share of top speed (etc/gamedata/runsp.xml: perc → amount, here a second)
+const RUNSP = [[5, 1], [10, 2], [20, 4], [40, 6], [60, 8], [80, 10], [100, 12]];
+window.addEventListener('keydown', (e) => {
+  const k = KEYMAP[e.code];
+  // (a button clicked a moment ago keeps the focus: Space would press it again)
+  if (k && document.activeElement && document.activeElement.tagName === 'BUTTON') document.activeElement.blur();
+  if (k) { keys.add(k); if (!e.repeat) taps.add(k); e.preventDefault(); }
+  if (e.code === 'KeyR') reset(); if (e.code === 'KeyC') camMode = (camMode + 1) % 2;
+});
+// keys let go of while the page was in the background never come up: drop them all
+window.addEventListener('blur', () => { keys.clear(); taps.clear(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) { keys.clear(); taps.clear(); } });
+// (Ctrl+W can't be held back in a browser: ask before the tab closes mid-drive)
+window.addEventListener('beforeunload', (e) => { if (Math.hypot(S.vx, S.vz) > 1) { e.preventDefault(); e.returnValue = ''; } });
 window.addEventListener('keyup', (e) => { if (KEYMAP[e.code]) keys.delete(KEYMAP[e.code]); });
 // touch pads: every button its own pointer, so steering and pedals work together
 document.querySelectorAll('.pad button[data-k]').forEach((b) => {
   const k = b.dataset.k;
-  b.addEventListener('pointerdown', (e) => { e.preventDefault(); keys.add(k); b.classList.add('on'); try { b.setPointerCapture(e.pointerId); } catch { /* no live pointer */ } });
+  b.addEventListener('pointerdown', (e) => { e.preventDefault(); keys.add(k); taps.add(k); b.classList.add('on'); try { b.setPointerCapture(e.pointerId); } catch { /* no live pointer */ } });
   for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) b.addEventListener(ev, () => { keys.delete(k); b.classList.remove('on'); });
 });
 // steering by tilting the phone like a wheel (landscape: the tilt is beta, its sign follows which way the phone lies)
@@ -456,6 +475,11 @@ let camMode = 0;
 $('btn-panel').addEventListener('click', () => $('panel').classList.toggle('hide'));
 // the game's menu buttons: MENU = settings, TOWN = back to the city's start, race = pick a route
 hud.buttons.menu.addEventListener('click', (e) => { $('panel').classList.toggle('hide'); e.currentTarget.blur(); });
+for (const b of Object.values(hud.skills)) {
+  const k = b.dataset.k;
+  b.addEventListener('pointerdown', (e) => { e.preventDefault(); keys.add(k); taps.add(k); });
+  for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(ev, () => keys.delete(k));
+}
 window.addEventListener('keydown', (e) => { if (e.code === 'Escape') $('panel').classList.toggle('hide'); });
 function goTown() { const sel = $('track'); if (sel.querySelector('option[value="city"]')) { sel.value = 'city'; sel.dispatchEvent(new Event('change')); } }
 hud.buttons.town.addEventListener('click', (e) => { goTown(); e.currentTarget.blur(); });
@@ -471,23 +495,32 @@ function step(dt) {
   let vf = S.vx * fx + S.vz * fz; let vs = S.vx * fz - S.vz * fx; // forward / side speed
   const tr = onTrack(S.x, S.z); lastSeg = tr.seg;
   const off = tilesOn ? city.classAt(S.x, S.z) < 2 : tr.dist > ROAD_W / 2 + 1 && nearRoad(S.x, S.z) > 5;
-  const boost = keys.has('boost') && SP.v > 0;
-  SP.v = Math.max(0, Math.min(SP.max, SP.v + (boost ? -2200 : 500) * dt));
-  const up = keys.has('up') || keys.has('boost'); const down = keys.has('down'); const hand = keys.has('hand');
+  const H = HANDLING;
+  // boost: a press spends SP.cost for the car's BT_Duration seconds (a press during one starts it afresh)
+  if (taps.has('boost')) { taps.delete('boost'); if (SP.v >= SP.cost) { SP.v -= SP.cost; S.boostT = H.boostTime; } else if (play) play.say(`SP ไม่พอ (บูสต์ใช้ ${SP.cost})`, 1500); }
+  const boost = S.boostT > 0; S.boostT = Math.max(0, S.boostT - dt);
+  // jump: up off the ground; in the air the wheels neither push, brake nor grip
+  if (taps.has('jump')) { taps.delete('jump'); if (!S.air) { S.air = true; S.vy = 6.2; } }
+  const ground = !S.air;
+  const up = keys.has('up') || boost; const down = keys.has('down'); const drift = keys.has('hand') && ground;
   let braking = false; let reversing = false;
-  const H = HANDLING; const top = H.top * (boost ? 1.3 : 1);
-  if (up) vf += (vf < 0 ? 18 : (boost ? 9.5 + 6.5 * H.boost : 9.5) * H.accel * Math.max(0.15, 1 - vf / top)) * dt;
-  if (down) { if (vf > 0.5) { vf = Math.max(0, vf - 16 * dt); braking = true; } else { vf = Math.max(-12, vf - 6 * dt); reversing = vf < -0.2; } }
-  if (!up && !down) vf -= Math.sign(vf) * Math.min(Math.abs(vf), (1.2 + (off ? 6 : 0)) * dt);
-  vf -= vf * Math.abs(vf) * (off ? 0.012 : 0.0016) * dt * 10;
-  if (hand) { vf -= Math.sign(vf) * Math.min(Math.abs(vf), 5 * dt); braking = braking || Math.abs(vf) > 0.5; }
+  const top = H.top * (boost ? 1.3 : 1);
+  if (ground) {
+    if (up) vf += (vf < 0 ? 18 : (boost ? 9.5 + 6.5 * H.boost : 9.5) * H.accel * Math.max(0.15, 1 - vf / top)) * dt;
+    if (down) { if (vf > 0.5) { vf = Math.max(0, vf - 16 * dt); braking = true; } else { vf = Math.max(-12, vf - 6 * dt); reversing = vf < -0.2; } }
+    if (!up && !down) vf -= Math.sign(vf) * Math.min(Math.abs(vf), (1.2 + (off ? 6 : 0)) * dt);
+  }
+  vf -= vf * Math.abs(vf) * (off && ground ? 0.012 : 0.0016) * dt * 10;
+  // drift: the tail slides out, keeping most of the speed
+  if (drift) vf -= Math.sign(vf) * Math.min(Math.abs(vf), 1.5 * dt);
   if (vf < -0.2 && !down) reversing = false;
+  if (!boost) { const pc = (Math.abs(vf) / H.top) * 100; let add = 0; for (const [p, a] of RUNSP) if (pc >= p) add = a; SP.v = Math.min(SP.max, SP.v + add * dt); }
   // steering: less lock at speed
   const want = tiltOn && !keys.has('left') && !keys.has('right') ? tilt : (keys.has('left') ? 1 : 0) - (keys.has('right') ? 1 : 0);
   const lock = 0.55 / (1 + Math.abs(vf) / 18);
   S.steer += (want * lock - S.steer) * Math.min(1, dt * 8);
-  S.h += (vf / 2.38) * Math.tan(S.steer) * dt * (hand ? 1.35 : 1);
-  const grip = (hand ? 1.2 : off ? 4 : 9) * HANDLING.grip;
+  S.h += (vf / 2.38) * Math.tan(S.steer) * dt * (drift ? 1.5 : 1) * (ground ? 1 : 0.25);
+  const grip = ground ? (drift ? 1.3 : off ? 4 : 9) * HANDLING.grip : 0;
   vs -= vs * Math.min(1, grip * dt);
   const nfx = Math.sin(S.h); const nfz = Math.cos(S.h);
   S.vx = nfx * vf + nfz * vs; S.vz = nfz * vf - nfx * vs;
@@ -507,7 +540,9 @@ function step(dt) {
   S.x = Math.max(-BOUND, Math.min(BOUND, S.x)); S.z = Math.max(-BOUND, Math.min(BOUND, S.z));
   let gy = tr.h;
   if (tilesOn && REAL) { const g = field.ground(S.x, S.z, S.y + 2.5); gy = g === null ? (TRACK.length > 1 ? tr.h : S.y) : g; }
-  S.y += (gy - S.y) * Math.min(1, dt * 12);
+  if (S.air) { S.vy -= 18 * dt; S.y += S.vy * dt; if (S.y <= gy && S.vy <= 0) { S.y = gy; S.vy = 0; S.air = false; } }
+  else if (gy < S.y - 0.8) { S.air = true; S.vy = 0; } // off a ledge: falls
+  else S.y += (gy - S.y) * Math.min(1, dt * 12);
   S.wheelSpin += (vf / 0.27) * dt;
   // lamps like the game's: brake red while slowing down going forward, reverse white going backwards
   for (const m of lamps.brake) m.emissiveIntensity = braking ? 2.2 : 0.15;
@@ -528,7 +563,7 @@ function step(dt) {
   return { vf, slip: Math.abs(vs), boost };
 }
 
-const camPos = new THREE.Vector3(); const camLook = new THREE.Vector3();
+const camPos = new THREE.Vector3(); const camLook = new THREE.Vector3(); const rearAt = [new THREE.Vector3(), new THREE.Vector3()];
 
 // the game's garage: the car on show, the camera turning round it; the city waits hidden
 let garageOn = false; let garageGroup = null; let garageSpin = 0; let savedFog = null; let savedBg = null; let savedLight = null;
@@ -538,8 +573,8 @@ function setGarage(on) {
   for (const o of scene.children) if (o !== garageGroup && o !== car && !o.isLight && o !== cam) o.visible = on ? false : o === sky ? !!sky.material.map : true;
   // the garage's light is mostly baked: the scene lights only lift the unlit pieces and the car
   if (on) { savedLight = [sun.intensity, hemi.intensity]; sun.intensity = 0.7; hemi.intensity = 0.55; } else if (savedLight) { [sun.intensity, hemi.intensity] = savedLight; }
-  if (on) { savedFog = scene.fog; savedBg = scene.background; scene.fog = null; scene.background = new THREE.Color('#05070a'); S.vx = S.vz = 0; car.position.set(0, -2000 + GARAGE_FLOOR, 0); car.rotation.y = 0; $('panel').classList.remove('hide'); }
-  else { scene.fog = savedFog || scene.fog; scene.background = savedBg || scene.background; reset(); camPos.set(S.x, S.y + 3, S.z - 8); }
+  if (on) { savedFog = scene.fog; savedBg = scene.background; scene.fog = null; scene.background = new THREE.Color('#05070a'); S.vx = S.vz = 0; car.position.set(0, -2000 + GARAGE_FLOOR, 0); car.rotation.set(0, 0, 0); $('panel').classList.remove('hide'); }
+  else { scene.fog = savedFog || scene.fog; scene.background = savedBg || scene.background; reset(); camPos.set(S.x, S.y + 3, S.z - 8); $('panel').classList.add('hide'); } // (the panel opened for the garage would cover the steering pad)
   document.body.classList.toggle('in-garage', on);
 }
 const GARAGE_FLOOR = 0;
@@ -555,7 +590,13 @@ function frame(now) {
   // (a quest window or the shop open: the car waits)
   let r = { vf: 0 }; if (!(play && play.busy())) for (let i = 0; i < 4; i++) r = step(dt / 4);
   car.position.set(S.x, S.y, S.z); car.rotation.y = S.h;
+  car.rotation.x += ((S.air ? -Math.max(-0.22, Math.min(0.22, S.vy * 0.035)) : 0) - car.rotation.x) * Math.min(1, dt * 10); // nose up on the way up
+  // the boost widens the view a little
+  const fov = 62 + (r.boost ? 9 : 0); if (Math.abs(cam.fov - fov) > 0.05) { cam.fov += (fov - cam.fov) * Math.min(1, dt * 5); cam.updateProjectionMatrix(); }
   for (const w of wheels) { w.w.rotation.x = S.wheelSpin; if (w.front) w.pivot.rotation.y = S.steer; }
+  // boost flames while it runs; smoke off the rear wheels in a drift (or a slide) on the ground
+  const rear = wheels.filter((w) => !w.front).map((w, i) => w.pivot.getWorldPosition(rearAt[i]));
+  effects.update(dt, !!r.boost, !S.air && Math.abs(r.vf) > 6 && (keys.has('hand') || r.slip > 4), rear);
   const fx = Math.sin(S.h); const fz = Math.cos(S.h);
   if (camMode === 0) { camPos.lerp(new THREE.Vector3(S.x - fx * CAMD.d, S.y + CAMD.h, S.z - fz * CAMD.d), Math.min(1, dt * 6)); camLook.set(S.x + fx * 3, S.y + 0.8, S.z + fz * 3); }
   else if (camMode === 1) { camPos.set(S.x + fx * 0.2, S.y + 1.25, S.z + fz * 0.2); camLook.set(S.x + fx * 10, S.y + 1.0, S.z + fz * 10); }
@@ -571,6 +612,7 @@ function frame(now) {
   const gear = r.vf < -0.2 ? 'R' : kmh < 3 ? 'N' : Math.min(6, 1 + Math.floor(kmh / 38));
   const rpm = typeof gear === 'number' ? 0.25 + 0.75 * Math.min(1, gear === 6 ? (kmh - 190) / 60 : (kmh % 38) / 38) : 0.12 + (keys.has('up') ? 0.3 : 0);
   hud.dash(kmh, gear, rpm); hud.sp(SP.v, SP.max, !!r.boost);
+  hud.setSkills({ boost: r.boost ? 'on' : SP.v < SP.cost ? 'off' : 'ready', drift: keys.has('hand') && !S.air ? 'on' : 'ready', jump: S.air ? 'off' : 'ready' });
   const mm = $('mini'); const g = mm.getContext('2d');
   if (tilesOn) { city.drawMinimap(g, S.x, S.z, S.h, mm.width, 260, TRACK); if (play) play.drawMinimap(g, S, mm.width, 260); }
   else { g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, mm.width, mm.height); }
@@ -604,16 +646,16 @@ function frame(now) {
       const o = document.createElement('option'); o.value = i; o.textContent = `${t.name}${t.length ? ` · ${(t.length / 1000).toFixed(1)} กม.` : ''}${t.loop ? ' · วง' : ''}${t.hidden ? ' · (ซ่อน)' : ''}`; groups[r].append(o);
     });
     for (const r of ['kr', 'n1', 'other']) if (groups[r]) sel.append(groups[r]);
-    sel.addEventListener('change', () => { if (sel.value === 'practice') buildPractice(); else if (sel.value === 'city') buildFree(); else buildCity(CITY.tracks[+sel.value]); reset(); camPos.set(S.x, S.y + 3, S.z - 8); sel.blur(); });
+    sel.addEventListener('change', () => { if (sel.value === 'practice') buildPractice(); else if (sel.value === 'city') buildFree(); else buildCity(CITY.tracks[+sel.value]); reset(); camPos.set(S.x, S.y + 3, S.z - 8); sel.blur(); if (!garageOn) $('panel').classList.add('hide'); });
   }
   GARAGE = await loadGarage().catch(() => null);
   // traffic on the Seoul lanes, in the game's cars; people on the pavements; the field play (portals, quests)
   const krRoads = CITY && CITY.roads.kr ? CITY.roads.kr.map((l) => unpack(l)) : null;
-  if (GARAGE && city && city.count) people = createPeople(scene, GARAGE, city, Q.people, REAL ? (X, Z) => field.ground(X, Z, 150) : null);
+  if (GARAGE && city && city.count) people = createPeople(scene, GARAGE, city, Q.people, REAL ? (X, Z) => field.ground(X, Z, 150) : null, hud.img);
   if (GARAGE && city && city.count && krRoads) traffic = createTraffic(scene, GARAGE, krRoads, wheelMaker(0.31), Q.traffic);
   if (traffic) traffic.heights = REAL;
   if (GARAGE && city && city.count && krRoads) {
-    play = createPlay({ scene, hud, city, people, roads: krRoads, actions: {
+    play = createPlay({ scene, hud, city, people, roads: krRoads, flat: !REAL, actions: {
       stop: () => { S.vx = 0; S.vz = 0; },
       garage: () => setGarage(true),
       town: () => goTown(),

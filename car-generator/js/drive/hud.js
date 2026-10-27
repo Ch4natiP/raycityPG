@@ -36,6 +36,15 @@ function digits(g, name, str, x, y, align = 'left', h = 0) {
   }
 }
 const money = (n) => Math.round(n).toLocaleString('en-US');
+// a frame of one of the game's button sheets on an element, drawn at size px (the sheet's own cell size when 0)
+function sprite(el, name, i, size = 0) {
+  const d = UI && UI.buttons[name]; if (!d) return false;
+  const k = size ? size / d.w : 1; const col = Math.floor(i / d.rows); const row = i % d.rows;
+  el.style.backgroundImage = `url(${UI.pics[d.pic]})`; el.style.backgroundRepeat = 'no-repeat';
+  el.style.backgroundPosition = `-${(d.x + col * d.dx) * k}px -${(d.y + row * d.dy) * k}px`;
+  if (size) { const im = img[d.pic]; el.style.backgroundSize = `${(im.naturalWidth || 128) * k}px auto`; } else { el.style.width = `${d.w}px`; el.style.height = `${d.h}px`; }
+  return true;
+}
 
 export function createHud() {
   const $ = (id) => document.getElementById(id);
@@ -98,12 +107,26 @@ export function createHud() {
   const bar = $('menubar'); const buttons = {};
   for (const [k, title] of [['menu', 'เมนู (Esc)'], ['cash', 'ร้านค้า'], ['town', 'ไป TOWN'], ['race', 'แข่งขัน'], ['quest', 'เควส']]) {
     const b = document.createElement('button'); b.className = 'gbtn'; b.title = title; bar.append(b); buttons[k] = b;
-    const d = UI && UI.buttons[k];
-    if (!d) { b.textContent = title; continue; }
-    const frame = (i) => { const col = Math.floor(i / d.rows); const row = i % d.rows; b.style.backgroundPosition = `-${d.x + col * d.dx}px -${d.y + row * d.dy}px`; };
-    b.style.backgroundImage = `url(${UI.pics[d.pic]})`; b.style.width = `${d.w}px`; b.style.height = `${d.h}px`; frame(0);
-    b.addEventListener('pointerenter', () => frame(1)); b.addEventListener('pointerleave', () => frame(0));
-    b.addEventListener('pointerdown', () => frame(2)); b.addEventListener('pointerup', () => frame(1));
+    if (!sprite(b, k, 0)) { b.textContent = title; continue; }
+    b.addEventListener('pointerenter', () => sprite(b, k, 1)); b.addEventListener('pointerleave', () => sprite(b, k, 0));
+    b.addEventListener('pointerdown', () => sprite(b, k, 2)); b.addEventListener('pointerup', () => sprite(b, k, 1));
+  }
+  // the skill keys after them, like the game's slots: Ctrl boost, Shift drift, Space jump (frame 0 ready, 1 on,
+  // 2 not now); the phone's pad buttons wear the same pictures
+  const skills = {}; const skillState = {};
+  const gap = document.createElement('i'); gap.className = 'gap'; bar.append(gap);
+  for (const [k, title] of [['boost', 'บูสต์ (Ctrl) · SP 50'], ['drift', 'ดริฟต์ (Shift)'], ['jump', 'กระโดด (Space)']]) {
+    const b = document.createElement('button'); b.className = 'gbtn skill'; b.title = title; b.dataset.k = k === 'drift' ? 'hand' : k; bar.append(b); skills[k] = b;
+    if (!sprite(b, `s_${k}`, 0)) b.textContent = title.split(' ')[0];
+    const pad = document.querySelector(`#pad-right button[data-k="${b.dataset.k}"]`);
+    if (pad && UI && UI.buttons[`s_${k}`]) { pad.textContent = ''; pad.classList.add('skin'); }
+  }
+  function setSkills(st) {
+    for (const [k, v] of Object.entries(st)) {
+      if (skillState[k] === v) continue; skillState[k] = v; const f = { ready: 0, on: 1, off: 2 }[v];
+      sprite(skills[k], `s_${k}`, f);
+      const pad = document.querySelector(`#pad-right button.skin[data-k="${k === 'drift' ? 'hand' : k}"]`); if (pad) sprite(pad, `s_${k}`, f, pad.clientWidth || 58);
+    }
   }
 
   const refit = () => { for (const p of [plate, sp, dash]) p.fit(); drawPlate(); spLast = ''; dashLast = ''; document.documentElement.style.setProperty('--ui', scale()); };
@@ -118,6 +141,8 @@ export function createHud() {
     img,
     digits,
     buttons,
+    skills,
+    setSkills,
     plate(p) { P = { ...P, ...p }; drawPlate(); },
     sp: drawSp,
     dash: drawDash,

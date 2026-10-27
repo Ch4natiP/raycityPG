@@ -29,13 +29,14 @@ export function compactParts(bytes) {
   return out;
 }
 
-// how a car drives, from its spec: pull (torque over mass), top speed (drag), boost (BT_Power)
+// how a car drives, from its spec: pull (torque over mass), top speed (drag), boost (BT_Power, BT_Duration seconds)
 export function handling(spec = {}) {
   const mass = spec.BD_Mass || 1400; const torque = spec.EG_Torque || 100; const drag = spec.EG_Drag || 0.4;
   return {
     accel: Math.max(0.35, Math.min(1.5, (torque / 100) * Math.sqrt(1400 / mass))),
     top: 62 * Math.sqrt(0.4 / drag) * Math.min(1.1, Math.sqrt(1400 / Math.max(1000, mass)) ** 0.3),
     boost: (spec.BT_Power || 150) / 150,
+    boostTime: spec.BT_Duration || 3,
     grip: (spec.TI_Mu || 0.6) / 0.6,
   };
 }

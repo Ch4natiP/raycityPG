@@ -2,7 +2,8 @@
 // _tex.jmd, see tools/field-lib.mjs) as a small file the page streams in as the car comes near.
 //   node tools/extract-field.mjs "<field folder>" kr [out folder, default ./city] [mip level, default 2]
 // Writes <out>/<region>/index.json (the sectors), lib.bin (the shared pictures the region uses, from the
-// common_* folders) and one <A>_<B>.bin per sector, all gzip:
+// common_* folders) and one <A>_<B>.bin per sector, all gzip. A sector whose _tex.jmd names can't be read here
+// takes its pictures loose from <region>_<A>_<B>_tex/<name>.dds beside it, when that folder is there.
 //   'RCS1', u32 JSON length, JSON { A, B, x0, y0, mats: [{ tex, light, cut }], meshes: [{ mat, nv, ni, wide }],
 //   pics: [{ name, w, h, fmt, at, len }] }, then per mesh: i16 x, y, z (metres × 50 from the sector's corner),
 //   f16 u, v, u16 light u, v (× 65535), indices (u32 if wide, else u16); then the pictures (DXT blocks of one
@@ -56,6 +57,8 @@ for (const f of fs.readdirSync(dir).sort()) {
     }
     if (idx) for (const e of idx) own.set(e.name, e.pos);
   }
+  const loose = new Map(); const ld = path.join(dir, f.replace(/\.jmd$/i, '_tex'));
+  if (fs.existsSync(ld)) for (const x of fs.readdirSync(ld)) if (/\.dds$/i.test(x)) loose.set(x.slice(0, -4).toLowerCase(), path.join(ld, x));
   // materials: picture, baked light, cut-out (names with @ or $ use alpha)
   const mats = sec.mats.map((names) => {
     const ln = names.map((n) => n.toLowerCase()); const light = ln.find((n) => n.endsWith('_completemap')) || null; const tex = ln.find((n) => !n.endsWith('_completemap')) || null;
@@ -87,13 +90,14 @@ for (const f of fs.readdirSync(dir).sort()) {
   // pictures: own ones here, shared ones to lib.bin
   const pics = []; let at = blobs.reduce((a, x) => a + x.length, 0); const want = new Set(mats.flatMap((x) => [x.tex, x.light]).filter(Boolean));
   for (const n of want) {
-    if (own.has(n)) { const mp = ddsMip(tb, own.get(n), MIP); if (!mp) continue; pics.push({ name: n, w: mp.w, h: mp.h, fmt: mp.fourcc, at, len: mp.data.length }); blobs.push(mp.data); at += mp.data.length; }
+    if (loose.has(n)) { const mp = ddsMip(fs.readFileSync(loose.get(n)), 0, MIP); if (!mp) continue; pics.push({ name: n, w: mp.w, h: mp.h, fmt: mp.fourcc, at, len: mp.data.length }); blobs.push(mp.data); at += mp.data.length; }
+    else if (own.has(n)) { const mp = ddsMip(tb, own.get(n), MIP); if (!mp) continue; pics.push({ name: n, w: mp.w, h: mp.h, fmt: mp.fourcc, at, len: mp.data.length }); blobs.push(mp.data); at += mp.data.length; }
     else if (lib.has(n)) used.add(n); else { missingPics++; missingNames.set(n, (missingNames.get(n) || 0) + 1); }
   }
   const json = Buffer.from(JSON.stringify({ A, B, x0, y0, mats, meshes, pics })); const hd = Buffer.alloc(8); hd.write('RCS1', 0, 'latin1'); hd.writeUInt32LE(json.length, 4);
   const gz = zlib.gzipSync(Buffer.concat([hd, json, ...blobs]), { level: 9 });
   fs.writeFileSync(path.join(out, `${A}_${B}.bin`), gz); total += gz.length;
-  sectors.push({ A, B, bytes: gz.length, own: own.size });
+  sectors.push({ A, B, bytes: gz.length, own: own.size + loose.size });
   if (sectors.length % 50 === 0) console.log(`${sectors.length} sectors, ${(total / 1048576).toFixed(0)} MB`);
 }
 // the shared pictures this region uses

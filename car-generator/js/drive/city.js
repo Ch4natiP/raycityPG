@@ -279,7 +279,8 @@ export function createCity(scene, data, opts = {}) {
     drawMinimap(ctx, X, Z, heading, size, radius, route) {
       const x = X + ox; const y = oy - Z; const s = size / 2 / radius; // px per metre
       ctx.save(); ctx.clearRect(0, 0, size, size); ctx.beginPath(); ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2); ctx.clip();
-      ctx.fillStyle = '#1d2733'; ctx.fillRect(0, 0, size, size);
+      // see-through like the game's minimap: the world shows behind the map
+      ctx.fillStyle = 'rgba(16, 22, 30, .4)'; ctx.fillRect(0, 0, size, size); ctx.globalAlpha = 0.78;
       // map offsets (dx, dy) from the car → canvas, the car's heading up (three forward = (sin h, cos h) in x, z)
       const c = Math.cos(heading) * s; const sn = Math.sin(heading) * s;
       ctx.setTransform(-c, -sn, -sn, c, size / 2, size / 2);

@@ -64,7 +64,8 @@ export function texIndex(b, prefix) {
     for (let k = 0; k < 64; k++) if (votes[k].size) K[k] = most(votes[k]);
   }
   const dec = Buffer.alloc(end - start); for (let p = start; p < end; p++) dec[p - start] = b[p] ^ K[p % 64];
-  const names = []; const re = /((?:[\x20-\x7e]\x00){3,})\x00\x00dds\x00/g; const s = dec.toString('latin1'); let m;
+  // names are ASCII, some with Hangul syllables (U+AC00–D7A3: second byte AC–D7)
+  const names = []; const re = /((?:[\x20-\x7e]\x00|[\x00-\xff][\xac-\xd7]){3,})\x00\x00dds\x00/g; const s = dec.toString('latin1'); let m;
   while ((m = re.exec(s))) names.push(Buffer.from(m[1], 'latin1').toString('utf16le').toLowerCase());
   return names.length === pos.length ? names.map((n, i) => ({ name: n, pos: pos[i] })) : null;
 }

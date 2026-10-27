@@ -8,11 +8,17 @@ import { compactParts } from './garage.js';
 const TILE = 1024;
 function rng(seed) { let s = seed >>> 0 || 1; return () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; return ((s >>> 0) % 100000) / 100000; }; }
 
-function label(text, color = '#ffe14d', quest = false) {
+// a name tag; a quest giver's has the game's "!" (effect/admiremark, tinted green like in the field) and "รับเควส"
+function label(text, color = '#ffe14d', quest = false, mark = null) {
   const c = document.createElement('canvas'); c.width = 256; c.height = quest ? 128 : 48; const g = c.getContext('2d');
   g.font = '700 26px system-ui, sans-serif'; g.textAlign = 'center'; g.lineWidth = 5; g.strokeStyle = 'rgba(0,0,0,.85)';
   const y = quest ? 112 : 34;
-  if (quest) {
+  if (quest && mark && mark.complete && mark.naturalWidth) {
+    const t = document.createElement('canvas'); t.width = t.height = 64; const tg = t.getContext('2d'); tg.drawImage(mark, 0, 0, 64, 64);
+    tg.globalCompositeOperation = 'source-atop'; tg.fillStyle = '#4dff7c'; tg.fillRect(0, 0, 64, 64);
+    g.drawImage(t, 96, 12, 64, 64); g.font = '700 20px system-ui'; g.lineWidth = 4; g.strokeStyle = 'rgba(0,0,0,.85)';
+    g.strokeText('รับเควส', 128, 90); g.fillStyle = '#5dff8a'; g.fillText('รับเควส', 128, 90); g.font = '700 26px system-ui'; g.lineWidth = 5;
+  } else if (quest) {
     g.fillStyle = 'rgba(40,220,90,.25)'; g.strokeStyle = '#3ce06a'; g.lineWidth = 4; g.beginPath(); g.arc(128, 44, 30, 0, Math.PI * 2); g.fill(); g.stroke();
     g.fillStyle = '#ffffff'; g.font = '900 40px system-ui'; g.fillText('!', 128, 59); g.font = '700 20px system-ui'; g.lineWidth = 4; g.strokeStyle = 'rgba(0,0,0,.85)';
     g.strokeText('รับเควส', 128, 90); g.fillStyle = '#5dff8a'; g.fillText('รับเควส', 128, 90); g.font = '700 26px system-ui'; g.lineWidth = 5;
@@ -24,7 +30,7 @@ function label(text, color = '#ffe14d', quest = false) {
 }
 const pretty = (m) => m.replace(/_\d+$/, '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
-export function createPeople(scene, garage, city, density = 1, groundAt = null) {
+export function createPeople(scene, garage, city, density = 1, groundAt = null, img = {}) {
   const list = (garage && garage.people) || [];
   const geos = new Map(); const mats = [];
   const geoOf = (p) => {
@@ -44,7 +50,11 @@ export function createPeople(scene, garage, city, density = 1, groundAt = null) 
   const named = list.map((p, i) => [p, i]).filter(([p]) => p.named); const crowd = list.map((p, i) => [p, i]).filter(([p]) => !p.named);
   const group = new THREE.Group(); scene.add(group);
   const tiles = new Map(); // 'A_B' → { group, spots: [[X, Z]] }
-  const givers = []; const taken = new Set(); // quest givers near the car: { id, X, Z, y, name, face, sprite, group }
+  const givers = []; const taken = new Set(); // quest givers near the car: { id, X, Z, y, name, face, sprite, ring, group }
+  // the green ring turning on the ground round a quest giver (effect/groundrange's arc)
+  let ringMat = null;
+  if (img.fx_ring) { const t = new THREE.Texture(img.fx_ring); const up = () => { t.needsUpdate = true; }; if (img.fx_ring.complete) up(); else img.fx_ring.addEventListener('load', up, { once: true }); ringMat = new THREE.MeshBasicMaterial({ map: t, color: '#4dff7c', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }); }
+  const ringGeo = new THREE.PlaneGeometry(4.4, 4.4).rotateX(-Math.PI / 2);
 
   function populate(A, B) {
     const g = new THREE.Group(); const spots = []; const r = rng(A * 7349 + B * 13);
@@ -64,8 +74,9 @@ export function createPeople(scene, garage, city, density = 1, groundAt = null) 
       g.add(m);
       if (isNamed) {
         const id = `${A}_${B}_${spots.length}`; const quest = r() < 0.35 && !taken.has(id); const face = Math.floor(r() * 1000);
-        const s = label(pretty(p.model), '#ffe14d', quest); s.position.set(X, gy + 2.35, Z); g.add(s);
-        if (quest) givers.push({ id, key: `${A}_${B}`, X, Z, y: gy, name: pretty(p.model), face, sprite: s, group: g });
+        const s = label(pretty(p.model), '#ffe14d', quest, img.fx_mark); s.position.set(X, gy + 2.35, Z); g.add(s);
+        let ring = null; if (quest && ringMat) { ring = new THREE.Mesh(ringGeo, ringMat); ring.position.set(X, gy + 0.12, Z); g.add(ring); }
+        if (quest) givers.push({ id, key: `${A}_${B}`, X, Z, y: gy, name: pretty(p.model), face, sprite: s, ring, group: g });
       }
       spots.push([X, Z]);
     }
@@ -78,6 +89,7 @@ export function createPeople(scene, garage, city, density = 1, groundAt = null) 
   return {
     update(X, Z) {
       if (!list.length) return;
+      const spin = performance.now() / 1000; for (const q of givers) if (q.ring) q.ring.rotation.y = spin;
       const [ox, oy] = city.origin; const x = X + ox; const y = oy - Z; const A = 1000 + 2 * Math.floor(x / TILE); const B = 1000 + 2 * Math.floor(y / TILE);
       for (const k of [...tiles.keys()]) { const [a, b] = k.split('_').map(Number); if (Math.abs(a - A) > 4 || Math.abs(b - B) > 4) drop(k); }
       for (let a = A - 2; a <= A + 2; a += 2) for (let b = B - 2; b <= B + 2; b += 2) if (!tiles.has(`${a}_${b}`) && city.hasTile(a, b) && (city.isBuilt(a, b) || (!city.visuals && groundAt && groundAt(X, Z) !== null))) { populate(a, b); return; }
@@ -94,7 +106,7 @@ export function createPeople(scene, garage, city, density = 1, groundAt = null) 
     take(q) {
       taken.add(q.id); const i = givers.indexOf(q); if (i >= 0) givers.splice(i, 1);
       const s = label(q.name); s.position.copy(q.sprite.position); s.position.y -= 0.5; q.group.add(s);
-      q.group.remove(q.sprite); q.sprite.material.map.dispose(); q.sprite.material.dispose();
+      q.group.remove(q.sprite); q.sprite.material.map.dispose(); q.sprite.material.dispose(); if (q.ring) q.group.remove(q.ring);
     },
   };
 }

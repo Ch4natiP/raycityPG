@@ -22,7 +22,7 @@ const STAMPS = [['excellent', 0.5, 1.5], ['great', 0.3, 1.25], ['good', 0.15, 1]
 export const expNeed = (lv) => Math.round(100 * lv ** 1.5);
 const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}.${Math.floor((s * 10) % 10)}`;
 
-export function createPlay({ scene, hud, city, people, roads, actions }) {
+export function createPlay({ scene, hud, city, people, roads, flat, actions }) {
   const el = document.getElementById('play');
   const pic = (k) => (hud.pics[k] || '');
   // --- profile
@@ -86,7 +86,7 @@ export function createPlay({ scene, hud, city, people, roads, actions }) {
     for (let k = 0; k < 4000; k++) {
       const l = roads[Math.floor(Math.random() * roads.length)]; const q = l[Math.floor(Math.random() * l.length)];
       const gx = q[0] - ox; const gz = -(q[1] - oy); const d = Math.hypot(gx - X, gz - Z);
-      if (d > 350 && d < 1100 && city.tileOf(gx, gz)) return { X: gx, Z: gz, y: q[2], d };
+      if (d > 350 && d < 1100 && city.tileOf(gx, gz)) return { X: gx, Z: gz, y: flat ? 0 : q[2], d }; // (the minimap city is flat)
     }
     return null;
   }
@@ -162,8 +162,9 @@ export function createPlay({ scene, hud, city, people, roads, actions }) {
   let lastS = null;
   prompt.addEventListener('click', () => lastS && act(lastS));
   window.addEventListener('keydown', (e) => {
-    if (e.code !== 'Enter' && e.code !== 'NumpadEnter') return;
-    if (!qwin.classList.contains('hide')) { if (qwin.onAccept) qwin.onAccept(); } else if (lastS) act(lastS);
+    if ((e.code !== 'Enter' && e.code !== 'NumpadEnter') || e.repeat) return;
+    if (e.target && e.target.tagName === 'BUTTON') return; // (the button's own click does it)
+    if (!qwin.classList.contains('hide')) { if (qwin.onAccept) qwin.onAccept(); } else if (lastS && !busy()) act(lastS);
   });
 
   const busy = () => !qwin.classList.contains('hide') || !shopwin.classList.contains('hide') || !racewin.classList.contains('hide');

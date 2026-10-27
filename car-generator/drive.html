@@ -65,7 +65,7 @@
     #pad-right { right: 14px; }
     #pad-right .gas { width: 96px; height: 120px; border-radius: 22px; }
     #pad-right .brake { width: 82px; height: 82px; border-radius: 18px; }
-    #pad-right .small { width: 64px; height: 64px; font-size: 22px; }
+    #pad-right .small { width: 58px; height: 58px; font-size: 22px; }
     #pad-right .col { display: flex; flex-direction: column; gap: 10px; }
     body.touch .pad { display: flex; }
     body.touch.tilt #pad-left { display: none; }
@@ -90,10 +90,13 @@
     #menubar { position: fixed; left: 6px; bottom: 6px; display: flex; gap: 3px; transform: scale(var(--ui)); transform-origin: bottom left; }
     #menubar .gbtn { padding: 0; border: 0; border-radius: 0; background-color: transparent; background-repeat: no-repeat; min-width: 34px; min-height: 34px; }
     #menubar .gbtn:not([style]) { width: auto; padding: 0 8px; background: #2b3242; border: 1px solid #44506a; border-radius: 6px; }
+    #menubar .gap { width: 8px; }
+    body.touch #menubar .skill, body.touch #menubar .gap { display: none; }
+    .pad button.skin { background-color: transparent; border-radius: 10px; border-color: rgba(255,255,255,.25); }
     body.game-ui #btn-panel { display: none; }
     body.game-ui #menu { top: calc(84px * var(--ui)); }
-    body.game-ui #tools { left: calc(10px + 202px * var(--ui)); bottom: 6px; }
-    body.touch.game-ui #tools { right: auto; bottom: auto; top: calc(84px * var(--ui)); }
+    body.game-ui #tools { left: calc(12px + 324px * var(--ui)); bottom: 6px; }
+    body.touch.game-ui #tools { left: calc(10px + 202px * var(--ui)); right: auto; bottom: auto; top: calc(84px * var(--ui)); }
     body.game-ui #tools button { width: 36px; height: 36px; font-size: 16px; }
     body.touch #menubar { bottom: auto; top: calc(84px * var(--ui)); transform-origin: top left; }
     body.touch.game-ui #menu { top: calc(128px * var(--ui)); }
@@ -102,7 +105,7 @@
     body.in-garage #menubar { display: none; }
     /* field play (js/drive/play.js): the Enter prompt, quest window, timer, arrow, stamps, level up, shop */
     #play .hide { display: none !important; }
-    #prompt { position: fixed; left: 50%; bottom: 22%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; cursor: pointer; font: 800 18px system-ui; color: #fff; text-shadow: 0 1px 3px #000, 0 0 8px rgba(0,0,0,.7); }
+    #prompt { position: fixed; z-index: 3; left: 50%; bottom: 22%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; cursor: pointer; font: 800 18px system-ui; color: #fff; text-shadow: 0 1px 3px #000, 0 0 8px rgba(0,0,0,.7); }
     #prompt .key { width: 70px; height: 60px; background-repeat: no-repeat; }
     #qwin { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(440px, 92vw); padding: 22px 26px 18px; box-sizing: border-box; background: #efe6d0 center / cover; color: #3b2a14; border-radius: 6px; box-shadow: 0 8px 30px rgba(0,0,0,.6); z-index: 5; }
     #qwin .who { display: flex; align-items: center; gap: 10px; font-size: 18px; }
@@ -170,7 +173,7 @@
         <div id="track-info" class="hint"></div>
       </div>
       <div class="box"><div class="row"><button id="btn-tilt">📱 เอียงเลี้ยว: ปิด</button><span>คุณภาพ</span><select id="quality"><option value="high">สูง</option><option value="mid">กลาง</option><option value="low">ต่ำ (มือถือ)</option></select></div></div>
-      <div class="box hint">W/↑ เร่ง · S/↓ เบรก/ถอย · A D/← → เลี้ยว · Space เบรกมือ (ดริฟต์) · Shift บูสต์ (ใช้ SP) · R กลับจุดเริ่ม · C เปลี่ยนกล้อง</div>
+      <div class="box hint">↑ เร่ง · ↓ เบรก/ถอย · ← → เลี้ยว (หรือ W S A D) · Shift ดริฟต์ · Ctrl บูสต์ (ใช้ SP 50 ต่อครั้ง) · Space กระโดด · Enter คุย/เข้าโซน · R กลับจุดเริ่ม · C เปลี่ยนกล้อง<br>(บูสต์คู่กับลูกศรดีกว่า W: Ctrl+W ในเบราว์เซอร์คือปิดแท็บ)</div>
     </div>
   </div>
 
@@ -184,7 +187,7 @@
   <div id="tools"><button id="btn-garage" title="โรงรถ: เลือกรถ / ออกขับ">🏠</button><button id="btn-reset" title="กลับจุดเริ่ม (R)">↺</button><button id="btn-cam" title="เปลี่ยนกล้อง (C)">🎥</button></div>
 
   <div id="pad-left" class="pad"><button data-k="left">◀</button><button data-k="right">▶</button></div>
-  <div id="pad-right" class="pad"><div class="col"><button class="small" data-k="boost" title="บูสต์ (SP)">⚡</button><button class="small" data-k="hand" title="เบรกมือ / ดริฟต์">🅿</button></div><button class="brake" data-k="down" title="เบรก / ถอย">⏪</button><button class="gas" data-k="up" title="เร่ง">⏫</button></div>
+  <div id="pad-right" class="pad"><div class="col"><button class="small" data-k="jump" title="กระโดด">⤴</button><button class="small" data-k="boost" title="บูสต์ (SP 50)">⚡</button><button class="small" data-k="hand" title="ดริฟต์">🌀</button></div><button class="brake" data-k="down" title="เบรก / ถอย">⏪</button><button class="gas" data-k="up" title="เร่ง">⏫</button></div>
   <div id="rotate">📱↻<br>หมุนโทรศัพท์เป็นแนวนอน</div>
   <script type="importmap">
     { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js", "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.8.3/build/index.module.js" } }

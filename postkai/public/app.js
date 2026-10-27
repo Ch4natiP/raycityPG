@@ -14,6 +14,11 @@ if (!deviceId) {
   store.set('pk.device', deviceId);
 }
 
+// Inside a claude.ai artifact there is no server: the page asks Claude through the
+// viewer's own account (the `sample` capability) and saves through `downloads`.
+const inArtifact = !!window.claude;
+let sample = null;
+
 const BGS = [
   { id: 'photo', label: 'รูปเดิม', fill: null },
   { id: 'white', fill: ['#ffffff', '#f1f1f1'] },
@@ -239,6 +244,12 @@ function showQuota(left, pro) {
 }
 let demo = false;
 async function refreshQuota() {
+  if (inArtifact) {
+    $('quotaBtn').hidden = true;
+    sample = await claude.use('sample');
+    demo = !sample;
+    return;
+  }
   try {
     const r = await post('/api/quota', {});
     if (!r.ok) throw new Error(r.status);
@@ -248,7 +259,7 @@ async function refreshQuota() {
     $('quotaBtn').innerHTML = 'โหมด<b>ตัวอย่าง</b>';
   }
 }
-refreshQuota();
+const ready = refreshQuota();
 
 $('quotaBtn').addEventListener('click', () => { $('proCode').value = state.proCode; $('proDlg').showModal(); });
 $('proDlg').addEventListener('close', () => {
@@ -270,6 +281,7 @@ $('goBtn').addEventListener('click', async () => {
   const btn = $('goBtn');
   btn.disabled = true;
   setStatus('<span class="spin">⏳</span> กำลังดูรูปและเขียนแคปชัน…');
+  await ready;
   const input = {
     name: $('name').value.trim(),
     price: $('price').value.trim(),
@@ -281,6 +293,11 @@ $('goBtn').addEventListener('click', async () => {
     if (demo) {
       showResult(demoResult(input), true);
       setStatus('นี่คือตัวอย่างจากแม่แบบ ยังไม่ได้ใช้ AI (ยังไม่ได้เชื่อมเซิร์ฟเวอร์)');
+      return;
+    }
+    if (sample) {
+      showResult(await askClaude(input));
+      setStatus('เสร็จแล้ว ✓');
       return;
     }
     const image = photoCanvas(1024).toDataURL('image/jpeg', 0.85).split(',')[1];
@@ -298,11 +315,59 @@ $('goBtn').addEventListener('click', async () => {
     setStatus('เสร็จแล้ว ✓');
   } catch (err) {
     console.error(err);
-    setStatus('เชื่อมต่อไม่ได้ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่', true);
+    setStatus(SAMPLE_ERRORS[err?.code] || 'เชื่อมต่อไม่ได้ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่', true);
   } finally {
     btn.disabled = false;
   }
 });
+
+const SAMPLE_ERRORS = {
+  not_granted: 'ต้องกดอนุญาตให้หน้านี้ใช้ Claude ก่อน จึงจะเขียนแคปชันได้',
+  sampling_disabled: 'บัญชีนี้ใช้ Claude จากหน้านี้ไม่ได้',
+  rate_limited: 'ใช้บ่อยเกินไป รอสักครู่แล้วลองใหม่',
+  refused: 'รูปนี้สร้างแคปชันไม่ได้ ลองรูปสินค้าอื่น',
+  invalid_json: 'AI ตอบกลับมาไม่ครบ กดสร้างใหม่อีกครั้ง',
+  image_rejected: 'ใช้รูปนี้ไม่ได้ ลองรูป JPG หรือ PNG อื่น',
+  session_expired: 'กรุณาเข้าสู่ระบบ claude.ai ใหม่',
+  upstream_error: 'ระบบไม่ว่างชั่วคราว ลองใหม่อีกครั้งในอีกสักครู่',
+};
+
+// Same rules as server.mjs, sent as one prompt because `sample` has no system prompt.
+async function askClaude({ name, price, details, tone, platforms }) {
+  const caps = await sample.limits().catch(() => null);
+  const images = caps?.images
+    ? [await new Promise(ok => photoCanvas(1024).toBlob(ok, 'image/jpeg', 0.85))]
+    : undefined;
+  const TONES = { friendly: 'เป็นกันเอง น่ารัก', pro: 'มืออาชีพ น่าเชื่อถือ', urgent: 'เร่งขาย มีของจำกัด', premium: 'หรูหรา พรีเมียม' };
+  const prompt = [
+    'คุณคือนักเขียนคำโฆษณาขายของออนไลน์ภาษาไทย ช่วยแม่ค้ารายย่อยเขียนโพสต์ขายสินค้า' + (images ? 'จากรูปที่แนบมา' : ''),
+    '- เขียนภาษาไทยที่คนไทยใช้จริง อ่านง่าย ใส่อีโมจิพอดี ๆ',
+    '- บรรยายเฉพาะสิ่งที่เห็นในรูปหรือที่ผู้ขายบอก ห้ามแต่งสเปก ขนาด วัสดุ หรือสรรพคุณ ถ้าไม่รู้ให้เว้นเป็น [ใส่ขนาด] หรือ [ใส่สี]',
+    '- ห้ามอ้างสรรพคุณทางการแพทย์ ห้ามรับประกันผลลัพธ์',
+    '- Facebook ยาวได้ มีจุดเด่นเป็นข้อ ๆ และบอกวิธีสั่ง / TikTok สั้น เปิดด้วยประโยคดึงความสนใจ / Shopee เป็นคำบรรยายสินค้ามีหัวข้อ / LINE สั้นเหมือนส่งหาลูกค้าประจำ',
+    '',
+    name && `ชื่อสินค้า: ${name}`,
+    price && `ราคาที่ผู้ขายตั้ง: ${price} บาท`,
+    details && `รายละเอียดจากผู้ขาย: ${details}`,
+    `โทน: ${TONES[tone] || TONES.friendly}`,
+    `เขียนแคปชันสำหรับ: ${platforms.join(', ')} (แพลตฟอร์มละ 1 แคปชัน)`,
+    '',
+    'ตอบเป็น JSON อย่างเดียว รูปแบบนี้:',
+    '{"captions":[{"platform":"facebook","text":"..."}],"hashtags":["พร้อมส่ง","..."],"price":{"min":250,"max":390,"note":"ราคาตลาดออนไลน์โดยประมาณ"}}',
+    'platform ใช้ได้เฉพาะ facebook, tiktok, shopee, line · hashtags 8-12 อัน ไม่ต้องใส่ # · price เป็นช่วงราคาตลาดไทยโดยประมาณ (บาท)',
+  ].filter(s => s !== '' && s != null && s !== false).join('\n');
+
+  const r = await sample.json(prompt, { images, cache: false });
+  const captions = (Array.isArray(r?.captions) ? r.captions : [])
+    .filter(c => c && typeof c.text === 'string' && PLATFORM_NAMES[c.platform]);
+  if (!captions.length) throw { code: 'invalid_json' };
+  const min = Number(r.price?.min), max = Number(r.price?.max);
+  return {
+    captions,
+    hashtags: Array.isArray(r.hashtags) ? r.hashtags.map(String).slice(0, 15) : [],
+    price: min > 0 && max >= min ? { min, max, note: String(r.price.note || '') } : null,
+  };
+}
 
 function showResult(result, isDemo) {
   state.result = result;
@@ -348,7 +413,7 @@ $('result').addEventListener('click', async e => {
     btn.textContent = 'คัดลอกแล้ว ✓';
     setTimeout(() => { btn.textContent = old; }, 1500);
   } catch {
-    prompt('คัดลอกข้อความนี้', text);
+    setStatus('คัดลอกอัตโนมัติไม่ได้ กดค้างที่ข้อความเพื่อคัดลอกเอง', true);
   }
 });
 
@@ -356,6 +421,13 @@ $('result').addEventListener('click', async e => {
 const imageBlob = () => new Promise(ok => canvas.toBlob(ok, 'image/jpeg', 0.92));
 const fileName = () => `postkai-${Date.now()}.jpg`;
 $('saveBtn').addEventListener('click', async () => {
+  if (inArtifact) {
+    const downloads = await claude.use('downloads');
+    if (!downloads) return setStatus('บันทึกรูปจากหน้านี้ไม่ได้ กดค้างที่รูปเพื่อบันทึกแทน', true);
+    try { await downloads.save({ filename: fileName(), data: await imageBlob() }); }
+    catch (e) { if (e?.code !== 'declined') setStatus('บันทึกรูปไม่สำเร็จ ลองใหม่อีกครั้ง', true); }
+    return;
+  }
   const url = URL.createObjectURL(await imageBlob());
   const a = Object.assign(document.createElement('a'), { href: url, download: fileName() });
   a.click();
@@ -388,4 +460,5 @@ function demoResult({ name, price, details, platforms }) {
   };
 }
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+if (inArtifact) $('cutBtn').hidden = true; // its model download is blocked inside an artifact
+else if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

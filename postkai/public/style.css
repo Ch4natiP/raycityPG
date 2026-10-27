@@ -12,7 +12,7 @@
   --radius: 16px;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #17120f;
     --card: #221b17;
     --ink: #f6ede8;
@@ -22,7 +22,20 @@
     --brand-soft: #3d2519;
     --ok: #4ade80;
     --warn: #fb923c;
+    color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+    --bg: #17120f;
+    --card: #221b17;
+    --ink: #f6ede8;
+    --muted: #b5a59c;
+    --line: #3a2f29;
+    --brand: #ff7a50;
+    --brand-soft: #3d2519;
+    --ok: #4ade80;
+    --warn: #fb923c;
+    color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -38,7 +51,7 @@ body {
 button, input, textarea { font: inherit; color: inherit; }
 
 .top {
-  position: sticky; top: 0; z-index: 5;
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 16px; padding-top: max(12px, env(safe-area-inset-top));
   background: color-mix(in srgb, var(--bg) 88%, transparent);

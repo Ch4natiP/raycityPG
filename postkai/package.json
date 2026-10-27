@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "build-artifact": "node build-artifact.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "1.3.0"

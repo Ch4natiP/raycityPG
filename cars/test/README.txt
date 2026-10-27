@@ -10,6 +10,22 @@ Then the owner: keep the old ones that worked in game, drop the rest. Back in th
   83_your_gls_canyon_reduced_points.zip         known-good: loads and drives
   90_canyon_plymouth_hemi_cuda_1971.zip         video 2026-10-27 13:24: loads, complete in the garage
 Everything else stays out (crashed, or a step that didn't work, or never confirmed).
+91_canyon_cuda_as_is_wheels_fit.zip  (2026-10-27) the owner on pack 90's video: the wheels don't sit in the arches; take
+the model as it is, remove nothing (the cabin console too), just convert it, wheels right. Pack 90's video measured
+against the body: the game draws the common wheel at its own size (radius ~0.33-0.35, 0.25 wide), centre 0.27 up,
+the tyres out at about ±0.78 (centres), flush with the body side instead of tucked under the fenders. Pack 90 was
+fitted for a 0.27 wheel (whole car ×91 %, 1.66 m wide): the tyres reached 8.8 cm (front) / 5.7 cm (rear) over the
+arch lips and stood out of the sides. Pack 91, from the model again (RayCity-Easy, new options):
+  - fit 'game': length ×91 % (axles on −1.23 / +1.15), width and height ×100 % (1.83 m wide, covers the tyres),
+    the arch lips lifted over the game's tyre tops: front lip 0.630, rear 0.664 (tyre top 0.62), floor 0.158 up
+    (gtv98 0.135) — wheelcheck: nothing of the outer body inside a tyre;
+  - every piece kept (interior, console, seats, engine bay; only the model's wheels and plates out). 204,000
+    triangles are more than the car's 8 files hold (8 × 20,666): only faces seen from nowhere outside (looking
+    through the windows and lamp lenses too) were left out, 107,700 triangles drawn, no file reduced; overflow
+    spread over the files (every file under 62,000 indices);
+  - ⚡ without 🧩: UVs on the sheet, plates, tail lamps, 302 inward faces turned out; nothing added (no lining,
+    no closed openings, no opening doors / hood).
+  Seen through: front 0.3 / rear 0.3 / left 0.2 / right 0.1 / top 1.6 / front-left 2.0 %. 91_vs_90_wheels_preview.png.
 90_canyon_plymouth_hemi_cuda_1971.zip unpacks to canyon/ (pack it to canyon.jmd), built in the web tool: RayCity-Easy ->
 RayCity-UV ⚡ with 🧩. Doors (left 2,317 / right 1,259 triangles + glass, frameless like the real hardtop) and hood
 (2,747) open; hinges: doors (±0.717, −0.590, 0.484), hood (0, −0.669, 0.741). Biggest file roof 17,056 points /

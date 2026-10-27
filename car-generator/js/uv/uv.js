@@ -1336,6 +1336,7 @@ async function readyForGame() {
   initPlateSliders(); plateUndo = false; plateNow(); steps.push('🔖 ' + $('plate-info').textContent);
   tailAuto(); steps.push('🔴 ' + $('status').textContent.split('·')[0].trim());
   if ($('esc-complete').checked) steps.push('🧩 ' + await completeLikeEscarabajo());
+  else { const o = orientOutward(car.meshes); if (o.flipped) { for (const m of car.meshes) m.isl = m.parts.map(islandsOf); carMid = null; build3D(); refresh(); steps.push(`🔁 กลับด้านที่หันเข้าในรถ ${o.flipped.toLocaleString()} สามเหลี่ยม (เกมไม่วาดด้านหลัง)`); } }
   await saveZip();
   status(`⚡ พร้อมใส่เกม · ดาวน์โหลด ${car.name}.zip แล้ว — ${steps.join(' | ')}`);
 }

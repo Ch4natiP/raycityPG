@@ -222,9 +222,10 @@ function embedTests() {
   const dir = path.resolve('../cars/test');
   const packs = [];
   if (fs.existsSync(dir)) {
-    // The newest packs only (the page grew past 40 MB with all of them); the rest stay in cars/test.
+    // The newest two packs and the named ones only (the page grew past 50 MB with all of them); the rest stay in
+    // cars/test.
     const zips = fs.readdirSync(dir).filter((x) => x.endsWith('.zip')).sort().reverse();
-    const keep = [...zips.filter((x) => !/^\d/.test(x)), ...zips.filter((x) => /^\d/.test(x)).slice(0, 8)];
+    const keep = [...zips.filter((x) => !/^\d/.test(x)), ...zips.filter((x) => /^\d/.test(x)).slice(0, 2)];
     for (const f of keep) {
       packs.push({ file: f, data: fs.readFileSync(path.join(dir, f)).toString('base64') });
     }

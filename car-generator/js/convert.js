@@ -594,7 +594,7 @@ function collect(model, categories) {
     if (mat === 'skip') continue;
     const o = t * 9;
     tris.push({
-      a: [P[o], P[o + 1], P[o + 2]], b: [P[o + 3], P[o + 4], P[o + 5]], c: [P[o + 6], P[o + 7], P[o + 8]], mat,
+      a: [P[o], P[o + 1], P[o + 2]], b: [P[o + 3], P[o + 4], P[o + 5]], c: [P[o + 6], P[o + 7], P[o + 8]], mat, src: model.materials[model.M[t]].name,
       vn: [[N[o], N[o + 1], N[o + 2]], [N[o + 3], N[o + 4], N[o + 5]], [N[o + 6], N[o + 7], N[o + 8]]],
     });
   }
@@ -892,7 +892,29 @@ export async function removeHidden(tris, log = () => {}, passThrough = null) {
 // files by slot, one part per material (welded: same position, normals within 35°), each file
 // reduced only as far as `cap` and the .0m format (65,535 vertices / indices) require. Material
 // borders stay the model's own edges, so colours don't zigzag.
-async function fitRaw(tris, m, cap, log) {
+// The car's files: body and the part folders' defaults (front / rear bumper, skirt, hood, roof, head / tail
+// lamps), each at most 62,000 indices kept for the car (65,535 less room for the template's stand-ins).
+const FILES = 8; const FILE_TRIS = Math.floor(62000 / 3);
+// A triangle soup (collect's triangles) simplified to about `target` triangles: welded by position, meshopt,
+// face normals; material and source kept from the first triangle of each material.
+function simplifySoup(tris, target) {
+  const byMat = new Map(); for (const t of tris) { if (!byMat.has(t.mat)) byMat.set(t.mat, []); byMat.get(t.mat).push(t); }
+  const out = [];
+  for (const [mat, list] of byMat) {
+    const keys = new Map(); const P = []; const I = [];
+    for (const t of list) for (const p of [t.a, t.b, t.c]) { const k = p.map((x) => Math.round(x * 1e4)).join(','); let v = keys.get(k); if (v === undefined) { v = P.length / 3; P.push(...p); keys.set(k, v); } I.push(v); }
+    const want = Math.max(3, Math.round((target * list.length) / tris.length) * 3);
+    const J = MeshoptSimplifier.simplify(Uint32Array.from(I), new Float32Array(P), 3, want, 1, [])[0];
+    for (let k = 0; k < J.length; k += 3) {
+      const [a, b, c] = [J[k], J[k + 1], J[k + 2]].map((v) => [P[v * 3], P[v * 3 + 1], P[v * 3 + 2]]);
+      const n = norm(cross(sub(b, a), sub(c, a))); out.push({ a, b, c, mat, src: list[0].src, vn: [n, n, n] });
+    }
+  }
+  return out;
+}
+
+// keep: nothing reduced here (writeCar shares a file's overflow out over the other files)
+async function fitRaw(tris, m, cap, log, keep = false) {
   const bySlot = new Map();
   for (const t of tris) {
     const slot = m.slotOf(t.c0, t.n, t.mat);
@@ -938,6 +960,7 @@ async function fitRaw(tris, m, cap, log) {
   for (const [slot, g] of bySlot) {
     const parts = buildParts(g, Math.cos((35 * Math.PI) / 180));
     const before = parts.reduce((s, q) => s + q.positions.length / 3, 0);
+    if (keep) { out[slot] = parts; log(`${slot}: ${before.toLocaleString()} จุด (เก็บครบ ไม่ลด)`); await tick(); continue; }
     let fit = fitParts(parts, 1, cap, 64000); // room for the template's stand-in pieces
     if ((cap && fit.verts > cap) || fit.verts > 64000) {
       // Noisy surfaces (3D scans): the sharp-edge splits leave thousands of loose islands the reducer
@@ -1123,6 +1146,24 @@ export async function convert(model, { name, template, categories = new Map(), m
     src.tris = layout === 'template' ? await removeHidden(src.tris, log, (t) => t.mat === 'Glass_Gray') : src.outside;
   }
   log(`ตัวรถ (ถอดล้อแล้ว): ${src.tris.length.toLocaleString()} สามเหลี่ยม, ยาว ${src.length.toFixed(2)} ม., ล้อ ${src.wheels.length}`);
+  // Every piece kept (hideInterior off, raw): the car's files hold at most FILES × FILE_TRIS triangles (a .0m
+  // file 65,535 indices). A model over that first leaves out only what can't be seen from outside at all, looking
+  // through the windows and lamp lenses too (the cabin and its console stay); still over, it gives up detail
+  // under the closed hood, the engine.
+  if (raw && !hideInterior && src.tris.length > FILES * FILE_TRIS) {
+    const all = src.tris.length;
+    src.tris = await removeHidden(src.tris, log, (t) => /glass/i.test(t.mat));
+    log(`ทั้งคัน ${all.toLocaleString()} สามเหลี่ยม เกินที่ไฟล์ .0m เก็บได้ (${(FILES * FILE_TRIS).toLocaleString()}): ตัดเฉพาะผิวที่มองไม่เห็นจากข้างนอก (มองผ่านกระจก/โคมไฟได้) เหลือ ${src.tris.length.toLocaleString()}`);
+  }
+  if (raw && !hideInterior && src.tris.length > FILES * FILE_TRIS) {
+    const over = src.tris.length - FILES * FILE_TRIS;
+    const eng = src.tris.filter((t) => /engine|motor/i.test(t.src || ''));
+    if (eng.length) {
+      const kept = simplifySoup(eng, Math.max(eng.length * 0.05, eng.length - over));
+      const set = new Set(eng); src.tris = src.tris.filter((t) => !set.has(t)).concat(kept);
+      log(`เกินที่ไฟล์ .0m ทั้งคันเก็บได้ ${over.toLocaleString()} สามเหลี่ยม: ลดจุดเครื่องยนต์ใต้ฝากระโปรง ${eng.length.toLocaleString()} → ${kept.length.toLocaleString()} (ส่วนอื่นเก็บครบ)`);
+    }
+  }
   await tick();
   const m = metrics(src.tris, src.wheels);
   let bent = null;
@@ -1172,7 +1213,7 @@ export async function convert(model, { name, template, categories = new Map(), m
   if (raw) {
     log('ใช้ผิวจริงของโมเดล (ไม่สร้างผิวใหม่)…');
     await tick();
-    lod = await fitRaw(src.tris, m, maxVerts, log);
+    lod = await fitRaw(src.tris, m, maxVerts, log, raw && !hideInterior);
   } else {
     const ref = makeReference(src.tris);
     log('สร้างเปลือกนอก (voxel)…');
@@ -1554,11 +1595,12 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, s
   // paint to the file with the most room instead of being simplified (🧩 later shares the paint out like Escarabajo)
   {
     const CAP = 62000; const size = (list) => (list || []).reduce((t, q) => t + Math.max(q.indices.length, q.positions.length / 3), 0);
-    const hosts = ['body', 'frontbumper', 'rearbumper', 'skirt', 'hood', 'roof'];
-    for (const slot of Object.keys(lod)) for (let guard = 0; guard < 8 && size(lod[slot]) > CAP; guard++) {
+    const hosts = ['body', 'frontbumper', 'rearbumper', 'skirt', 'hood', 'roof', 'headlight', 'rearlight'].filter((h) => h === 'body' || [...tpl.keys()].some((r) => r.startsWith(`${h}/`)));
+    for (const slot of Object.keys(lod)) for (let guard = 0; guard < 40 && size(lod[slot]) > CAP; guard++) {
       const to = hosts.filter((h) => h !== slot).sort((a, b) => size(lod[a]) - size(lod[b]))[0]; const room = CAP - size(lod[to]); if (room < 3000) break;
       const p = lod[slot].filter((q) => (q.kind || 0) === 0).sort((a, b) => b.indices.length - a.indices.length)[0]; if (!p) break;
-      const n = Math.min(Math.ceil((size(lod[slot]) - CAP) / 3) + 100, Math.floor(room / 6), p.indices.length / 3 - 1); if (n <= 0) break;
+      // (points can outnumber indices / 3 on split edges: half the room per move keeps the point count in it too)
+      const n = Math.min(Math.ceil((size(lod[slot]) - CAP) / 3) + 100, Math.floor(room / 4), p.indices.length / 3 - 1); if (n <= 0) break;
       const ys = []; for (let t = 0; t < p.indices.length; t += 3) ys.push(p.positions[p.indices[t] * 3 + 1] + p.positions[p.indices[t + 1] * 3 + 1] + p.positions[p.indices[t + 2] * 3 + 1]);
       const cut = [...ys].sort((a, b) => b - a)[n - 1];
       const g = takeTris(p, (c, nn, t) => ys[t / 3] >= cut); if (!g) break;
@@ -2356,15 +2398,20 @@ export function uvsFromTemplate(lod, bent) {
 // ---------------------------------------------------------------------------------------------
 // Fitting the car to the game's wheels. The game puts its own wheels where the base car's are (the car
 // the new one was registered from), so the model is scaled and moved until its wheels sit there.
-// gtv98 measured from its wheel arches: axles at y −1.23 / +1.15, wheel radius 0.27 (its spec's
-// MS_TractionRadius), wheels ±0.68 from the middle.
-export const GAME_WHEELS = { gtv98: { front: -1.23, rear: 1.15, radius: 0.27, track: 0.68, maxWidth: 1.85 } };
+// gtv98 measured from its wheel arches: axles at y −1.23 / +1.15, wheel centres 0.27 up (its spec's
+// MS_TractionRadius: `radius`), wheels ±0.68 from the middle (`track`). Seen in game (pack 90, video
+// 2026-10-27): the wheel the game draws is bigger than that, the common wheel's own 0.35 m radius (`wheel`) and
+// 0.25 m wide (`tyre` half of it), its centre still 0.27 up, the tyres out at about ±0.78 (`out`, centres).
+export const GAME_WHEELS = { gtv98: { front: -1.23, rear: 1.15, radius: 0.27, track: 0.68, wheel: 0.35, tyre: 0.124, out: 0.78, maxWidth: 1.85 } };
 
 // mode 'uniform': one scale for the whole car (shape kept), the axles land exactly, then the car moves
 // up/down so the wheel centres match. 'stretch': length, width and height scaled separately so the
-// axles, the track and the wheel size all match. Returns a short description, or null (no wheels).
+// axles, the track and the wheel size all match. 'game': the length to the axles; height and width to the
+// wheel the game really draws (its arches hold that wheel the way they held the model's own, about 6 % over
+// the tyre) and never narrower than the game's tyres; the wheel centres to the game's. Returns a short
+// description, or null (no wheels).
 export function fitToWheels(model, game, mode = 'uniform') {
-  if (!model.orig) model.orig = { P: model.P.slice(), N: model.N.slice(), wheels: model.wheels.map((w) => ({ p: [...w.p], r: w.r })), pieces: model.pieces.map((p) => ({ min: [...p.min], max: [...p.max] })) };
+  if (!model.orig) model.orig = { C: model.C, P: model.P.slice(), N: model.N.slice(), wheels: model.wheels.map((w) => ({ p: [...w.p], r: w.r })), pieces: model.pieces.map((p) => ({ min: [...p.min], max: [...p.max] })) };
   const o = model.orig;
   const fw = o.wheels.filter((w) => w.p[1] < 0); const rw = o.wheels.filter((w) => w.p[1] >= 0);
   if (!fw.length || !rw.length) return null;
@@ -2374,10 +2421,30 @@ export function fitToWheels(model, game, mode = 'uniform') {
   const mmid = (mf + mr) / 2; const gmid = (game.front + game.rear) / 2;
   const sy = (game.rear - game.front) / (mr - mf);
   let [sx, sz, dz] = mode === 'stretch' ? [game.track / mtrack, game.radius / mrad, 0] : [sy, sy, game.radius - sy * mrad];
-  // Never wider than maxWidth: the game's wheels sit only `track` from the middle, a wide body
-  // swallows them (a 2.30 m car looked far too wide in game).
   let x0 = Infinity; let x1 = -Infinity;
   for (let i = 0; i < o.P.length; i += 3) { x0 = Math.min(x0, o.P[i]); x1 = Math.max(x1, o.P[i]); }
+  if (mode === 'game') {
+    const mz = avg(o.wheels, (w) => w.p[2]); // the model's wheel centres' height
+    sz = (game.wheel || game.radius) / (mrad * 1.06); sx = Math.max(sz, ((game.out || game.track) + (game.tyre || 0.1)) / ((x1 - x0) / 2));
+    dz = game.radius - sz * mz;
+    // The game's tyres sit out at the body's side, not tucked under the fenders like a model's: the arch lips
+    // (the lowest outer skin above each axle) are lifted over the tyre tops (1 cm clear), the way game cars
+    // ride high on their wheels (gtv98's floor 0.135 m up, Escarabajo's 0.105 m)
+    if (o.C && model.removed) {
+      const xo = Math.max(-x0, x1) - 0.12; let lip = Infinity;
+      for (let t = 0; t < o.P.length / 9; t++) {
+        if (model.removed[model.C[t]]) continue;
+        for (let k = 0; k < 3; k++) {
+          const i = t * 9 + k * 3; const x = o.P[i]; const z = o.P[i + 2] * sz + dz; if (Math.abs(x) < xo || z <= game.radius) continue;
+          const y = (o.P[i + 1] - mmid) * sy + gmid; if (Math.abs(y - game.front) < 0.06 || Math.abs(y - game.rear) < 0.06) lip = Math.min(lip, z);
+        }
+      }
+      const need = game.radius + (game.wheel || game.radius) + 0.01;
+      if (lip < need && lip > game.radius) dz += need - lip;
+    }
+  }
+  // Never wider than maxWidth: the game's wheels sit only `track` from the middle, a wide body
+  // swallows them (a 2.30 m car looked far too wide in game).
   if (game.maxWidth && (x1 - x0) * sx > game.maxWidth) sx = game.maxWidth / (x1 - x0);
   const map = (p) => [p[0] * sx, (p[1] - mmid) * sy + gmid, p[2] * sz + dz];
   for (let i = 0; i < model.P.length; i += 3) model.P.set(map([o.P[i], o.P[i + 1], o.P[i + 2]]), i);
@@ -2391,7 +2458,7 @@ export function fitToWheels(model, game, mode = 'uniform') {
   model.zTop = undefined;
   const pct = (v) => `${Math.round(v * 100)}%`;
   const w = `กว้าง ${((x1 - x0) * sx).toFixed(2)} ม.`;
-  return mode === 'stretch' ? `ยาว ×${pct(sy)} กว้าง ×${pct(sx)} สูง ×${pct(sz)} · ${w}` : `ย่อ/ขยายทั้งคัน ×${pct(sy)}${sx !== sy ? ` (ความกว้าง ×${pct(sx)})` : ''}${Math.abs(dz) > 0.005 ? ` · ${dz > 0 ? 'ยก' : 'ลด'}ตัวรถ ${Math.abs(dz * 100).toFixed(0)} ซม.` : ''} · ${w}`;
+  return mode === 'stretch' || mode === 'game' ? `ยาว ×${pct(sy)} กว้าง ×${pct(sx)} สูง ×${pct(sz)}${Math.abs(dz) > 0.005 ? ` · ${dz > 0 ? 'ยก' : 'ลด'}ตัวรถ ${Math.abs(dz * 100).toFixed(0)} ซม.` : ''} · ${w}` : `ย่อ/ขยายทั้งคัน ×${pct(sy)}${sx !== sy ? ` (ความกว้าง ×${pct(sx)})` : ''}${Math.abs(dz) > 0.005 ? ` · ${dz > 0 ? 'ยก' : 'ลด'}ตัวรถ ${Math.abs(dz * 100).toFixed(0)} ซม.` : ''} · ${w}`;
 }
 
 // Back to the model's own size.

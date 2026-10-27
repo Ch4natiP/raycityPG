@@ -66,9 +66,9 @@ function showModel() {
   };
   modelGroup.add(new THREE.Mesh(geo(keep, true), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, side: THREE.DoubleSide })));
   if (gone.length) modelGroup.add(new THREE.Mesh(geo(gone, false), new THREE.MeshStandardMaterial({ color: '#ff2bd6', transparent: true, opacity: 0.45, depthWrite: false })));
-  // the game's wheels
+  // the game's wheels as it draws them (centres gw.radius up, the common wheel's size)
   const gw = GAME_WHEELS.gtv98; const tyre = new THREE.MeshStandardMaterial({ color: '#111', transparent: true, opacity: 0.6 });
-  for (const y of [gw.front, gw.rear]) for (const x of [-gw.track, gw.track]) { const c = new THREE.Mesh(new THREE.CylinderGeometry(gw.radius, gw.radius, 0.22, 24).rotateZ(Math.PI / 2), tyre); c.position.set(x, y, gw.radius); c.rotation.x = Math.PI / 2; modelGroup.add(c); }
+  for (const y of [gw.front, gw.rear]) for (const x of [-gw.out, gw.out]) { const c = new THREE.Mesh(new THREE.CylinderGeometry(gw.wheel, gw.wheel, gw.tyre * 2, 24).rotateZ(Math.PI / 2), tyre); c.position.set(x, y, gw.radius); c.rotation.x = Math.PI / 2; modelGroup.add(c); }
 }
 
 let maskCanvas = null;
@@ -174,7 +174,7 @@ async function openModel(list) {
   $('model-info').textContent = `กำลังเปิด ${main.name}…`;
   try { state.model = await loadModel(files); } catch (e) { $('model-info').textContent = `เปิดไม่ได้: ${e.message}`; return; }
   state.modelName = main.name.replace(/\.[^.]+$/, '');
-  const fit = $('fit-wheels').checked ? fitToWheels(state.model, GAME_WHEELS.gtv98, 'uniform') : null;
+  const fit = $('fit-wheels').checked ? fitToWheels(state.model, GAME_WHEELS.gtv98, 'game') : null;
   const m = state.model;
   $('model-info').textContent = `${main.name}${files.length > 1 ? ` + ${files.length - 1} ไฟล์ประกอบ` : ''}\n${m.C.length.toLocaleString()} สามเหลี่ยม · เจอล้อ ${m.wheels.length} ล้อ (ถอดออก · สีชมพู)${fit ? `\nปรับให้ตรงล้อเกม: ${fit}` : ''}`;
   $('car-name').value = `rc_${state.modelName.replace(/[^a-z0-9]+/gi, '_').toLowerCase().replace(/^_|_$/g, '').slice(0, 20) || 'car'}`;
@@ -214,7 +214,7 @@ async function build() {
         out.set(`${name}_base.png`, await png(px, m.w, m.h)); out.set(`${name}_base_s.dds`, dds(px, m.w, m.h, 'full'));
       }
     } else {
-      out = await convert(state.model, { name, template, raw: true, hideInterior: true, maxVerts: +$('poly-sel').value, paintAll: oneColour, slots: !oneColour, colours, layout: 'charts', partTextures: false, log: say });
+      out = await convert(state.model, { name, template, raw: true, hideInterior: !$('keep-all').checked, maxVerts: +$('poly-sel').value, paintAll: oneColour, slots: !oneColour, colours, layout: 'charts', partTextures: false, log: say });
     }
     state.out = out; state.outName = name;
     say(`เสร็จ: ${out.size} ไฟล์`);

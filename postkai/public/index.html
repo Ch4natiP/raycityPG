@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>โพสต์ขาย</title>
+<meta name="description" content="ถ่ายรูปสินค้า แล้วได้รูปสวยพร้อมแคปชันขายของภาษาไทย">
+<meta name="theme-color" content="#ff6b3d">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;600;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><img src="icon.svg" alt="" width="32" height="32"> โพสต์ขาย</div>
+  <button id="quotaBtn" class="quota" type="button">ฟรีวันนี้ <b id="quotaLeft">3</b></button>
+</header>
+
+<main>
+  <!-- 1. รูป -->
+  <section class="card">
+    <h2><span class="num">1</span> รูปสินค้า</h2>
+    <label id="drop" class="drop">
+      <input id="file" type="file" accept="image/*" capture="environment" hidden>
+      <span class="drop-icon" aria-hidden="true">📷</span>
+      <span>แตะเพื่อถ่ายรูป หรือเลือกจากอัลบั้ม</span>
+    </label>
+    <div id="editor" class="editor" hidden>
+      <canvas id="canvas" width="1080" height="1080" aria-label="ตัวอย่างรูปโพสต์"></canvas>
+      <div class="row">
+        <span class="label">พื้นหลัง</span>
+        <div id="bgs" class="chips"></div>
+      </div>
+      <div class="row">
+        <button id="cutBtn" class="btn ghost small" type="button">✂️ ลบพื้นหลังเดิม (ทดลอง)</button>
+        <button id="changeBtn" class="btn ghost small" type="button">เปลี่ยนรูป</button>
+      </div>
+      <p id="cutNote" class="hint" hidden></p>
+    </div>
+  </section>
+
+  <!-- 2. ข้อมูล -->
+  <section class="card">
+    <h2><span class="num">2</span> ข้อมูลสินค้า <small>(ไม่บังคับ)</small></h2>
+    <label class="field">ชื่อสินค้า
+      <input id="name" type="text" maxlength="120" placeholder="เช่น กระเป๋าผ้าลายดอก">
+    </label>
+    <div class="two">
+      <label class="field">ราคา (บาท)
+        <input id="price" type="number" inputmode="numeric" min="0" placeholder="299">
+      </label>
+      <label class="field">ชื่อร้าน
+        <input id="shop" type="text" maxlength="40" placeholder="ร้านแม่มะลิ">
+      </label>
+    </div>
+    <label class="field">รายละเอียดเพิ่ม
+      <textarea id="details" rows="2" maxlength="500" placeholder="เช่น มี 3 สี ส่งฟรีเมื่อซื้อ 2 ชิ้น"></textarea>
+    </label>
+    <div class="row">
+      <span class="label">โทน</span>
+      <div id="tones" class="chips">
+        <button type="button" class="chip on" data-v="friendly">เป็นกันเอง</button>
+        <button type="button" class="chip" data-v="pro">มืออาชีพ</button>
+        <button type="button" class="chip" data-v="urgent">เร่งขาย</button>
+        <button type="button" class="chip" data-v="premium">พรีเมียม</button>
+      </div>
+    </div>
+    <div class="row">
+      <span class="label">ลงที่</span>
+      <div id="platforms" class="chips multi">
+        <button type="button" class="chip on" data-v="facebook">Facebook</button>
+        <button type="button" class="chip on" data-v="tiktok">TikTok</button>
+        <button type="button" class="chip on" data-v="shopee">Shopee</button>
+        <button type="button" class="chip" data-v="line">LINE</button>
+      </div>
+    </div>
+  </section>
+
+  <button id="goBtn" class="btn primary big" type="button" disabled>✨ สร้างโพสต์ขาย</button>
+  <p id="status" class="status" role="status"></p>
+
+  <!-- 3. ผลลัพธ์ -->
+  <section id="result" class="card" hidden>
+    <h2><span class="num">3</span> พร้อมโพสต์</h2>
+    <div class="row">
+      <button id="saveBtn" class="btn small" type="button">⬇️ บันทึกรูป</button>
+      <button id="shareBtn" class="btn small" type="button" hidden>📤 แชร์</button>
+    </div>
+    <div id="priceTip" class="price-tip" hidden></div>
+    <div id="captions"></div>
+    <div class="tags-wrap">
+      <div class="label">แฮชแท็ก</div>
+      <p id="tags" class="tags"></p>
+      <button class="btn ghost small copy" type="button" data-copy="tags">คัดลอกแฮชแท็ก</button>
+    </div>
+    <p class="hint">ตรวจทานข้อความก่อนโพสต์ทุกครั้ง โดยเฉพาะราคา ขนาด และสี</p>
+  </section>
+</main>
+
+<dialog id="proDlg">
+  <form method="dialog">
+    <h3>โพสต์ขาย Pro</h3>
+    <ul>
+      <li>สร้างโพสต์ได้ไม่จำกัด</li>
+      <li>ใส่โลโก้ร้านบนรูป</li>
+      <li>บันทึกสินค้าไว้ใช้ซ้ำ</li>
+    </ul>
+    <label class="field">มีรหัส Pro แล้ว?
+      <input id="proCode" type="text" autocomplete="off" placeholder="กรอกรหัส">
+    </label>
+    <div class="row end">
+      <button class="btn ghost small" value="cancel">ปิด</button>
+      <button id="proSave" class="btn primary small" value="ok">ใช้รหัส</button>
+    </div>
+  </form>
+</dialog>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

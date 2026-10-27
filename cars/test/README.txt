@@ -1,6 +1,15 @@
 2026-10-27: the owner switched canyon to a Plymouth Hemi Cuda 1971 (90_canyon_plymouth_hemi_cuda_1971.zip) and asked
 for the old, unused cars to go: packs 17-89, their previews, cars/rc_canyon (+ .zip, _extra) and cars/rc_mcqueen were
 removed from the tree (still in the git history). The notes below are kept: they record what the game does.
+Then the owner: keep the old ones that worked in game, drop the rest. Back in the tree, each confirmed in game:
+  OK_gtv98_as_rc_canyon.zip            the working base (gtv98 renamed)
+  59_your_canyon_front_right.zip       "the good one", kept
+  64_your_canyon_63_glass_fixed.zip    "the main one from now on": glass clear, decals straight, white car clean
+  75_your_canyon_74_red_tail_lamps.zip tail lamps light when reversing
+  80_your_canyon_brake_outer_reverse_inner.zip  known-good (red brake / white reverse)
+  83_your_gls_canyon_reduced_points.zip         known-good: loads and drives
+  90_canyon_plymouth_hemi_cuda_1971.zip         video 2026-10-27 13:24: loads, complete in the garage
+Everything else stays out (crashed, or a step that didn't work, or never confirmed).
 90_canyon_plymouth_hemi_cuda_1971.zip unpacks to canyon/ (pack it to canyon.jmd), built in the web tool: RayCity-Easy ->
 RayCity-UV ⚡ with 🧩. Doors (left 2,317 / right 1,259 triangles + glass, frameless like the real hardtop) and hood
 (2,747) open; hinges: doors (±0.717, −0.590, 0.484), hood (0, −0.669, 0.741). Biggest file roof 17,056 points /

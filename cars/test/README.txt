@@ -514,3 +514,14 @@ its layout; omNodes reads the hinges.
   headlight reflectors point. Test: if the black trim comes out silver, the colour layer draws on the parts the mask
   leaves black (evo's / polestar1's fully opaque dark colour layers would then only show there) and those parts can
   get real colours / chrome from it; if nothing changes, it doesn't reach them.
+The owner: "Escarabajo has no holes, nothing broken". Measured the way the game draws (no back faces): the share of the
+car's outline seen through, per view (front / rear / left / right / top / front-left):
+  Escarabajo 0.5 / 3.2 / 0.3 / 0.3 / 0.0 / 1.0 %   evo 0.2 / 0.1 / 0.1 / 0.1 / 0.1 / 0.3 %   pack 88 2.5 / 2.9 / 0.3 / 0.4 / 0.3 / 1.3 %
+(the render model is hollow: through the lower intakes, the headlight corners and gaps you saw the inside of panels from
+behind, which the game doesn't draw, so the sky). convert.js lineSeenInside, the last step of 🧩: a black floor pan
+under the cabin and overhangs (both faces, clear of the wheels), then every surface seen from behind from 13 directions
+outside (1 cm depth buffers, glass doesn't stop the eye; a face seen from behind counts 12 mm deeper so a doubled skin's
+outer layer wins) gets a black copy 1 mm in front of it facing out: 4,117 triangles + 20 for the floor, into the files
+with room (moving pieces' own lining stays with them while their file holds it).
+89_your_gls_no_see_through_like_escarabajo.zip  pack 88 + that: 0.5 / 0.2 / 0.3 / 0.3 / 0.2 / 0.8 % — Escarabajo's
+level. 89_vs_88_preview.png. Every file under 65,535.

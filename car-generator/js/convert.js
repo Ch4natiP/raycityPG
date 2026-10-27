@@ -3322,3 +3322,85 @@ export function openingParts(meshes) {
   for (const m of meshes) for (const p of m.parts) { delete p._sg; delete p._adj; delete p._isl; }
   return { doors: counts, glass: [gotGlass[0] ? gotGlass[0].indices.length / 3 : 0, gotGlass[1] ? gotGlass[1].indices.length / 3 : 0], hood: hoodTris, pivots, measures: { yF, yB, zBot, zBelt, glassTop } };
 }
+
+// What still shows through the car from outside, lined the way game cars are built (Escarabajo / evo: no holes):
+// a black floor pan under the cabin (both faces, clear of the wheels), then every surface seen from behind from
+// outside — through an opening, a window, a gap — gets a black copy 1 mm in front of it facing out, so the eye
+// meets a dark inside instead of the sky. Seen from 13 directions (the sides, ends, top, the four corners level
+// and from above) on a 1 cm depth buffer; glass doesn't stop the eye. Lining a moving piece (door, hood) goes into
+// that piece, the rest as still pieces into the files with room (the .0m's limit). meshes: [{ rel, parts }] (LOD 2),
+// changed in place; blackUV: blackSpot. Returns { floor, lined }.
+export function lineSeenInside(meshes, blackUV) {
+  const CAP = 62000; const idx = (m) => Math.max(m.parts.reduce((t, q) => t + q.indices.length, 0), m.parts.reduce((t, q) => t + q.positions.length / 3, 0)); // (indices or points, whichever is more)
+  const T = []; // [part, t, mesh]
+  const lo = [Infinity, Infinity, Infinity]; const hi = [-Infinity, -Infinity, -Infinity];
+  for (const m of meshes) for (const p of m.parts) { if (p.positions.length / 3 <= 8) continue; const P = p.positions;
+    if (p.flags[0] === 0) for (let i = 0; i < P.length; i += 3) for (let q = 0; q < 3; q++) { lo[q] = Math.min(lo[q], P[i + q]); hi[q] = Math.max(hi[q], P[i + q]); }
+    for (let t = 0; t < p.indices.length; t += 3) T.push([p, t, m]); }
+  const halfW = Math.max(-lo[0], hi[0]); const H = hi[2] - lo[2];
+  // floor pan: under the cabin and the overhangs, inside the sills, around the wheels; both faces
+  const arch = measureArches(meshes) || { front: lo[1] + 0.25 * (hi[1] - lo[1]), rear: hi[1] - 0.25 * (hi[1] - lo[1]) };
+  const zF = lo[2] + 0.09 * H; const xIn = halfW - 0.10; const xW = halfW - 0.40; const wr = 0.45;
+  const rects = [[-xW, xW, lo[1] + 0.25, hi[1] - 0.25]];
+  for (const s of [-1, 1]) for (const [y0, y1] of [[lo[1] + 0.25, arch.front - wr], [arch.front + wr, arch.rear - wr], [arch.rear + wr, hi[1] - 0.25]]) if (y1 > y0) rects.push(s < 0 ? [-xIn, -xW, y0, y1] : [xW, xIn, y0, y1]);
+  const FP = []; const FN = []; const FI = [];
+  for (const [x0, x1, y0, y1] of rects) for (const up of [1, -1]) {
+    const b = FP.length / 3; FP.push(x0, y0, zF, x1, y0, zF, x1, y1, zF, x0, y1, zF); for (let k = 0; k < 4; k++) FN.push(0, 0, up);
+    FI.push(...(up > 0 ? [b, b + 1, b + 2, b, b + 2, b + 3] : [b, b + 2, b + 1, b, b + 3, b + 2]));
+  }
+  const floorTris = FI.length / 3;
+  // depth buffers from outside
+  const dirs = [[0, -1, 0], [0, 1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, -1]];
+  for (const sx of [1, -1]) for (const sy of [1, -1]) { dirs.push([-sx * 0.707, -sy * 0.707, 0]); dirs.push([-sx * 0.6, -sy * 0.6, -0.53]); }
+  const S = 0.01; const seenBack = new Set(); const centre = [0, 1, 2].map((q) => (lo[q] + hi[q]) / 2); const R = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2 + 0.3;
+  const floorT = []; for (let t = 0; t < FI.length; t += 3) floorT.push(t);
+  for (const d of dirs) {
+    const n0 = Math.hypot(...d); const D = d.map((x) => x / n0);
+    let r = Math.abs(D[2]) > 0.9 ? [1, 0, 0] : [-D[1], D[0], 0]; const rl = Math.hypot(...r); r = r.map((x) => x / rl);
+    const u = [r[1] * D[2] - r[2] * D[1], r[2] * D[0] - r[0] * D[2], r[0] * D[1] - r[1] * D[0]];
+    const N = Math.ceil((2 * R) / S); const zb = new Float32Array(N * N).fill(Infinity); const id = new Int32Array(N * N).fill(-1);
+    const proj = (p) => { const v = [p[0] - centre[0], p[1] - centre[1], p[2] - centre[2]]; return [(v[0] * r[0] + v[1] * r[1] + v[2] * r[2] + R) / S, (v[0] * u[0] + v[1] * u[1] + v[2] * u[2] + R) / S, v[0] * D[0] + v[1] * D[1] + v[2] * D[2]]; };
+    const raster = (A, B, C, k) => {
+      // a surface seen from behind counts 12 mm deeper: where a doubled skin's two layers lie on (or near) each other the
+      // outer one, facing the eye, wins (its black inner layer is hidden, not a hole)
+      const e1 = [B[0] - A[0], B[1] - A[1], B[2] - A[2]]; const e2 = [C[0] - A[0], C[1] - A[1], C[2] - A[2]];
+      const back = (e1[1] * e2[2] - e1[2] * e2[1]) * D[0] + (e1[2] * e2[0] - e1[0] * e2[2]) * D[1] + (e1[0] * e2[1] - e1[1] * e2[0]) * D[2] > 0 ? 0.012 : 0;
+      const a = proj(A); const b = proj(B); const c = proj(C); const den = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]); if (Math.abs(den) < 1e-9) return;
+      for (let y = Math.max(0, Math.floor(Math.min(a[1], b[1], c[1]))); y <= Math.min(N - 1, Math.ceil(Math.max(a[1], b[1], c[1]))); y++) for (let x = Math.max(0, Math.floor(Math.min(a[0], b[0], c[0]))); x <= Math.min(N - 1, Math.ceil(Math.max(a[0], b[0], c[0]))); x++) {
+        const w0 = ((b[1] - c[1]) * (x + 0.5 - c[0]) + (c[0] - b[0]) * (y + 0.5 - c[1])) / den; const w1 = ((c[1] - a[1]) * (x + 0.5 - c[0]) + (a[0] - c[0]) * (y + 0.5 - c[1])) / den; if (w0 < 0 || w1 < 0 || w0 + w1 > 1) continue;
+        const z = w0 * a[2] + w1 * b[2] + (1 - w0 - w1) * c[2] + back; const o = y * N + x; if (z < zb[o]) { zb[o] = z; id[o] = k; }
+      } };
+    T.forEach(([p, t], k) => { if (p.flags[0] === 1) return; const P = p.positions; const I = p.indices; raster(...[0, 1, 2].map((j) => [P[I[t + j] * 3], P[I[t + j] * 3 + 1], P[I[t + j] * 3 + 2]]), k); });
+    for (const t of floorT) raster(...[0, 1, 2].map((j) => [FP[FI[t + j] * 3], FP[FI[t + j] * 3 + 1], FP[FI[t + j] * 3 + 2]]), -2);
+    const seen = new Set(id); seen.delete(-1); seen.delete(-2);
+    for (const k of seen) { const [p, t] = T[k]; const P = p.positions; const I = p.indices; const a = I[t] * 3; const b = I[t + 1] * 3; const c = I[t + 2] * 3;
+      const e1 = [P[b] - P[a], P[b + 1] - P[a + 1], P[b + 2] - P[a + 2]]; const e2 = [P[c] - P[a], P[c + 1] - P[a + 1], P[c + 2] - P[a + 2]];
+      const n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+      if (n[0] * D[0] + n[1] * D[1] + n[2] * D[2] > 0 && p.flags[0] === 0) seenBack.add(k); }
+  }
+  // the lining: flipped black copies 1 mm toward the eye
+  const byPart = new Map();
+  for (const k of seenBack) { const [p, t, m] = T[k]; const P = p.positions; const I = p.indices; const v = [0, 1, 2].map((j) => [P[I[t + j] * 3], P[I[t + j] * 3 + 1], P[I[t + j] * 3 + 2]]);
+    const e1 = v[1].map((x, q) => x - v[0][q]); const e2 = v[2].map((x, q) => x - v[0][q]); const n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]]; const L = Math.hypot(...n) || 1;
+    const nn = n.map((x) => x / L); const key = p.flags[1] ? p : 'still'; let g = byPart.get(key); if (!g) byPart.set(key, (g = { P: [], N: [], m }));
+    for (const j of [0, 2, 1]) { g.P.push(...v[j].map((x, q) => x - nn[q] * 0.001)); g.N.push(-nn[0], -nn[1], -nn[2]); } }
+  const geo = (g) => ({ positions: Float32Array.from(g.P), normals: Float32Array.from(g.N), uvs: new Float32Array(g.P.length / 3 * 2).map((_, i) => blackUV[i & 1]), indices: Uint32Array.from({ length: g.P.length / 3 }, (_, i) => i) });
+  let lined = 0;
+  for (const [key, g] of byPart) {
+    if (key === 'still') continue; // moving pieces: the lining moves with them (into the same piece, while the file holds it)
+    if (idx(g.m) + g.P.length / 3 > CAP) continue;
+    Object.assign(key, catGeo(key, geo(g))); g.m.dirty = true; lined += g.P.length / 9;
+  }
+  // still lining and the floor: as pieces of their own into the files with the most room
+  const hosts = meshes.filter((m) => /^(body|(frontbumper|rearbumper|skirt|hood|roof)\/default)_2\.0m$/.test(m.rel));
+  const put = (G) => { let at = 0; while (at < G.indices.length) {
+    const m = hosts.sort((a, b) => idx(a) - idx(b))[0]; const room = Math.floor((CAP - idx(m)) / 3) * 3; if (room < 3) break;
+    const take = Math.min(room, G.indices.length - at); const sub = { positions: G.positions.slice(at * 3, (at + take) * 3), normals: G.normals.slice(at * 3, (at + take) * 3), uvs: G.uvs.slice(at * 2, (at + take) * 2), indices: Uint32Array.from({ length: take }, (_, i) => i) };
+    m.parts.push({ ...sub, flags: [0, 0, 0] }); m.dirty = true; at += take; } return at / 3; };
+  const flatFloor = { positions: new Float32Array(FI.length * 3), normals: new Float32Array(FI.length * 3), uvs: new Float32Array(FI.length * 2), indices: null };
+  FI.forEach((v, i) => { flatFloor.positions.set(FP.slice(v * 3, v * 3 + 3), i * 3); flatFloor.normals.set(FN.slice(v * 3, v * 3 + 3), i * 3); flatFloor.uvs.set(blackUV, i * 2); });
+  flatFloor.indices = Uint32Array.from({ length: FI.length }, (_, i) => i);
+  put(flatFloor);
+  if (byPart.has('still')) lined += put(geo(byPart.get('still')));
+  return { floor: floorTris, lined: Math.round(lined) };
+}

@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { parseOM, writeOM, omParts } from '../om.js';
 import { makeZip, readZip } from '../zip.js';
-import { decodePNG, png, dds, chartsLayout, underTris, filmGlass, plateQuad, FILM_RECT, PLATE_RECT, applyOBJ, capFileVerts, VERT_CAP, turnCar, measureArches, glassShell, orientOutward, splitLikeEscarabajo, blackSpot, closeOpenings, addOpenings, headlightPicture, openingParts } from '../convert.js';
+import { decodePNG, png, dds, chartsLayout, underTris, filmGlass, plateQuad, FILM_RECT, PLATE_RECT, applyOBJ, capFileVerts, VERT_CAP, turnCar, measureArches, glassShell, orientOutward, splitLikeEscarabajo, blackSpot, closeOpenings, addOpenings, headlightPicture, openingParts, lineSeenInside } from '../convert.js';
 import { decodeSpec, encodeSpec } from '../carSpec.js';
 
 const $ = (id) => document.getElementById(id);
@@ -1344,7 +1344,8 @@ $('btn-ready-game').addEventListener('click', readyForGame);
 // the way Escarabajo has them (front bumper, skirts, rear bumper, hood lid, roof + pillars, body), the open
 // headlights closed with a lens the game lights (and a reflector), the other openings (grille, intakes, around
 // the tail lamps) backed with black so the car isn't see-through, the headlight folder its own picture, and the
-// front doors (with their windows) and the hood lid made the moving pieces the game opens, hinged on the car.
+// front doors (with their windows) and the hood lid made the moving pieces the game opens, hinged on the car;
+// last, a black floor pan and a black lining on whatever is still seen from behind (no see-through, like Escarabajo).
 async function completeLikeEscarabajo() {
   const o = orientOutward(car.meshes);
   const s = splitLikeEscarabajo(car.meshes);
@@ -1363,10 +1364,11 @@ async function completeLikeEscarabajo() {
     car.headlightPic = headlightPicture(esc, black || [0.03, 0.45]);
   }
   const dr = openingParts(car.meshes);
+  const ln = lineSeenInside(car.meshes, black || [0.03, 0.45]);
   for (const m of car.meshes) m.isl = m.parts.map(islandsOf);
   carMid = null; build3D(); refresh();
   const c = s.counts; const sz = (n) => n.toLocaleString();
-  return `ครบแบบ Escarabajo: กลับด้าน ${sz(o.flipped)} สามเหลี่ยม · กันชนหน้า ${sz(c.frontbumper)} · สเกิร์ต ${sz(c.skirt)} · กันชนหลัง ${sz(c.rearbumper)} · ฝากระโปรง ${sz(c.hood)} · หลังคา ${sz(c.roof)} · ตัวถัง ${sz(c.body)}${op.lens ? ` · ไฟหน้า ${sz(op.cells.lamp)} ซม²` : ''} · ปิดช่องเปิด ${sz((op.cells.front || 0) + (op.cells.rear || 0))} ซม²${dr.error ? ` · ประตูเปิดไม่ได้: ${dr.error}` : ` · ประตูเปิดได้ (ซ้าย ${sz(dr.doors[0])} / ขวา ${sz(dr.doors[1])} สามเหลี่ยม + กระจก)${dr.hood ? ` · ฝากระโปรงเปิดได้ (${sz(dr.hood)})` : ''}`}`;
+  return `ครบแบบ Escarabajo: กลับด้าน ${sz(o.flipped)} สามเหลี่ยม · กันชนหน้า ${sz(c.frontbumper)} · สเกิร์ต ${sz(c.skirt)} · กันชนหลัง ${sz(c.rearbumper)} · ฝากระโปรง ${sz(c.hood)} · หลังคา ${sz(c.roof)} · ตัวถัง ${sz(c.body)}${op.lens ? ` · ไฟหน้า ${sz(op.cells.lamp)} ซม²` : ''} · ปิดช่องเปิด ${sz((op.cells.front || 0) + (op.cells.rear || 0))} ซม²${dr.error ? ` · ประตูเปิดไม่ได้: ${dr.error}` : ` · ประตูเปิดได้ (ซ้าย ${sz(dr.doors[0])} / ขวา ${sz(dr.doors[1])} สามเหลี่ยม + กระจก)${dr.hood ? ` · ฝากระโปรงเปิดได้ (${sz(dr.hood)})` : ''}`} · พื้นใต้ท้อง + ผิวในสีดำ ${sz(ln.lined)} สามเหลี่ยม`;
 }
 try { $('esc-complete').checked = localStorage.getItem('rc-esc-complete') !== '0'; } catch { /* private mode */ }
 $('esc-complete').addEventListener('change', (e) => { try { localStorage.setItem('rc-esc-complete', e.target.checked ? '1' : '0'); } catch { /* private mode */ } });

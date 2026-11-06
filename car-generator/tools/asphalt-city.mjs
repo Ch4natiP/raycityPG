@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dds, ddsLike } from './img-lib.mjs';
 
-// RGBA → RGBA: asphalt 46 bright on average (sRGB), its grain at 70 %, a touch cool. Marks are told from the
+// RGBA → RGBA: asphalt 24 bright on average (sRGB; the baked light brightens it in game), its grain at 55 %, a touch cool. Marks are told from the
 // grain by the brightness around them (7 × 7 px, wrapping like the tiling picture): a painted line is a bright
 // patch, a pale stone a lone pixel; where the surroundings are 20–45 over the average, the old colour comes back
 export function blacken(data, w, h) {
@@ -21,7 +21,7 @@ export function blacken(data, w, h) {
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { let t = 0; for (let d = -R; d <= R; d++) t += L[y * w + ((x + d + w) % w)]; A[y * w + x] = t / (2 * R + 1); }
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { let t = 0; for (let d = -R; d <= R; d++) t += A[((y + d + h) % h) * w + x]; B[y * w + x] = t / (2 * R + 1); }
   for (let i = 0; i < L.length; i++) {
-    const v = 46 + (L[i] - m) * 0.7; const dark = [v * 0.98, v, v * 1.04];
+    const v = 24 + (L[i] - m) * 0.55; const dark = [v * 0.98, v, v * 1.04];
     const t = Math.max(0, Math.min(1, (B[i] - m - 20) / 25)); const k = t * t * (3 - 2 * t);
     for (let c = 0; c < 3; c++) out[i * 4 + c] = Math.max(0, Math.min(255, dark[c] + (data[i * 4 + c] - dark[c]) * k));
   }

@@ -3,7 +3,8 @@
 // opaque; <sector>_<n>_MD<k>.dds, the see-through glass layer over them): columns side by side across the
 // picture, each repeated up the wall (v wraps). From the sector's model every wall's column and its size in metres
 // are known, so each column is drawn again at its real scale: glass curtain walls, aluminium panels with ribbon
-// windows, dark fins, warm louvres, picked by what the old column looked like (green stays green). Pictures keep
+// windows, dark fins, warm louvres, picked by what the old column looked like (green stays green). Buildings under
+// pitched roofs (the palaces, gates, old houses: sloped roof faces lit with the buildings) keep their walls. Pictures keep
 // their names, sizes, DXT kind and mip levels; the baked light (_CompleteMap) still shades them.
 //   node tools/reskin-city.mjs <sector .0m> <its pictures folder (.dds)> <out folder>
 // Writes the changed .dds into <out> (the rest unchanged): pack <out> over the sector's _tex.jmd files.
@@ -30,6 +31,26 @@ for (const nd of s.nodes) {
   const M = nd.m; const V = (k) => { const o = s.vb + (nd.vs + k) * 40; const x = b.readFloatLE(o); const y = b.readFloatLE(o + 4); const z = b.readFloatLE(o + 8); return { p: [M[0] * x + M[1] * y + M[2] * z + M[3], M[4] * x + M[5] * y + M[6] * z + M[7], M[8] * x + M[9] * y + M[10] * z + M[11]], uv: [b.readFloatLE(o + 24), b.readFloatLE(o + 28)] }; };
   for (let k = 0; k < nd.ic; k += 3) a.tris.push([0, 1, 2].map((j) => V(b.readUInt16LE(s.ib + (nd.is + k + j) * 2))));
 }
+
+// pitched roofs: the buildings' sloped faces (normal 25–63° from up), as a 1.5 m grid of the ground they cover,
+// grown by a cell — walls standing under them are left as they are
+const CELL = 1.5; const roofs = new Set();
+for (const nd of s.nodes) {
+  if (!nd.vc || !nd.ic) continue;
+  const names = (s.mats[nd.mat - 1] || []).map((n) => n.toLowerCase()); if (!names.some((n) => n.endsWith('_buildings_completemap'))) continue;
+  const M = nd.m; const P = (k) => { const o = s.vb + (nd.vs + k) * 40; const x = b.readFloatLE(o); const y = b.readFloatLE(o + 4); const z = b.readFloatLE(o + 8); return [M[0] * x + M[1] * y + M[2] * z + M[3], M[4] * x + M[5] * y + M[6] * z + M[7], M[8] * x + M[9] * y + M[10] * z + M[11]]; };
+  for (let k = 0; k < nd.ic; k += 3) {
+    const [A, B, C] = [0, 1, 2].map((j) => P(b.readUInt16LE(s.ib + (nd.is + k + j) * 2)));
+    const e1 = B.map((v, i) => v - A[i]); const e2 = C.map((v, i) => v - A[i]);
+    const n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]]; const l = Math.hypot(...n); if (l < 1e-6) continue;
+    const nz = Math.abs(n[2]) / l; if (nz < 0.45 || nz > 0.9) continue;
+    const x0 = Math.floor(Math.min(A[0], B[0], C[0]) / CELL) - 1; const x1 = Math.floor(Math.max(A[0], B[0], C[0]) / CELL) + 1;
+    const y0 = Math.floor(Math.min(A[1], B[1], C[1]) / CELL) - 1; const y1 = Math.floor(Math.max(A[1], B[1], C[1]) / CELL) + 1;
+    if ((x1 - x0) * (y1 - y0) > 4000) continue; // (a huge sloped sheet is terrain, not a roof)
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) roofs.add(`${x},${y}`);
+  }
+}
+const underRoof = (p) => roofs.has(`${Math.floor(p[0] / CELL)},${Math.floor(p[1] / CELL)}`);
 
 const hash = (str) => { let h = 2166136261; for (const c of str) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return h >>> 0; };
 const median = (a) => { if (!a.length) return null; const q = [...a].sort((x, y) => x - y); return q[q.length >> 1]; };
@@ -70,13 +91,7 @@ function paint(style, X, Y, colM, P, h) {
 let changed = 0;
 for (const [name, a] of atlases) {
   const raw = fs.readFileSync(files.get(name)); const { w, h, data } = dds(raw); const out = Buffer.from(data);
-  const opaque = name.endsWith('!');
-  if (!opaque) {
-    // the glass layer over the walls: tinted like the new glass, its see-through kept
-    for (let i = 0; i < out.length; i += 4) { const L = (out[i] * 0.3 + out[i + 1] * 0.59 + out[i + 2] * 0.11) / 255; const c = [70 + 110 * L, 100 + 110 * L, 130 + 110 * L]; out[i] = c[0]; out[i + 1] = c[1]; out[i + 2] = c[2]; }
-    fs.writeFileSync(path.join(outDir, path.basename(files.get(name))), ddsLike(raw, w, h, out)); changed++;
-    continue;
-  }
+  const opaque = name.endsWith('!'); let touched = 0;
   // columns: the pixel spans the triangles use across the picture (a triangle over most of it is no column)
   const spans = []; const sizes = [];
   for (const t of a.tris) {
@@ -94,7 +109,8 @@ for (const [name, a] of atlases) {
     // a wall (standing) or a roof / floor (lying): by the face's normal, weighed by its area
     const e1 = t[1].p.map((v, k) => v - t[0].p[k]); const e2 = t[2].p.map((v, k) => v - t[0].p[k]);
     const nrm = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]]; const area = Math.hypot(...nrm) / 2;
-    sizes.push({ c: (u0 + u1) / 2, mu: median(mu), mv: median(mv), up, area, wall: area > 0 && Math.abs(nrm[2]) / (2 * area) < 0.3 });
+    const mid = [0, 1, 2].map((k) => (t[0].p[k] + t[1].p[k] + t[2].p[k]) / 3);
+    sizes.push({ c: (u0 + u1) / 2, mu: median(mu), mv: median(mv), up, area, wall: area > 0 && Math.abs(nrm[2]) / (2 * area) < 0.3, old: underRoof(mid) });
   }
   spans.sort((p, q) => p[0] - q[0]);
   const cols = [];
@@ -105,6 +121,13 @@ for (const [name, a] of atlases) {
     // only columns on walls: roofs, floors and steps keep theirs
     const all = mine.reduce((t, q) => t + q.area, 0); const walls = mine.reduce((t, q) => t + (q.wall ? q.area : 0), 0);
     if (!all || walls < all * 0.6) continue;
+    // walls under pitched roofs (old buildings) keep theirs
+    if (mine.reduce((t, q) => t + (q.wall && q.old ? q.area : 0), 0) > walls * 0.4) continue;
+    if (!opaque) {
+      // the glass layer over the walls: tinted like the new glass, its see-through kept
+      for (let y = 0; y < h; y++) for (let x = x0; x < x1; x++) { const i = (y * w + x) * 4; const L = (out[i] * 0.3 + out[i + 1] * 0.59 + out[i + 2] * 0.11) / 255; out[i] = 70 + 110 * L; out[i + 1] = 100 + 110 * L; out[i + 2] = 130 + 110 * L; }
+      touched++; continue;
+    }
     const mu = median(mine.map((q) => q.mu).filter(Boolean)) || w * 0.03; const mv = median(mine.map((q) => q.mv).filter(Boolean)) || 3.5;
     const up = mine.reduce((t, q) => t + q.up, 0) <= 0; // v falling as the wall rises: the picture's top is up
     const colM = ((x1 - x0) / w) * mu; const tileM = mv; const floors = Math.max(1, Math.round(tileM / 3.6)); const P = tileM / floors;
@@ -121,7 +144,9 @@ for (const [name, a] of atlases) {
       const X = ((x - x0 + 0.5) / (x1 - x0)) * colM; const Y = ((up ? h - 1 - y : y) + 0.5) / h * tileM;
       const c = paint(style, X, Y, colM, P, hh); out[i] = Math.max(0, Math.min(255, c[0])); out[i + 1] = Math.max(0, Math.min(255, c[1])); out[i + 2] = Math.max(0, Math.min(255, c[2]));
     }
+    touched++;
   }
+  if (!touched) continue; // (nothing of it on a modern wall: the picture stays as it is)
   fs.writeFileSync(path.join(outDir, path.basename(files.get(name))), ddsLike(raw, w, h, out)); changed++;
 }
 console.log(`${path.basename(model)}: ${changed} pictures redrawn (${[...atlases.keys()].join(', ')})`);

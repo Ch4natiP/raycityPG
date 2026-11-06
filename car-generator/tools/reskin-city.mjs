@@ -32,7 +32,7 @@ for (const nd of s.nodes) {
   for (let k = 0; k < nd.ic; k += 3) a.tris.push([0, 1, 2].map((j) => V(b.readUInt16LE(s.ib + (nd.is + k + j) * 2))));
 }
 
-// pitched roofs: the buildings' sloped faces (normal 25–63° from up), as a 1.5 m grid of the ground they cover,
+// pitched roofs: the buildings' sloped faces (normal 18–63° from up), as a 1.5 m grid of the ground they cover,
 // grown by a cell — walls standing under them are left as they are
 const CELL = 1.5; const roofs = new Set();
 for (const nd of s.nodes) {
@@ -43,7 +43,7 @@ for (const nd of s.nodes) {
     const [A, B, C] = [0, 1, 2].map((j) => P(b.readUInt16LE(s.ib + (nd.is + k + j) * 2)));
     const e1 = B.map((v, i) => v - A[i]); const e2 = C.map((v, i) => v - A[i]);
     const n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]]; const l = Math.hypot(...n); if (l < 1e-6) continue;
-    const nz = Math.abs(n[2]) / l; if (nz < 0.45 || nz > 0.9) continue;
+    const nz = Math.abs(n[2]) / l; if (nz < 0.45 || nz > 0.95) continue;
     const x0 = Math.floor(Math.min(A[0], B[0], C[0]) / CELL) - 1; const x1 = Math.floor(Math.max(A[0], B[0], C[0]) / CELL) + 1;
     const y0 = Math.floor(Math.min(A[1], B[1], C[1]) / CELL) - 1; const y1 = Math.floor(Math.max(A[1], B[1], C[1]) / CELL) + 1;
     if ((x1 - x0) * (y1 - y0) > 4000) continue; // (a huge sloped sheet is terrain, not a roof)
@@ -121,8 +121,9 @@ for (const [name, a] of atlases) {
     // only columns on walls: roofs, floors and steps keep theirs
     const all = mine.reduce((t, q) => t + q.area, 0); const walls = mine.reduce((t, q) => t + (q.wall ? q.area : 0), 0);
     if (!all || walls < all * 0.6) continue;
-    // walls under pitched roofs (old buildings) keep theirs
-    if (mine.reduce((t, q) => t + (q.wall && q.old ? q.area : 0), 0) > walls * 0.4) continue;
+    // walls under pitched roofs (old buildings) keep theirs; a column they share with modern walls too (one
+    // picture for both: the old ones come first)
+    if (mine.reduce((t, q) => t + (q.wall && q.old ? q.area : 0), 0) > walls * 0.12) continue;
     if (!opaque) {
       // the glass layer over the walls: tinted like the new glass, its see-through kept
       for (let y = 0; y < h; y++) for (let x = x0; x < x1; x++) { const i = (y * w + x) * 4; const L = (out[i] * 0.3 + out[i + 1] * 0.59 + out[i + 2] * 0.11) / 255; out[i] = 70 + 110 * L; out[i + 1] = 100 + 110 * L; out[i + 2] = 130 + 110 * L; }
@@ -146,7 +147,9 @@ for (const [name, a] of atlases) {
     }
     touched++;
   }
+  if (process.env.RESKIN_DEBUG) (globalThis.dbg ||= []).push({ name, w, cols: cols.map(([x0, x1]) => [x0, x1]), tris: a.tris.map((t) => [t.map((v) => v.p), t.map((v) => v.uv[0] * w)]) });
   if (!touched) continue; // (nothing of it on a modern wall: the picture stays as it is)
   fs.writeFileSync(path.join(outDir, path.basename(files.get(name))), ddsLike(raw, w, h, out)); changed++;
 }
+if (process.env.RESKIN_DEBUG) fs.writeFileSync(process.env.RESKIN_DEBUG, JSON.stringify({ roofs: [...roofs], atlases: globalThis.dbg || [] }));
 console.log(`${path.basename(model)}: ${changed} pictures redrawn (${[...atlases.keys()].join(', ')})`);

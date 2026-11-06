@@ -64,7 +64,7 @@ export function tga(b) {
 
 // RGBA written back into a DDS of the same kind: `like` is the original file (its 128-byte header kept: size, DXT1 /
 // DXT3 / DXT5, mip count), every mip level made from the picture by halving (alpha averaged; DXT1 keeps it as
-// 1-bit: under 128 transparent). Block endpoints: the darkest and brightest colour of the block.
+// 1-bit: under 128 transparent). Block endpoints: the two colours of the block farthest apart.
 export function ddsLike(like, w, h, rgba) {
   const cc = like.toString('latin1', 84, 88); const mips = Math.max(1, like.readUInt32LE(28)); const bs = cc === 'DXT1' ? 8 : 16;
   const parts = [like.subarray(0, 128)]; let cur = Buffer.from(rgba); let cw = w; let ch = h;
@@ -81,6 +81,23 @@ export function ddsLike(like, w, h, rgba) {
   }
   return Buffer.concat(parts);
 }
+// a DDS made with ddsLike where only a rectangle of the picture changed (x, y, w, h at full size): every block outside
+// it, on every mip level, taken back from the original bit for bit (halving maps a level's pixel onto 2 × 2 of the
+// level above, so the change stays inside the rectangle scaled down)
+export function ddsKeep(like, made, r) {
+  const out = Buffer.from(made); const bs = like.toString('latin1', 84, 88) === 'DXT1' ? 8 : 16;
+  let w = like.readUInt32LE(16); let h = like.readUInt32LE(12); const mips = Math.max(1, like.readUInt32LE(28)); let o = 128;
+  for (let lv = 0; lv < mips; lv++) {
+    const bw = Math.max(1, (w + 3) >> 2); const bh = Math.max(1, (h + 3) >> 2); const f = 4 * 2 ** lv;
+    const x0 = Math.floor(r.x / f); const x1 = Math.ceil((r.x + r.w) / f); const y0 = Math.floor(r.y / f); const y1 = Math.ceil((r.y + r.h) / f);
+    for (let by = 0; by < bh; by++) for (let bx = 0; bx < bw; bx++) {
+      if (bx >= x0 && bx < x1 && by >= y0 && by < y1) continue;
+      const p = o + (by * bw + bx) * bs; like.copy(out, p, p, p + bs);
+    }
+    o += bw * bh * bs; w = Math.max(1, w >> 1); h = Math.max(1, h >> 1);
+  }
+  return out;
+}
 function encodeDXT(cc, px, w, h, bs) {
   const bw = Math.max(1, (w + 3) >> 2); const bh = Math.max(1, (h + 3) >> 2); const out = Buffer.alloc(bw * bh * bs); let o = 0;
   const to565 = (c) => ((Math.round(c[0]) >> 3) << 11) | ((Math.round(c[1]) >> 2) << 5) | (Math.round(c[2]) >> 3);
@@ -90,8 +107,12 @@ function encodeDXT(cc, px, w, h, bs) {
     for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) { const i = (Math.min(h - 1, by * 4 + y) * w + Math.min(w - 1, bx * 4 + x)) * 4; blk.push([px[i], px[i + 1], px[i + 2], px[i + 3]]); }
     const cut = cc === 'DXT1' && blk.some((c) => c[3] < 128); // DXT1's 3-colour mode: index 3 transparent
     const lum = (c) => c[0] * 0.3 + c[1] * 0.59 + c[2] * 0.11;
-    const solid = blk.filter((c) => !cut || c[3] >= 128); let hi = solid[0] || blk[0]; let lo = hi;
-    for (const c of solid) { if (lum(c) > lum(hi)) hi = c; if (lum(c) < lum(lo)) lo = c; }
+    const solid = blk.filter((c) => !cut || c[3] >= 128); let hi = solid[0] || blk[0]; let lo = hi; let far = -1;
+    // endpoints: the two colours of the block farthest apart (a blue / white / yellow sign keeps its colours), brighter first
+    for (let i = 0; i < solid.length; i++) for (let j = i + 1; j < solid.length; j++) {
+      const a = solid[i]; const c = solid[j]; const d = (a[0] - c[0]) ** 2 + (a[1] - c[1]) ** 2 + (a[2] - c[2]) ** 2;
+      if (d > far) { far = d; [hi, lo] = lum(a) >= lum(c) ? [a, c] : [c, a]; }
+    }
     let c0 = to565(hi); let c1 = to565(lo);
     if (cut ? c0 > c1 : c0 < c1) [c0, c1] = [c1, c0];
     if (!cut && c0 === c1) { if (c0 < 0xffff) c0++; else c1--; }

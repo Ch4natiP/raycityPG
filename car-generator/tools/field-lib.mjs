@@ -99,8 +99,9 @@ export function chunkNames(b, at, len, ids = new Map()) {
   return out;
 }
 
-export function parseSector(b) {
-  const cs = chunks(b, 768);
+// b: a sector's .jmd (its .0m from byte 768), or the .0m itself with start 0
+export function parseSector(b, start = 768) {
+  const cs = chunks(b, start);
   const ids = new Map(); const mats = cs.filter((c) => c.type === 0x496).map((c) => chunkNames(b, c.at, c.len, ids));
   const g = cs.find((c) => c.type === 0x415); if (!g) return { mats, nodes: [], verts: null, indices: null };
   const cnt = b.readUInt16LE(g.at + 8); const nodes = []; let o = g.at + 10;

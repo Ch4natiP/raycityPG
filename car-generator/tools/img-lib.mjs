@@ -61,3 +61,63 @@ export function tga(b) {
   }
   return { w, h, data: out };
 }
+
+// RGBA written back into a DDS of the same kind: `like` is the original file (its 128-byte header kept: size, DXT1 /
+// DXT3 / DXT5, mip count), every mip level made from the picture by halving (alpha averaged; DXT1 keeps it as
+// 1-bit: under 128 transparent). Block endpoints: the darkest and brightest colour of the block.
+export function ddsLike(like, w, h, rgba) {
+  const cc = like.toString('latin1', 84, 88); const mips = Math.max(1, like.readUInt32LE(28)); const bs = cc === 'DXT1' ? 8 : 16;
+  const parts = [like.subarray(0, 128)]; let cur = Buffer.from(rgba); let cw = w; let ch = h;
+  for (let lv = 0; lv < mips; lv++) {
+    parts.push(encodeDXT(cc, cur, cw, ch, bs));
+    if (cw === 1 && ch === 1) { for (let k = lv + 1; k < mips; k++) parts.push(encodeDXT(cc, cur, 1, 1, bs)); break; }
+    const nw = Math.max(1, cw >> 1); const nh = Math.max(1, ch >> 1); const nx = Buffer.alloc(nw * nh * 4);
+    for (let y = 0; y < nh; y++) for (let x = 0; x < nw; x++) for (let k = 0; k < 4; k++) {
+      let s = 0; let n = 0;
+      for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) { const X = Math.min(cw - 1, x * 2 + dx); const Y = Math.min(ch - 1, y * 2 + dy); s += cur[(Y * cw + X) * 4 + k]; n++; }
+      nx[(y * nw + x) * 4 + k] = s / n;
+    }
+    cur = nx; cw = nw; ch = nh;
+  }
+  return Buffer.concat(parts);
+}
+function encodeDXT(cc, px, w, h, bs) {
+  const bw = Math.max(1, (w + 3) >> 2); const bh = Math.max(1, (h + 3) >> 2); const out = Buffer.alloc(bw * bh * bs); let o = 0;
+  const to565 = (c) => ((Math.round(c[0]) >> 3) << 11) | ((Math.round(c[1]) >> 2) << 5) | (Math.round(c[2]) >> 3);
+  const from565 = (c) => [((c >> 11) & 31) * 255 / 31, ((c >> 5) & 63) * 255 / 63, (c & 31) * 255 / 31];
+  for (let by = 0; by < bh; by++) for (let bx = 0; bx < bw; bx++, o += bs) {
+    const blk = [];
+    for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) { const i = (Math.min(h - 1, by * 4 + y) * w + Math.min(w - 1, bx * 4 + x)) * 4; blk.push([px[i], px[i + 1], px[i + 2], px[i + 3]]); }
+    const cut = cc === 'DXT1' && blk.some((c) => c[3] < 128); // DXT1's 3-colour mode: index 3 transparent
+    const lum = (c) => c[0] * 0.3 + c[1] * 0.59 + c[2] * 0.11;
+    const solid = blk.filter((c) => !cut || c[3] >= 128); let hi = solid[0] || blk[0]; let lo = hi;
+    for (const c of solid) { if (lum(c) > lum(hi)) hi = c; if (lum(c) < lum(lo)) lo = c; }
+    let c0 = to565(hi); let c1 = to565(lo);
+    if (cut ? c0 > c1 : c0 < c1) [c0, c1] = [c1, c0];
+    if (!cut && c0 === c1) { if (c0 < 0xffff) c0++; else c1--; }
+    const e0 = from565(c0); const e1 = from565(c1);
+    const pal = cut ? [e0, e1, e0.map((v, k) => (v + e1[k]) / 2)] : [e0, e1, e0.map((v, k) => (2 * v + e1[k]) / 3), e0.map((v, k) => (v + 2 * e1[k]) / 3)];
+    let bits = 0;
+    blk.forEach((c, i) => {
+      let k = 0;
+      if (cut && c[3] < 128) k = 3;
+      else { let bd = Infinity; pal.forEach((p, j) => { const d = (p[0] - c[0]) ** 2 + (p[1] - c[1]) ** 2 + (p[2] - c[2]) ** 2; if (d < bd) { bd = d; k = j; } }); }
+      bits |= k << (2 * i);
+    });
+    const co = bs === 16 ? o + 8 : o;
+    out.writeUInt16LE(c0, co); out.writeUInt16LE(c1, co + 2); out.writeUInt32LE(bits >>> 0, co + 4);
+    if (cc === 'DXT3') for (let i = 0; i < 16; i += 2) out[o + i / 2] = (blk[i][3] >> 4) | ((blk[i + 1][3] >> 4) << 4);
+    if (cc === 'DXT5') {
+      let a0 = 0; let a1 = 255; for (const c of blk) { a0 = Math.max(a0, c[3]); a1 = Math.min(a1, c[3]); }
+      if (a0 === a1) { a0 = Math.min(255, a0 + 1); if (a0 === a1) a1 = a0 - 1; }
+      out[o] = a0; out[o + 1] = a1; let ab = 0n;
+      blk.forEach((c, i) => {
+        // a0 > a1: 8 steps from a0 (index 0) to a1 (index 1)
+        const t = (a0 - c[3]) / (a0 - a1); const s = Math.max(0, Math.min(7, Math.round(t * 7))); const k = s === 0 ? 0 : s === 7 ? 1 : s + 1;
+        ab |= BigInt(k) << BigInt(3 * i);
+      });
+      for (let i = 0; i < 6; i++) out[o + 2 + i] = Number((ab >> BigInt(8 * i)) & 0xffn);
+    }
+  }
+  return out;
+}

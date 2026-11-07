@@ -1,0 +1,129 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>RayCity PG parts</title></head>
+<body style="margin:0;background:#222">
+<!-- Pictures and shop icons for the shop parts of car/1.common, driven by tools/make-parts.mjs:
+     window.paint(kind, w, h, baseB64) → RGBA (base64) of a part's picture, drawn over the picture it starts from
+     window.render(opts) → PNG data URL of a .0m with its picture, as the shop icons show parts -->
+<script type="importmap">
+  { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { parseOM, omToObject } from '../js/om.js';
+
+const BLUE = ['#1459c8', '#0a3482'], YEL = '#ffc400', NAVY = '#0b2558', WHITE = '#ffffff';
+const FONT = (w, s, it) => (it ? 'italic ' : '') + w + ' ' + s + 'px Inter, "DejaVu Sans", sans-serif';
+const b64 = (d) => { let s = ''; for (let i = 0; i < d.length; i += 32768) s += String.fromCharCode.apply(null, d.subarray(i, i + 32768)); return btoa(s); };
+const unb64 = (s) => Uint8ClampedArray.from(atob(s), (c) => c.charCodeAt(0));
+function rr(c, x, y, w, h, r) { c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r); c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); }
+function text(c, s, x, y, size, weight, maxW, color, opt = {}) {
+  c.font = FONT(weight, size, opt.italic); c.fillStyle = color; c.textAlign = opt.align || 'center'; c.textBaseline = 'middle';
+  const w = c.measureText(s).width; c.save(); c.translate(x, y); if (opt.rot) c.rotate(opt.rot); if (w > maxW) c.scale(maxW / w, 1);
+  if (opt.stroke) { c.lineWidth = opt.stroke[1]; c.strokeStyle = opt.stroke[0]; c.lineJoin = 'round'; c.strokeText(s, 0, 0); }
+  c.fillText(s, 0, 0); c.restore();
+}
+function blueGround(c, x, y, w, h) { const g = c.createLinearGradient(0, y, 0, y + h); g.addColorStop(0, BLUE[0]); g.addColorStop(1, BLUE[1]); c.fillStyle = g; c.fillRect(x, y, w, h); }
+function badge(c, x, y, s) { c.fillStyle = YEL; rr(c, x, y, s, s, s * 0.16); c.fill(); text(c, 'PG', x + s / 2, y + s * 0.54, s * 0.62, 900, s * 0.86, NAVY); }
+
+// plate, 256 × 128: blue, white rim, four screws, PG badge, RAYCITY / PG SERVER
+function plate(c, W, H) {
+  c.save(); c.scale(W / 256, H / 128);
+  c.fillStyle = '#e8edf5'; rr(c, 0, 0, 256, 128, 14); c.fill();
+  c.save(); rr(c, 5, 5, 246, 118, 11); c.clip(); blueGround(c, 0, 0, 256, 128); c.restore();
+  c.lineWidth = 3; c.strokeStyle = WHITE; rr(c, 11, 11, 234, 106, 8); c.stroke();
+  for (const [x, y] of [[20, 20], [236, 20], [20, 108], [236, 108]]) {
+    const g = c.createRadialGradient(x - 1.5, y - 1.5, 0.5, x, y, 5); g.addColorStop(0, '#ffffff'); g.addColorStop(1, '#8a96a8');
+    c.fillStyle = g; c.beginPath(); c.arc(x, y, 5, 0, Math.PI * 2); c.fill(); c.strokeStyle = '#4a5568'; c.lineWidth = 1.2; c.beginPath(); c.moveTo(x - 3, y); c.lineTo(x + 3, y); c.moveTo(x, y - 3); c.lineTo(x, y + 3); c.stroke();
+  }
+  badge(c, 30, 30, 68);
+  text(c, 'RAYCITY', 170, 54, 40, 900, 132, WHITE);
+  c.fillStyle = WHITE; c.fillRect(110, 73, 120, 3);
+  text(c, 'PG SERVER', 170, 94, 26, 900, 120, YEL);
+  c.restore();
+}
+// the long roof sign (lamp taxi_round, 128 × 128): rows 0–52 colour the rim, top and bottom (yellow; the grey
+// corner kept); the board face shows x 12–116, y 58–104, squeezed 3 × across (the board is 0.88 × 0.13 m); the
+// columns x 3–10 and 118–126 (rows 52–128) are the board's ends and the legs (white)
+function roofSign(c, W, H) {
+  c.save(); c.scale(W / 128, H / 128);
+  c.fillStyle = YEL; c.fillRect(0, 0, 118, 52);
+  blueGround(c, 0, 52, 128, 76);
+  c.fillStyle = WHITE; c.fillRect(2, 52, 9, 76); c.fillRect(117, 52, 10, 76);
+  c.save(); c.translate(12, 58); c.scale(104 / 700, 46 / 110);
+  c.fillStyle = YEL; rr(c, 8, 8, 104, 94, 14); c.fill(); text(c, 'PG', 60, 58, 70, 900, 92, NAVY);
+  text(c, 'RAYCITY PG', 410, 58, 84, 900, 540, WHITE);
+  c.restore(); c.restore();
+}
+// TE37 (rbrc_wolk_te37w, 512 × 512; places given on 256) from its white picture: spokes and barrel blue, centre cap yellow, the caliper strip
+// yellow with RAYCITY PG, PG on the barrel where RAYS was, RAYCITY PG round the tyre where TOP RACER was, the rim's
+// lip (x 185–216, y 243–256: it wraps round the rim) blue with a yellow pinstripe
+function te37(c, W, H) {
+  const d = c.getImageData(0, 0, W, H); const p = d.data; const B = [20, 89, 200];
+  const inFace = (x, y) => x < 112 && y >= 108 && y < 232; const inBand = (x, y) => y >= 145 && y < 213 && x >= 100;
+  for (let py = 0; py < H; py++) for (let px = 0; px < W; px++) {
+    const x = px * 256 / W, y = py * 256 / H; // places below are on the 256-px layout (the picture can be 512)
+    const q = (py * W + px) * 4; const r = p[q], g = p[q + 1], b = p[q + 2]; const lum = 0.3 * r + 0.59 * g + 0.11 * b; const sat = Math.max(r, g, b) - Math.min(r, g, b);
+    if (Math.hypot(x - 179, y - 133) < 10 && lum > 120) { const k = lum / 255; p[q] = 255 * k; p[q + 1] = 196 * k; p[q + 2] = 0; continue; }
+    if ((inFace(x, y) || inBand(x, y)) && sat < 40 && lum > 70) {
+      const k = Math.min(1.25, lum / 205); const hi = Math.max(0, (lum - 235) / 20) * 0.2;
+      for (let j = 0; j < 3; j++) p[q + j] = Math.min(255, B[j] * k + (255 - B[j] * k) * hi);
+    }
+    if (x >= 112 && x < 250 && y >= 212 && y < 243 && lum > 30) { p[q] = p[q + 1] = p[q + 2] = 12; }
+  }
+  c.putImageData(d, 0, 0); c.save(); c.scale(W / 256, H / 256);
+  // RAYS → PG on the barrel
+  c.fillStyle = 'rgb(20,89,200)'; c.fillRect(118, 156, 66, 28);
+  text(c, 'PG', 151, 171, 24, 900, 60, YEL, { italic: true, stroke: [NAVY, 3] });
+  // the lip
+  const lg = c.createLinearGradient(0, 243, 0, 256); lg.addColorStop(0, '#2a6ee0'); lg.addColorStop(0.5, '#1459c8'); lg.addColorStop(1, '#0d3f96'); c.fillStyle = lg; c.fillRect(185, 243, 31, 13);
+  c.fillStyle = YEL; c.fillRect(185, 248.5, 31, 1.6);
+  // caliper strip
+  const g = c.createLinearGradient(195, 0, 256, 0); g.addColorStop(0, '#ffd23a'); g.addColorStop(1, '#f0b400'); c.fillStyle = g; c.fillRect(195, 0, 61, 145);
+  text(c, 'RAYCITY PG', 226, 72, 34, 900, 132, NAVY, { rot: -Math.PI / 2 });
+  // round the tyre: letters on an arc like TOP RACER
+  const s = 'RAYCITY PG'; const cx = 186, cy = 420, R = 196; c.font = FONT(800, 17); c.fillStyle = WHITE; c.textAlign = 'center'; c.textBaseline = 'alphabetic';
+  const ws = [...s].map((ch) => c.measureText(ch).width + 0.6); const tot = ws.reduce((a, b) => a + b, 0); let a = -Math.PI / 2 - tot / 2 / R;
+  for (let i = 0; i < s.length; i++) { const m = a + ws[i] / 2 / R; c.save(); c.translate(cx + R * Math.cos(m), cy + R * Math.sin(m)); c.rotate(m + Math.PI / 2); c.fillText(s[i], 0, 0); c.restore(); a += ws[i] / R; }
+  c.restore();
+}
+
+window.paint = async (kind, W, H, base) => {
+  await document.fonts.load(FONT(900, 40)); await document.fonts.load(FONT(800, 40)); await document.fonts.load(FONT(900, 40, true));
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const c = cv.getContext('2d', { willReadFrequently: true });
+  if (base) c.putImageData(new ImageData(unb64(base), W, H), 0, 0);
+  ({ plate, roofSign, te37 })[kind](c, W, H);
+  return b64(c.getImageData(0, 0, W, H).data);
+};
+
+// a part drawn as the shop shows it: its .0m, its picture (RGBA, w × h) on the part's slot of the car picture (u0, v0, size)
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setClearColor(0x000000, 0); renderer.outputColorSpace = THREE.SRGBColorSpace;
+const scene = new THREE.Scene();
+scene.add(new THREE.HemisphereLight('#ffffff', '#3a4250', 2.2));
+const sun = new THREE.DirectionalLight('#ffffff', 2.2); sun.position.set(-2, 3, 3); scene.add(sun);
+const camera = new THREE.PerspectiveCamera(28, 1, 0.01, 100);
+window.render = ({ mesh, tex, w, h, slot, view, size, glow }) => {
+  const t = new THREE.DataTexture(unb64(tex), w, h, THREE.RGBAFormat); t.colorSpace = THREE.SRGBColorSpace; t.flipY = false;
+  t.repeat.set(1 / slot[2], 1 / slot[2]); t.offset.set(-slot[0] / slot[2], -slot[1] / slot[2]); t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true; t.needsUpdate = true;
+  const mat = new THREE.MeshStandardMaterial({ map: t, roughness: 0.55, metalness: 0.15, side: THREE.DoubleSide });
+  const obj = omToObject(parseOM(new Uint8Array(mesh).buffer), [mat]); scene.add(obj);
+  const box = new THREE.Box3().setFromObject(obj); const ctr = box.getCenter(new THREE.Vector3()); const r = box.getSize(new THREE.Vector3()).length() / 2;
+  camera.position.copy(ctr).add(new THREE.Vector3(...view).normalize().multiplyScalar(r / Math.sin(THREE.MathUtils.degToRad(14)))); camera.lookAt(ctr);
+  const S = size * 2; renderer.setSize(S, S); renderer.render(scene, camera);
+  scene.remove(obj); obj.traverse((o) => o.geometry && o.geometry.dispose()); t.dispose(); mat.dispose();
+  const out = document.createElement('canvas'); out.width = out.height = size; const g = out.getContext('2d');
+  if (glow) { g.shadowColor = 'rgba(255,255,255,0.85)'; g.shadowBlur = size / 16; }
+  g.drawImage(renderer.domElement, 0, 0, size, size); return out.toDataURL('image/png');
+};
+// a flat picture (the plate) as an icon: on a slant, with a soft white edge
+window.flat = ({ tex, w, h, size }) => {
+  const src = document.createElement('canvas'); src.width = w; src.height = h; src.getContext('2d').putImageData(new ImageData(unb64(tex), w, h), 0, 0);
+  const out = document.createElement('canvas'); out.width = out.height = size; const g = out.getContext('2d');
+  g.shadowColor = 'rgba(255,255,255,0.85)'; g.shadowBlur = size / 16; const pw = size * 0.86; const ph = pw * h / w;
+  g.translate(size / 2, size / 2); g.transform(1, -0.12, 0, 1, 0, 0); g.drawImage(src, -pw / 2, -ph / 2, pw, ph); return out.toDataURL('image/png');
+};
+window.ready = true;
+</script>
+</body>
+</html>

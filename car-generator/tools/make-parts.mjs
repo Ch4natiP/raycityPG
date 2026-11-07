@@ -19,6 +19,9 @@ export const PARTS = [
   { type: 'plate', name: 'pg_raycity', tex: 'common_plate_pg_raycity', paint: 'plate', size: [256, 128], like: 'common_plate_default' },
   { type: 'lamp', name: 'pg_roofsign', mesh: 'taxi_round', tex: 'common_lamp_pg_roofsign', paint: 'roofSign', base: 'taxi_round', slot: [0, 0.375, 0.125], view: [0.8, 0.5, 1.6] },
   { type: 'wheel', name: 'pg_te37_blue', mesh: 'rbrc_wolk_te37w', tex: 'common_wheel_pg_te37_blue', paint: 'te37', base: 'rbrc_te37w_white', slot: [0, 0.75, 0.25], view: [-1.7, 0.35, 0.55], wide: true, flatAlpha: [[112, 212, 250, 243]] },
+  // a car-body decal: a blank 1024 canvas (the DXT3 header taken from an existing decal), PG art kept with its own
+  // alpha so the car paint shows through elsewhere; its own icon is a PG badge, and it carries a no-custom-colour xml
+  { type: 'decalinfo', name: 'pg_raycity', tex: 'decel_pg_raycity', paint: 'decal', like: 'decel_rbrc_gp_2022', decal: true, icon: 'badge', xml: "<?xml version='1.0' encoding='UTF-16'?>\r\n<part>\r\n\t<color>\r\n\t\t<custom>no</custom>\r\n\t</color>\r\n</part>" },
 ];
 
 // list.xml: UTF-16 (BOM kept), lines as the file has them; new <part> lines go before </partlist>, written like the last one
@@ -54,6 +57,8 @@ async function page(root) {
   return { pg, close: async () => { await browser.close(); server.close(); } };
 }
 const fromUrl = (u) => Buffer.from(u.split(',')[1], 'base64');
+// an RGBA buffer composited over mid grey (for showing a mostly-transparent decal)
+function onGrey(rgba) { const o = Buffer.from(rgba); for (let i = 0; i < o.length; i += 4) { const a = o[i + 3] / 255; for (let k = 0; k < 3; k++) o[i + k] = Math.round(o[i + k] * a + 110 * (1 - a)); o[i + 3] = 255; } return o; }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const [game, out] = process.argv.slice(2);
@@ -67,23 +72,29 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       const like = fs.readFileSync(path.join(dir, `${p.base || p.like}_s.dds`)); const src = dds(like); const w = src.w, h = src.h;
       const base = p.base ? Buffer.from(src.data) : null; if (base) for (let i = 3; i < base.length; i += 4) base[i] = 255;
       const rgba = Buffer.from(await pg.evaluate(([k, a, b, c]) => window.paint(k, a, b, c), [p.paint, w, h, base ? base.toString('base64') : null]), 'base64');
-      for (let i = 3; i < rgba.length; i += 4) rgba[i] = p.base ? src.data[i] : 255;
+      // alpha: a decal keeps what it drew (transparent where there is no art); a wheel/lamp keeps the shape's gloss; a plate is opaque
+      if (!p.decal) for (let i = 3; i < rgba.length; i += 4) rgba[i] = p.base ? src.data[i] : 255;
       for (const [x0, y0, x1, y1] of p.flatAlpha || []) {
         const f = w / 256; const at = []; for (let y = Math.round(y0 * f); y < Math.round(y1 * f); y++) for (let x = Math.round(x0 * f); x < Math.round(x1 * f); x++) at.push((y * w + x) * 4 + 3);
         const n = new Map(); for (const q of at) n.set(rgba[q], (n.get(rgba[q]) || 0) + 1); const mode = [...n].sort((a, b) => b[1] - a[1])[0][0]; for (const q of at) rgba[q] = mode;
       }
       fs.writeFileSync(path.join(od, `${p.tex}.png`), png(w, h, 4, rgba)); fs.writeFileSync(path.join(od, `${p.tex}_s.dds`), ddsLike(like, w, h, rgba));
+      if (p.xml) fs.writeFileSync(path.join(od, `${p.tex}.xml`), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(p.xml, 'utf16le')]));
       // icons (and a bigger look for the preview)
-      const shot = async (mesh, size) => (mesh ? pg.evaluate((o) => window.render(o), { mesh: [...fs.readFileSync(path.join(dir, `${mesh}_2.0m`))], tex: rgba.toString('base64'), w, h, slot: p.slot, view: p.view, size, glow: size <= 64 })
-        : pg.evaluate((o) => window.flat(o), { tex: rgba.toString('base64'), w, h, size }));
+      const shot = async (mesh, size) => (p.icon === 'badge' ? pg.evaluate((s) => window.badgeIcon(s), size)
+        : mesh ? pg.evaluate((o) => window.render(o), { mesh: [...fs.readFileSync(path.join(dir, `${mesh}_2.0m`))], tex: rgba.toString('base64'), w, h, slot: p.slot, view: p.view, size, glow: size <= 64 })
+          : pg.evaluate((o) => window.flat(o), { tex: rgba.toString('base64'), w, h, size }));
+      // the icon file: a decal is named by its tex; plate/lamp/wheel by common_<type>_<part name>
+      const iconFile = (name) => (p.type === 'decalinfo' ? p.tex : `common_${p.type}_${name}`);
       const variants = [{ name: p.name, mesh: p.mesh }]; if (p.wide) variants.push({ name: `${p.name}_wide`, mesh: `${p.mesh}_wide` });
       const list = lists[p.type] || (lists[p.type] = { ...readList(fs.readFileSync(path.join(dir, 'list.xml'))), add: [] });
       for (const v of variants) {
-        fs.writeFileSync(path.join(od, 'icon', `common_${p.type}_${v.name}.png`), fromUrl(await shot(v.mesh, 64)));
+        fs.writeFileSync(path.join(od, 'icon', `${iconFile(v.name)}.png`), fromUrl(await shot(v.mesh, 64)));
         shots.push({ label: `${p.type} ${v.name}`, url: await shot(v.mesh, 256) });
         const id = list.max + list.add.length + 1; list.add.push({ id, name: v.name, mesh: v.mesh, tex: p.tex }); report.push(`${p.type}\t${id}\t${v.name}\t${p.tex}${v.mesh ? `\t(${v.mesh})` : ''}`);
       }
-      shots.push({ label: `${p.tex}.png`, url: `data:image/png;base64,${png(w, h, 4, rgba).toString('base64')}` });
+      // the full picture, on a mid grey for a decal (mostly transparent) so the art shows
+      shots.push({ label: `${p.tex}.png`, url: `data:image/png;base64,${png(w, h, 4, p.decal ? onGrey(rgba) : rgba).toString('base64')}` });
     }
     for (const [type, list] of Object.entries(lists)) fs.writeFileSync(path.join(out, 'car', '1.common', type, 'list.xml'), addParts(list, list.add));
     fs.writeFileSync(path.join(out, 'parts.txt'), `type\tid\tname\ttex\t(mesh)\n${report.join('\n')}\n`);

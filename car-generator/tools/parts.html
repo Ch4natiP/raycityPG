@@ -88,12 +88,43 @@ function te37(c, W, H) {
   c.restore();
 }
 
+// a car-body decal (1024 × 1024, drawn on the body's own UV; transparent where there is no art). Placed on the same
+// three regions a working generic decal (crashtime_defence) uses: the hood (top centre), a thin stripe along the
+// doors (middle), and the rear (lower centre) — so it lands on panels for most cars
+function decal(c, W, H) {
+  c.save(); c.scale(W / 1024, H / 1024);
+  // hood: PG badge + RAYCITY
+  (function hood() {
+    const x = 352, y = 60, h = 92; badge(c, x, y, h); text(c, 'RAYCITY', x + h + 150, y + h * 0.5, 66, 900, 290, WHITE, { stroke: [NAVY, 8] });
+  })();
+  // doors: a blue stripe with RAYCITY PG repeated, edged yellow
+  (function doors() {
+    const y = 350, h = 30; c.save(); c.beginPath(); c.rect(132, y, 868, h); c.clip(); blueGround(c, 132, y, 868, h);
+    c.fillStyle = YEL; c.fillRect(132, y, 868, 3); c.fillRect(132, y + h - 3, 868, 3);
+    for (let x = 160; x < 1000; x += 250) text(c, 'RAYCITY PG', x, y + h / 2 + 1, 19, 900, 220, WHITE, { align: 'left' });
+    c.restore();
+  })();
+  // rear: PG badge + PG SERVER
+  (function rear() {
+    const x = 356, y = 618, h = 90; badge(c, x, y, h); text(c, 'PG SERVER', x + h + 165, y + h * 0.5, 58, 900, 300, WHITE, { stroke: [NAVY, 8] });
+  })();
+  c.restore();
+}
+
 window.paint = async (kind, W, H, base) => {
   await document.fonts.load(FONT(900, 40)); await document.fonts.load(FONT(800, 40)); await document.fonts.load(FONT(900, 40, true));
   const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const c = cv.getContext('2d', { willReadFrequently: true });
   if (base) c.putImageData(new ImageData(unb64(base), W, H), 0, 0);
-  ({ plate, roofSign, te37 })[kind](c, W, H);
+  ({ plate, roofSign, te37, decal })[kind](c, W, H);
   return b64(c.getImageData(0, 0, W, H).data);
+};
+// a 64 px decal icon: the PG badge over RAYCITY on a dark rounded tile, like the game's decal icons
+window.badgeIcon = async (size) => {
+  await document.fonts.load(FONT(900, 40));
+  const cv = document.createElement('canvas'); cv.width = cv.height = size; const c = cv.getContext('2d'); const k = size / 64;
+  c.fillStyle = '#12161e'; rr(c, 2 * k, 2 * k, 60 * k, 60 * k, 8 * k); c.fill();
+  badge(c, 9 * k, 10 * k, 30 * k); text(c, 'RAYCITY', 44 * k, 20 * k, 11 * k, 900, 34 * k, WHITE); text(c, 'PG', 44 * k, 34 * k, 13 * k, 900, 30 * k, YEL);
+  return cv.toDataURL('image/png');
 };
 
 // a part drawn as the shop shows it: its .0m, its picture (RGBA, w × h) on the part's slot of the car picture (u0, v0, size)

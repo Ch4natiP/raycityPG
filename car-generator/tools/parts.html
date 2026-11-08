@@ -111,12 +111,32 @@ function decal(c, W, H) {
   c.restore();
 }
 
+// window film (glass, 128 × 128): the art sits in the top band (the window UV, y 0–72 on the 128), the rest black;
+// a blue tint gradient with RAYCITY PG in bold italic, like the game's rbrc_gp_2022 film
+function glass(c, W, H) {
+  c.save(); c.scale(W / 128, H / 128);
+  c.fillStyle = '#000000'; c.fillRect(0, 0, 128, 128);
+  const g = c.createLinearGradient(0, 0, 128, 72); g.addColorStop(0, '#15408f'); g.addColorStop(0.55, '#0b2558'); g.addColorStop(1, '#0a1c3a'); c.fillStyle = g; c.fillRect(0, 0, 128, 72);
+  // RAYCITY big italic, PG SERVER under it in yellow, slight racing slant
+  text(c, 'RAYCITY', 64, 26, 30, 900, 120, WHITE, { italic: true, stroke: [NAVY, 4] });
+  text(c, 'PG', 34, 56, 26, 900, 30, YEL, { italic: true, stroke: [NAVY, 4] });
+  text(c, 'SERVER', 90, 56, 22, 900, 64, WHITE, { italic: true, stroke: [NAVY, 4] });
+  c.restore();
+}
+
 window.paint = async (kind, W, H, base) => {
   await document.fonts.load(FONT(900, 40)); await document.fonts.load(FONT(800, 40)); await document.fonts.load(FONT(900, 40, true));
   const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const c = cv.getContext('2d', { willReadFrequently: true });
   if (base) c.putImageData(new ImageData(unb64(base), W, H), 0, 0);
-  ({ plate, roofSign, te37, decal })[kind](c, W, H);
+  ({ plate, roofSign, te37, decal, glass })[kind](c, W, H);
   return b64(c.getImageData(0, 0, W, H).data);
+};
+// a film icon: the art band drawn straight into a square, like the game's glass icons
+window.filmIcon = (tex, w, h, size) => {
+  const src = document.createElement('canvas'); src.width = w; src.height = h; src.getContext('2d').putImageData(new ImageData(unb64(tex), w, h), 0, 0);
+  const out = document.createElement('canvas'); out.width = out.height = size; const g = out.getContext('2d');
+  g.fillStyle = '#0a1326'; g.fillRect(0, 0, size, size); g.drawImage(src, 0, 0, w, Math.round(h * 0.57), 0, Math.round(size * 0.2), size, Math.round(size * 0.6));
+  return out.toDataURL('image/png');
 };
 // a 64 px decal icon: the PG badge over RAYCITY on a dark rounded tile, like the game's decal icons
 window.badgeIcon = async (size) => {

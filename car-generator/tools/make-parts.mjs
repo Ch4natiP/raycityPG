@@ -22,6 +22,8 @@ export const PARTS = [
   // a car-body decal: a blank 1024 canvas (the DXT3 header taken from an existing decal), PG art kept with its own
   // alpha so the car paint shows through elsewhere; its own icon is a PG badge, and it carries a no-custom-colour xml
   { type: 'decalinfo', name: 'pg_raycity', tex: 'decel_pg_raycity', paint: 'decal', like: 'decel_rbrc_gp_2022', decal: true, icon: 'badge', xml: "<?xml version='1.0' encoding='UTF-16'?>\r\n<part>\r\n\t<color>\r\n\t\t<custom>no</custom>\r\n\t</color>\r\n</part>" },
+  // window film (glass): a flat 128 opaque texture, art in the top band, drawn whole; its own film icon
+  { type: 'glass', name: 'pg_raycity', tex: 'common_glass_pg_raycity', paint: 'glass', like: 'common_glass_rbrc_gp_2022', icon: 'film' },
 ];
 
 // list.xml: UTF-16 (BOM kept), lines as the file has them; new <part> lines go before </partlist>, written like the last one
@@ -82,8 +84,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       if (p.xml) fs.writeFileSync(path.join(od, `${p.tex}.xml`), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(p.xml, 'utf16le')]));
       // icons (and a bigger look for the preview)
       const shot = async (mesh, size) => (p.icon === 'badge' ? pg.evaluate((s) => window.badgeIcon(s), size)
-        : mesh ? pg.evaluate((o) => window.render(o), { mesh: [...fs.readFileSync(path.join(dir, `${mesh}_2.0m`))], tex: rgba.toString('base64'), w, h, slot: p.slot, view: p.view, size, glow: size <= 64 })
-          : pg.evaluate((o) => window.flat(o), { tex: rgba.toString('base64'), w, h, size }));
+        : p.icon === 'film' ? pg.evaluate((o) => window.filmIcon(o.tex, o.w, o.h, o.size), { tex: rgba.toString('base64'), w, h, size })
+          : mesh ? pg.evaluate((o) => window.render(o), { mesh: [...fs.readFileSync(path.join(dir, `${mesh}_2.0m`))], tex: rgba.toString('base64'), w, h, slot: p.slot, view: p.view, size, glow: size <= 64 })
+            : pg.evaluate((o) => window.flat(o), { tex: rgba.toString('base64'), w, h, size }));
       // the icon file: a decal is named by its tex; plate/lamp/wheel by common_<type>_<part name>
       const iconFile = (name) => (p.type === 'decalinfo' ? p.tex : `common_${p.type}_${name}`);
       const variants = [{ name: p.name, mesh: p.mesh }]; if (p.wide) variants.push({ name: `${p.name}_wide`, mesh: `${p.mesh}_wide` });

@@ -111,6 +111,44 @@ function decal(c, W, H) {
   c.restore();
 }
 
+// Option A — point-symmetric livery: every mark is drawn and then drawn again rotated 180° about the texture centre,
+// so the decal looks identical whichever way the car maps a side. "RAYCITY PG" reads upright on both sides (its
+// rotated twin sits elsewhere). A bold blue centre band + yellow pinstripes tie it together.
+function decalSym(c, W, H) {
+  c.save(); c.scale(W / 1024, H / 1024);
+  const sym = (fn) => { fn(); c.save(); c.translate(1024, 1024); c.rotate(Math.PI); fn(); c.restore(); };
+  // centre band (self-symmetric): blue with yellow pinstripes
+  blueGround(c, 0, 486, 1024, 52); c.fillStyle = YEL; c.fillRect(0, 486, 1024, 6); c.fillRect(0, 532, 1024, 6);
+  text(c, 'RAYCITY PG', 512, 513, 34, 900, 460, WHITE, { stroke: [NAVY, 7] });
+  // hood / upper (twin appears lower, rotated)
+  sym(() => { const x = 360, y = 92, h = 96; badge(c, x, y, h); text(c, 'RAYCITY', x + h + 150, y + h * 0.5, 64, 900, 300, WHITE, { stroke: [NAVY, 8] }); });
+  // door band upright (twin lands on the other door line, rotated — so each car side shows one upright band)
+  sym(() => {
+    const y = 300, h = 34; c.save(); c.beginPath(); c.rect(150, y, 724, h); c.clip(); blueGround(c, 150, y, 724, h);
+    c.fillStyle = YEL; c.fillRect(150, y, 724, 4); c.fillRect(150, y + h - 4, 724, 4);
+    for (let x = 180; x < 860; x += 250) text(c, 'RAYCITY PG', x, y + h / 2 + 1, 22, 900, 230, WHITE, { align: 'left' });
+    c.restore();
+  });
+  c.restore();
+}
+// Option B — clean stripe, no flippable text on the body: a blue racing band with yellow pinstripes and a row of
+// point-symmetric chevrons, plus a PG shield at the centre. Looks the same both ways; branding stays on the roof + rear.
+function decalStripe(c, W, H) {
+  c.save(); c.scale(W / 1024, H / 1024);
+  const band = (y, h) => {
+    c.save(); c.beginPath(); c.rect(0, y, 1024, h); c.clip(); blueGround(c, 0, y, 1024, h);
+    c.fillStyle = YEL; c.fillRect(0, y, 1024, 5); c.fillRect(0, y + h - 5, 1024, 5);
+    c.strokeStyle = 'rgba(255,255,255,0.9)'; c.lineWidth = 6; const m = y + h / 2;
+    for (let x = -40; x < 1064; x += 80) { c.beginPath(); c.moveTo(x, y + 9); c.lineTo(x + 26, m); c.lineTo(x, y + h - 9); c.stroke(); }
+    c.restore();
+  };
+  band(300, 40); band(684, 40);                       // the two door lines (point-symmetric pair)
+  blueGround(c, 0, 490, 1024, 44); c.fillStyle = YEL; c.fillRect(0, 490, 1024, 5); c.fillRect(0, 529, 1024, 5); // centre
+  const shield = (cx, cy) => { c.save(); c.translate(cx, cy); c.fillStyle = YEL; rr(c, -46, -40, 92, 80, 14); c.fill(); c.lineWidth = 5; c.strokeStyle = NAVY; c.stroke(); text(c, 'PG', 0, 4, 52, 900, 78, NAVY); c.restore(); };
+  shield(512, 150); shield(512, 874);                  // top + bottom shields (symmetric pair)
+  c.restore();
+}
+
 // window film (glass, 128 × 128): the art sits in the top band (the window UV, y 0–72 on the 128), the rest black;
 // a blue tint gradient with RAYCITY PG in bold italic, like the game's rbrc_gp_2022 film
 function glass(c, W, H) {
@@ -128,7 +166,7 @@ window.paint = async (kind, W, H, base) => {
   await document.fonts.load(FONT(900, 40)); await document.fonts.load(FONT(800, 40)); await document.fonts.load(FONT(900, 40, true));
   const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const c = cv.getContext('2d', { willReadFrequently: true });
   if (base) c.putImageData(new ImageData(unb64(base), W, H), 0, 0);
-  ({ plate, roofSign, te37, decal, glass })[kind](c, W, H);
+  ({ plate, roofSign, te37, decal, decalSym, decalStripe, glass })[kind](c, W, H);
   return b64(c.getImageData(0, 0, W, H).data);
 };
 // a film icon: the art band drawn straight into a square, like the game's glass icons

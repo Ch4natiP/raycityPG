@@ -21,7 +21,9 @@ export const PARTS = [
   { type: 'wheel', name: 'pg_te37_blue', mesh: 'rbrc_wolk_te37w', tex: 'common_wheel_pg_te37_blue', paint: 'te37', base: 'rbrc_te37w_white', slot: [0, 0.75, 0.25], view: [-1.7, 0.35, 0.55], wide: true, flatAlpha: [[112, 212, 250, 243]] },
   // a car-body decal: a blank 1024 canvas (the DXT3 header taken from an existing decal), PG art kept with its own
   // alpha so the car paint shows through elsewhere; its own icon is a PG badge, and it carries a no-custom-colour xml
-  { type: 'decalinfo', name: 'pg_raycity', tex: 'decel_pg_raycity', paint: 'decal', like: 'decel_rbrc_gp_2022', decal: true, icon: 'badge', xml: "<?xml version='1.0' encoding='UTF-16'?>\r\n<part>\r\n\t<color>\r\n\t\t<custom>no</custom>\r\n\t</color>\r\n</part>" },
+  // the body decal: a point-symmetric stripe livery (decalStripe) so both car sides look identical — no text that can
+  // land upside-down when a car maps its two sides to the same UV rotated 180°
+  { type: 'decalinfo', name: 'pg_raycity', tex: 'decel_pg_raycity', paint: 'decalStripe', like: 'decel_rbrc_gp_2022', decal: true, icon: 'badge', xml: "<?xml version='1.0' encoding='UTF-16'?>\r\n<part>\r\n\t<color>\r\n\t\t<custom>no</custom>\r\n\t</color>\r\n</part>" },
   // window film (glass): a flat 128 opaque texture, art in the top band, drawn whole; its own film icon
   { type: 'glass', name: 'pg_raycity', tex: 'common_glass_pg_raycity', paint: 'glass', like: 'common_glass_rbrc_gp_2022', icon: 'film' },
 ];

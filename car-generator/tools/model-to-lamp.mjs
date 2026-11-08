@@ -54,7 +54,7 @@ function goldify(rgba, w, h) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const [modelDir, tplPath, outDir, name, faceDeg = '0', heightM = '0.34', tint = 'none'] = process.argv.slice(2);
+  const [modelDir, tplPath, outDir, name, faceDeg = '0', heightM = '0.34', tint = 'none', liftM = '0'] = process.argv.slice(2);
   if (!modelDir || !tplPath || !outDir || !name) { console.error('usage: node tools/model-to-lamp.mjs <model folder> <lamp template .0m> <out folder> <name> [faceDeg] [heightM] [tint]'); process.exit(1); }
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   fs.mkdirSync(path.join(outDir, 'icon'), { recursive: true });
@@ -62,7 +62,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const { pg, close } = await page(root, path.resolve(modelDir));
   try {
     await pg.evaluate((u) => window.load(u), '/model/scene.gltf');
-    const g = await pg.evaluate(([h, f]) => window.build(h, f), [+heightM, +faceDeg]);
+    const g = await pg.evaluate(([h, f, l]) => window.build(h, f, l), [+heightM, +faceDeg, +liftM]);
     // weld duplicate (position+uv) verts, then position-weld for adjacency so the simplifier can collapse seams
     const q = (v) => v.toFixed(4);
     const w1 = weld(g.count, (i) => `${q(g.P[i * 3])},${q(g.P[i * 3 + 1])},${q(g.P[i * 3 + 2])},${q(g.U[i * 2])},${q(g.U[i * 2 + 1])}`,

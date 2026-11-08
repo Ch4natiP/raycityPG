@@ -134,6 +134,33 @@ function te37gold(c, W, H) {
   c.restore();
 }
 
+// TE37 for the Loy-Krathong set: warm gold spokes, a pink caliper strip and lip (lotus pink), RAYCITY PG round the tyre
+function te37krathong(c, W, H) {
+  const d = c.getImageData(0, 0, W, H); const p = d.data; const B = [206, 158, 58];
+  const inFace = (x, y) => x < 112 && y >= 108 && y < 232; const inBand = (x, y) => y >= 145 && y < 213 && x >= 100;
+  for (let py = 0; py < H; py++) for (let px = 0; px < W; px++) {
+    const x = px * 256 / W, y = py * 256 / H;
+    const q = (py * W + px) * 4; const r = p[q], g = p[q + 1], b = p[q + 2]; const lum = 0.3 * r + 0.59 * g + 0.11 * b; const sat = Math.max(r, g, b) - Math.min(r, g, b);
+    if (Math.hypot(x - 179, y - 133) < 10 && lum > 120) { const k = lum / 255; p[q] = 255 * k; p[q + 1] = 130 * k; p[q + 2] = 170 * k; continue; } // pink centre cap
+    if ((inFace(x, y) || inBand(x, y)) && sat < 40 && lum > 70) {
+      const k = Math.min(1.3, lum / 190); const hi = Math.max(0, (lum - 235) / 20) * 0.35;
+      for (let j = 0; j < 3; j++) p[q + j] = Math.min(255, B[j] * k + (255 - B[j] * k) * hi);
+    }
+    if (x >= 112 && x < 250 && y >= 212 && y < 243 && lum > 30) { p[q] = 36; p[q + 1] = 12; p[q + 2] = 28; } // deep plum tyre band
+  }
+  c.putImageData(d, 0, 0); c.save(); c.scale(W / 256, H / 256);
+  c.fillStyle = '#5a1840'; c.fillRect(118, 156, 66, 28);
+  text(c, 'PG', 151, 171, 24, 900, 60, GOLDHI, { italic: true, stroke: ['#2a0c20', 3] });
+  const lg = c.createLinearGradient(0, 243, 0, 256); lg.addColorStop(0, '#e35fa0'); lg.addColorStop(0.5, '#c43d82'); lg.addColorStop(1, '#8a2a5c'); c.fillStyle = lg; c.fillRect(185, 243, 31, 13);
+  c.fillStyle = GOLDHI; c.fillRect(185, 248.5, 31, 1.6);
+  const g = c.createLinearGradient(195, 0, 256, 0); g.addColorStop(0, '#d44f92'); g.addColorStop(1, '#8a2a5c'); c.fillStyle = g; c.fillRect(195, 0, 61, 145);
+  text(c, 'RAYCITY PG', 226, 72, 34, 900, 132, GOLDHI, { rot: -Math.PI / 2, stroke: ['#4a1030', 3] });
+  const s = 'RAYCITY PG'; const cx = 186, cy = 420, R = 196; c.font = FONT(800, 17); c.fillStyle = GOLDHI; c.textAlign = 'center'; c.textBaseline = 'alphabetic';
+  const ws = [...s].map((ch) => c.measureText(ch).width + 0.6); const tot = ws.reduce((a, b) => a + b, 0); let a = -Math.PI / 2 - tot / 2 / R;
+  for (let i = 0; i < s.length; i++) { const m = a + ws[i] / 2 / R; c.save(); c.translate(cx + R * Math.cos(m), cy + R * Math.sin(m)); c.rotate(m + Math.PI / 2); c.fillText(s[i], 0, 0); c.restore(); a += ws[i] / R; }
+  c.restore();
+}
+
 // a car-body decal (1024 × 1024, drawn on the body's own UV; transparent where there is no art). Placed on the same
 // three regions a working generic decal (crashtime_defence) uses: the hood (top centre), a thin stripe along the
 // doors (middle), and the rear (lower centre) — so it lands on panels for most cars
@@ -211,7 +238,7 @@ window.paint = async (kind, W, H, base) => {
   await document.fonts.load(FONT(900, 40)); await document.fonts.load(FONT(800, 40)); await document.fonts.load(FONT(900, 40, true));
   const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const c = cv.getContext('2d', { willReadFrequently: true });
   if (base) c.putImageData(new ImageData(unb64(base), W, H), 0, 0);
-  ({ plate, plateLion, roofSign, te37, te37gold, decal, decalSym, decalStripe, glass })[kind](c, W, H);
+  ({ plate, plateLion, roofSign, te37, te37gold, te37krathong, decal, decalSym, decalStripe, glass })[kind](c, W, H);
   return b64(c.getImageData(0, 0, W, H).data);
 };
 // a film icon: the art band drawn straight into a square, like the game's glass icons

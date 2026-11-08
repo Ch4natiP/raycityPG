@@ -77,7 +77,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       fs.writeFileSync(path.join(outDir, `${name}_${lod}.0m`), Buffer.from(writeOM(tpl, [{ positions: new Float32Array(rp), normals: new Float32Array(rn), uvs: new Float32Array(ru), indices: ri, flags: [0, 0, 0] }])));
       console.log(`${name}_${lod}.0m  ${rp.length / 3} verts  ${ri.length / 3} tris`);
     };
-    for (const [lod, tris] of LODS) { const [si] = Simp.simplify(pwIdx, pwPos, 3, tris * 3, 1.0, []); writeLod(lod, Array.from(si)); }
+    // a low-poly model may already be under a LOD's target — then keep it whole instead of asking the simplifier to grow it
+    for (const [lod, tris] of LODS) { const si = tris * 3 >= pwIdx.length ? pwIdx : Simp.simplify(pwIdx, pwPos, 3, tris * 3, 1.0, [])[0]; writeLod(lod, Array.from(si)); }
     // the lamp picture: the model's baseColor (128), tinted, UVs already remapped into the slot above
     const texFile = fs.readdirSync(modelDir, { recursive: true }).find((f) => /basecolor|diffuse|albedo/i.test(f) && /\.(png|jpe?g)$/i.test(f)) || fs.readdirSync(path.join(modelDir, 'textures')).find((f) => /\.(png|jpe?g)$/i.test(f));
     const img = await pg.evaluate(async (p) => {

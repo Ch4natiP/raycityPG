@@ -26,6 +26,9 @@ export const PARTS = [
   { type: 'decalinfo', name: 'pg_raycity', tex: 'decel_pg_raycity', paint: 'decalStripe', like: 'decel_rbrc_gp_2022', decal: true, icon: 'badge', xml: "<?xml version='1.0' encoding='UTF-16'?>\r\n<part>\r\n\t<color>\r\n\t\t<custom>no</custom>\r\n\t</color>\r\n</part>" },
   // window film (glass): a flat 128 opaque texture, art in the top band, drawn whole; its own film icon
   { type: 'glass', name: 'pg_raycity', tex: 'common_glass_pg_raycity', paint: 'glass', like: 'common_glass_rbrc_gp_2022', icon: 'film' },
+  // the winged-lion (gold/black) set — the lamp is a converted model, built separately; here are its matching wheel + plate
+  { type: 'plate', name: 'pg_lion', tex: 'common_plate_pg_lion', paint: 'plateLion', size: [256, 128], like: 'common_plate_default' },
+  { type: 'wheel', name: 'pg_lion_gold', mesh: 'rbrc_wolk_te37w', tex: 'common_wheel_pg_lion_gold', paint: 'te37gold', base: 'rbrc_te37w_white', slot: [0, 0.75, 0.25], view: [-1.7, 0.35, 0.55], wide: true, flatAlpha: [[112, 212, 250, 243]] },
 ];
 
 // list.xml: UTF-16 (BOM kept), lines as the file has them; new <part> lines go before </partlist>, written like the last one

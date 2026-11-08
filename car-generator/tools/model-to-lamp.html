@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>RayCity lamp from a 3D model</title></head>
+<body style="margin:0;background:#222">
+<!-- Loads a glTF model, merges it to one geometry in RayCity space (Z up, −Y forward), and hands the vertices back to
+     tools/model-to-lamp.mjs, which welds + decimates it into lamp .0m LODs. window.load(url) then window.build(targetHeight, faceDeg). -->
+<script type="importmap">
+  { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+let MESH = null;
+window.load = async (url) => {
+  const g = await new GLTFLoader().loadAsync(url); const geos = [];
+  g.scene.updateWorldMatrix(true, true);
+  g.scene.traverse((o) => {
+    if (!o.isMesh) return;
+    const ge = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone(); ge.applyMatrix4(o.matrixWorld);
+    for (const k of Object.keys(ge.attributes)) if (!['position', 'normal', 'uv'].includes(k)) ge.deleteAttribute(k);
+    geos.push(ge);
+  });
+  MESH = geos.length > 1 ? mergeGeometries(geos, false) : geos[0];
+  if (!MESH.attributes.normal) MESH.computeVertexNormals();
+  return { verts: MESH.attributes.position.count };
+};
+// to RayCity space: gltf is Y-up, so (x, y, z) → (x, −z, y); scale so the model is targetH tall with its feet at z = 0;
+// rotate faceDeg about the up axis to aim the front
+window.build = (targetH, faceDeg) => {
+  const geo = MESH; geo.computeBoundingBox(); const bb = geo.boundingBox; const s = targetH / (bb.max.y - bb.min.y);
+  const cx = (bb.min.x + bb.max.x) / 2, cz = (bb.min.z + bb.max.z) / 2;
+  const a = faceDeg * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+  const pos = geo.attributes.position, nrm = geo.attributes.normal, uv = geo.attributes.uv;
+  const P = [], N = [], U = [];
+  for (let i = 0; i < pos.count; i++) {
+    const x = (pos.getX(i) - cx) * s, y = (pos.getY(i) - bb.min.y) * s, z = (pos.getZ(i) - cz) * s;
+    const rx = x, ry = -z, rz = y; P.push(rx * ca - ry * sa, rx * sa + ry * ca, rz);
+    const nx = nrm.getX(i), ny = nrm.getY(i), nz = nrm.getZ(i); const rnx = nx, rny = -nz, rnz = ny; N.push(rnx * ca - rny * sa, rnx * sa + rny * ca, rnz);
+    U.push(uv ? uv.getX(i) : 0, uv ? uv.getY(i) : 0);
+  }
+  return { P, N, U, count: pos.count };
+};
+window.ready = 1;
+</script>
+</body>
+</html>

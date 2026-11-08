@@ -26,6 +26,25 @@ function text(c, s, x, y, size, weight, maxW, color, opt = {}) {
 function blueGround(c, x, y, w, h) { const g = c.createLinearGradient(0, y, 0, y + h); g.addColorStop(0, BLUE[0]); g.addColorStop(1, BLUE[1]); c.fillStyle = g; c.fillRect(x, y, w, h); }
 function badge(c, x, y, s) { c.fillStyle = YEL; rr(c, x, y, s, s, s * 0.16); c.fill(); text(c, 'PG', x + s / 2, y + s * 0.54, s * 0.62, 900, s * 0.86, NAVY); }
 
+const GOLD = ['#d6a93a', '#9c6f1d'], GOLDHI = '#ffe08a', BLACK = '#111014';
+function goldGround(c, x, y, w, h) { const g = c.createLinearGradient(0, y, 0, y + h); g.addColorStop(0, GOLDHI); g.addColorStop(0.5, GOLD[0]); g.addColorStop(1, GOLD[1]); c.fillStyle = g; c.fillRect(x, y, w, h); }
+function goldText(c, s, x, y, size, maxW, opt = {}) { text(c, s, x, y, size, 900, maxW, GOLDHI, { ...opt, stroke: ['#5a3d08', opt.strokeW || 6] }); }
+// winged-lion gold/black plate, 256 × 128: black field, gold frame, RAYCITY PG in gold with a small lion crest
+function plateLion(c, W, H) {
+  c.save(); c.scale(W / 256, H / 128);
+  c.fillStyle = '#0c0b0e'; rr(c, 0, 0, 256, 128, 14); c.fill();
+  const g = c.createLinearGradient(0, 0, 0, 128); g.addColorStop(0, '#1b1a1f'); g.addColorStop(1, '#070709'); c.save(); rr(c, 6, 6, 244, 116, 10); c.clip(); c.fillStyle = g; c.fillRect(0, 0, 256, 128);
+  // gold double frame
+  c.strokeStyle = GOLD[0]; c.lineWidth = 4; rr(c, 12, 12, 232, 104, 8); c.stroke(); c.strokeStyle = GOLDHI; c.lineWidth = 1.5; rr(c, 16, 16, 224, 96, 6); c.stroke(); c.restore();
+  // a small gold winged-lion crest (stylised) on the left
+  c.save(); c.translate(44, 64); c.fillStyle = GOLDHI;
+  c.beginPath(); c.moveTo(-18, 6); c.quadraticCurveTo(-22, -14, -4, -16); c.quadraticCurveTo(0, -24, 8, -16); c.quadraticCurveTo(24, -16, 20, 4); c.quadraticCurveTo(14, 16, 0, 14); c.quadraticCurveTo(-12, 16, -18, 6); c.closePath(); c.fill();
+  c.fillStyle = GOLD[1]; c.beginPath(); c.arc(-4, -4, 2, 0, 7); c.fill(); c.restore();
+  goldText(c, 'RAYCITY', 168, 50, 36, 150);
+  c.fillStyle = GOLD[0]; c.fillRect(88, 70, 150, 3);
+  goldText(c, 'PG SERVER', 168, 92, 24, 140);
+  c.restore();
+}
 // plate, 256 × 128: blue, white rim, four screws, PG badge, RAYCITY / PG SERVER
 function plate(c, W, H) {
   c.save(); c.scale(W / 256, H / 128);
@@ -83,6 +102,33 @@ function te37(c, W, H) {
   text(c, 'RAYCITY PG', 226, 72, 34, 900, 132, NAVY, { rot: -Math.PI / 2 });
   // round the tyre: letters on an arc like TOP RACER
   const s = 'RAYCITY PG'; const cx = 186, cy = 420, R = 196; c.font = FONT(800, 17); c.fillStyle = WHITE; c.textAlign = 'center'; c.textBaseline = 'alphabetic';
+  const ws = [...s].map((ch) => c.measureText(ch).width + 0.6); const tot = ws.reduce((a, b) => a + b, 0); let a = -Math.PI / 2 - tot / 2 / R;
+  for (let i = 0; i < s.length; i++) { const m = a + ws[i] / 2 / R; c.save(); c.translate(cx + R * Math.cos(m), cy + R * Math.sin(m)); c.rotate(m + Math.PI / 2); c.fillText(s[i], 0, 0); c.restore(); a += ws[i] / R; }
+  c.restore();
+}
+// TE37 in gold/black (for the winged-lion set): spokes + barrel gold, centre cap bright gold, caliper strip black,
+// RAYCITY PG round the tyre in gold, a dark lip with a gold pinstripe
+function te37gold(c, W, H) {
+  const d = c.getImageData(0, 0, W, H); const p = d.data; const B = [196, 150, 46];
+  const inFace = (x, y) => x < 112 && y >= 108 && y < 232; const inBand = (x, y) => y >= 145 && y < 213 && x >= 100;
+  for (let py = 0; py < H; py++) for (let px = 0; px < W; px++) {
+    const x = px * 256 / W, y = py * 256 / H;
+    const q = (py * W + px) * 4; const r = p[q], g = p[q + 1], b = p[q + 2]; const lum = 0.3 * r + 0.59 * g + 0.11 * b; const sat = Math.max(r, g, b) - Math.min(r, g, b);
+    if (Math.hypot(x - 179, y - 133) < 10 && lum > 120) { const k = lum / 255; p[q] = 255 * k; p[q + 1] = 210 * k; p[q + 2] = 120 * k; continue; }
+    if ((inFace(x, y) || inBand(x, y)) && sat < 40 && lum > 70) {
+      const k = Math.min(1.3, lum / 190); const hi = Math.max(0, (lum - 235) / 20) * 0.35;
+      for (let j = 0; j < 3; j++) p[q + j] = Math.min(255, B[j] * k + (255 - B[j] * k) * hi);
+    }
+    if (x >= 112 && x < 250 && y >= 212 && y < 243 && lum > 30) { p[q] = p[q + 1] = p[q + 2] = 10; }
+  }
+  c.putImageData(d, 0, 0); c.save(); c.scale(W / 256, H / 256);
+  c.fillStyle = '#17150f'; c.fillRect(118, 156, 66, 28);
+  text(c, 'PG', 151, 171, 24, 900, 60, GOLDHI, { italic: true, stroke: ['#4a3408', 3] });
+  const lg = c.createLinearGradient(0, 243, 0, 256); lg.addColorStop(0, '#2b2620'); lg.addColorStop(1, '#0c0b08'); c.fillStyle = lg; c.fillRect(185, 243, 31, 13);
+  c.fillStyle = GOLDHI; c.fillRect(185, 248.5, 31, 1.6);
+  const g = c.createLinearGradient(195, 0, 256, 0); g.addColorStop(0, '#2a2620'); g.addColorStop(1, '#0d0c0a'); c.fillStyle = g; c.fillRect(195, 0, 61, 145);
+  text(c, 'RAYCITY PG', 226, 72, 34, 900, 132, GOLDHI, { rot: -Math.PI / 2, stroke: ['#4a3408', 3] });
+  const s = 'RAYCITY PG'; const cx = 186, cy = 420, R = 196; c.font = FONT(800, 17); c.fillStyle = GOLDHI; c.textAlign = 'center'; c.textBaseline = 'alphabetic';
   const ws = [...s].map((ch) => c.measureText(ch).width + 0.6); const tot = ws.reduce((a, b) => a + b, 0); let a = -Math.PI / 2 - tot / 2 / R;
   for (let i = 0; i < s.length; i++) { const m = a + ws[i] / 2 / R; c.save(); c.translate(cx + R * Math.cos(m), cy + R * Math.sin(m)); c.rotate(m + Math.PI / 2); c.fillText(s[i], 0, 0); c.restore(); a += ws[i] / R; }
   c.restore();
@@ -165,7 +211,7 @@ window.paint = async (kind, W, H, base) => {
   await document.fonts.load(FONT(900, 40)); await document.fonts.load(FONT(800, 40)); await document.fonts.load(FONT(900, 40, true));
   const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const c = cv.getContext('2d', { willReadFrequently: true });
   if (base) c.putImageData(new ImageData(unb64(base), W, H), 0, 0);
-  ({ plate, roofSign, te37, decal, decalSym, decalStripe, glass })[kind](c, W, H);
+  ({ plate, plateLion, roofSign, te37, te37gold, decal, decalSym, decalStripe, glass })[kind](c, W, H);
   return b64(c.getImageData(0, 0, W, H).data);
 };
 // a film icon: the art band drawn straight into a square, like the game's glass icons

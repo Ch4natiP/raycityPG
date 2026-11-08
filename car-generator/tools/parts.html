@@ -131,21 +131,20 @@ function decalSym(c, W, H) {
   });
   c.restore();
 }
-// Option B — clean stripe, no flippable text on the body: a blue racing band with yellow pinstripes and a row of
-// point-symmetric chevrons, plus a PG shield at the centre. Looks the same both ways; branding stays on the roof + rear.
+// Option B — clean racing stripes only, no text or logo: full-width blue bands with yellow pinstripes. Every band
+// spans the whole texture so the livery is point-symmetric — it looks the same whichever way a car maps a side.
 function decalStripe(c, W, H) {
   c.save(); c.scale(W / 1024, H / 1024);
-  const band = (y, h) => {
-    c.save(); c.beginPath(); c.rect(0, y, 1024, h); c.clip(); blueGround(c, 0, y, 1024, h);
-    c.fillStyle = YEL; c.fillRect(0, y, 1024, 5); c.fillRect(0, y + h - 5, 1024, 5);
-    c.strokeStyle = 'rgba(255,255,255,0.9)'; c.lineWidth = 6; const m = y + h / 2;
-    for (let x = -40; x < 1064; x += 80) { c.beginPath(); c.moveTo(x, y + 9); c.lineTo(x + 26, m); c.lineTo(x, y + h - 9); c.stroke(); }
-    c.restore();
+  const stripe = (cy, h, blue) => {
+    const y = cy - h / 2;
+    if (blue) { blueGround(c, 0, y, 1024, h); c.fillStyle = YEL; c.fillRect(0, y, 1024, 6); c.fillRect(0, y + h - 6, 1024, 6); }
+    else { c.fillStyle = YEL; c.fillRect(0, y, 1024, h); }
   };
-  band(300, 40); band(684, 40);                       // the two door lines (point-symmetric pair)
-  blueGround(c, 0, 490, 1024, 44); c.fillStyle = YEL; c.fillRect(0, 490, 1024, 5); c.fillRect(0, 529, 1024, 5); // centre
-  const shield = (cx, cy) => { c.save(); c.translate(cx, cy); c.fillStyle = YEL; rr(c, -46, -40, 92, 80, 14); c.fill(); c.lineWidth = 5; c.strokeStyle = NAVY; c.stroke(); text(c, 'PG', 0, 4, 52, 900, 78, NAVY); c.restore(); };
-  shield(512, 150); shield(512, 874);                  // top + bottom shields (symmetric pair)
+  stripe(512, 64, true);        // centre: thick blue band with yellow pinstripes
+  stripe(300, 30, true);        // upper accent band
+  stripe(724, 30, true);        // lower accent band (mirror of the upper)
+  stripe(360, 7, false);        // thin yellow accent lines, in symmetric pairs
+  stripe(664, 7, false);
   c.restore();
 }
 

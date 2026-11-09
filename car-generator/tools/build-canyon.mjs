@@ -25,6 +25,7 @@ const BODY = opt('--body', 'new');            // new = model's own surface (pack
 const POLY = opt('--poly', '60000');          // 60000 = no reduce (real geometry); 4800 = reduce per file
 const COLOUR = opt('--colour', 'tail');       // tail | pickup | band | one
 const FIT = !flag('--no-fit');                // fit wheel arches to the game's wheels
+const FLIP = flag('--flip');                  // turn the model around (front was +y / faced backward)
 const LIGHT = flag('--light');                // drop interior/engine
 const DOORS = !flag('--no-doors');            // Escarabajo-style completion (opening doors + hood)
 const NOCAP = flag('--no-cap');               // lift the per-file point cap in ⚡
@@ -78,7 +79,7 @@ try {
   await easy.goto(`${base}/RayCity-Easy.html`);
   await easy.waitForFunction(() => window.easy && window.easy.openModel, null, { timeout: 30000 });
   say(`loading model ${path.basename(main)} (+${openList.length - 1} files)…`);
-  const loaded = await easy.evaluate(async ({ list, body, poly, colour, fit, light }) => {
+  const loaded = await easy.evaluate(async ({ list, body, poly, colour, fit, light, flip }) => {
     const $ = (id) => document.getElementById(id);
     document.querySelector(`input[name=body][value="${body}"]`).checked = true;
     document.querySelector('input[name=body]:checked').dispatchEvent(new Event('change', { bubbles: true }));
@@ -88,9 +89,10 @@ try {
     $('keep-all').checked = !light;
     const files = await Promise.all(list.map(async (f) => new File([await (await fetch(f.url)).arrayBuffer()], f.name)));
     await window.easy.openModel(files);
+    if (flip) { const b = document.getElementById('btn-flip'); if (b) b.click(); }
     const m = window.easy.state.model;
     return m ? { tris: m.C.length, wheels: m.wheels.length } : null;
-  }, { list: openList, body: BODY, poly: POLY, colour: COLOUR, fit: FIT, light: LIGHT });
+  }, { list: openList, body: BODY, poly: POLY, colour: COLOUR, fit: FIT, light: LIGHT, flip: FLIP });
   if (!loaded) throw new Error('model did not load (see easy> errors above)');
   say(`model: ${loaded.tris.toLocaleString()} triangles, ${loaded.wheels} wheels found`);
 

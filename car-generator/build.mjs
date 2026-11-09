@@ -232,3 +232,13 @@ function embedTests() {
   }
   return `window.RC_TEST_PACKS = ${JSON.stringify(packs)};`;
 }
+
+// RayCity Parts Studio (parts-studio.html): a standalone page to make car parts from a model + sliders.
+// three.js loads from CDN (needs internet); the template assets (lamp/wheel meshes + wheel texture) are injected.
+{
+  const src = fs.readFileSync('parts-studio.html', 'utf8');
+  const assets = fs.readFileSync('js/parts-studio-assets.js', 'utf8');
+  const out = src.replace('/*RC_ASSETS_PLACEHOLDER*/', () => assets);
+  fs.writeFileSync('RayCity-Parts-Studio.html', out);
+  console.log(`RayCity-Parts-Studio.html: ${(out.length / 1024).toFixed(0)} KB`);
+}

@@ -22,6 +22,7 @@ const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args.splice(i
 const flag = (f) => { const i = args.indexOf(f); if (i >= 0) { args.splice(i, 1); return true; } return false; };
 const NAME = opt('--name', 'canyon');
 const BODY = opt('--body', 'new');            // new = model's own surface (packs 90/91); old = bend gtv98
+const UV = opt('--uv', 'template');           // new-body UV cut: template (copy gtv98 UVs, repaintable) | charts | islands
 const POLY = opt('--poly', '60000');          // 60000 = no reduce (real geometry); 4800 = reduce per file
 const COLOUR = opt('--colour', 'tail');       // tail | pickup | band | one
 const FIT = !flag('--no-fit');                // fit wheel arches to the game's wheels
@@ -79,8 +80,9 @@ try {
   await easy.goto(`${base}/RayCity-Easy.html`);
   await easy.waitForFunction(() => window.easy && window.easy.openModel, null, { timeout: 30000 });
   say(`loading model ${path.basename(main)} (+${openList.length - 1} files)…`);
-  const loaded = await easy.evaluate(async ({ list, body, poly, colour, fit, light, flip }) => {
+  const loaded = await easy.evaluate(async ({ list, body, uv, poly, colour, fit, light, flip }) => {
     const $ = (id) => document.getElementById(id);
+    window.RC_LAYOUT = uv;
     document.querySelector(`input[name=body][value="${body}"]`).checked = true;
     document.querySelector('input[name=body]:checked').dispatchEvent(new Event('change', { bubbles: true }));
     $('poly-sel').value = poly;
@@ -92,11 +94,11 @@ try {
     if (flip) { const b = document.getElementById('btn-flip'); if (b) b.click(); }
     const m = window.easy.state.model;
     return m ? { tris: m.C.length, wheels: m.wheels.length } : null;
-  }, { list: openList, body: BODY, poly: POLY, colour: COLOUR, fit: FIT, light: LIGHT, flip: FLIP });
+  }, { list: openList, body: BODY, uv: UV, poly: POLY, colour: COLOUR, fit: FIT, light: LIGHT, flip: FLIP });
   if (!loaded) throw new Error('model did not load (see easy> errors above)');
   say(`model: ${loaded.tris.toLocaleString()} triangles, ${loaded.wheels} wheels found`);
 
-  say(`building (body=${BODY}, poly=${POLY}, colour=${COLOUR}, fit=${FIT}, light=${LIGHT})…`);
+  say(`building (body=${BODY}, uv=${UV}, poly=${POLY}, colour=${COLOUR}, fit=${FIT}, light=${LIGHT})…`);
   const built = await easy.evaluate(async (name) => {
     document.getElementById('car-name').value = name;
     await window.easy.build();

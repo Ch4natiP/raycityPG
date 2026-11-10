@@ -214,7 +214,10 @@ async function build() {
         out.set(`${name}_base.png`, await png(px, m.w, m.h)); out.set(`${name}_base_s.dds`, dds(px, m.w, m.h, 'full'));
       }
     } else {
-      out = await convert(state.model, { name, template, raw: true, hideInterior: !$('keep-all').checked, maxVerts: +$('poly-sel').value, paintAll: oneColour, slots: !oneColour, colours, layout: 'charts', partTextures: false, log: say });
+      // UV layout: 'charts' (Escarabajo-style panel projection) by default; window.RC_LAYOUT can pick
+      // 'template' (copy gtv98's UVs per vertex) for a model with no body UVs of its own, whose panels
+      // would otherwise come out flat-UV (grey / unpaintable in game).
+      out = await convert(state.model, { name, template, raw: true, hideInterior: !$('keep-all').checked, maxVerts: +$('poly-sel').value, paintAll: oneColour, slots: !oneColour, colours, layout: window.RC_LAYOUT || 'charts', partTextures: false, log: say });
     }
     state.out = out; state.outName = name;
     say(`เสร็จ: ${out.size} ไฟล์`);

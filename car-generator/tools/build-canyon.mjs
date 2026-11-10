@@ -22,7 +22,7 @@ const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args.splice(i
 const flag = (f) => { const i = args.indexOf(f); if (i >= 0) { args.splice(i, 1); return true; } return false; };
 const NAME = opt('--name', 'canyon');
 const BODY = opt('--body', 'new');            // new = model's own surface (packs 90/91); old = bend gtv98
-const UV = opt('--uv', 'template');           // new-body UV cut: template (copy gtv98 UVs, repaintable) | charts | islands
+const UV = opt('--uv', 'template');            // new-body UV cut: template | charts | islands | atlas | zones
 const POLY = opt('--poly', '60000');          // 60000 = no reduce (real geometry); 4800 = reduce per file
 const COLOUR = opt('--colour', 'tail');       // tail | pickup | band | one
 const FIT = !flag('--no-fit');                // fit wheel arches to the game's wheels

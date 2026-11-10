@@ -30,6 +30,7 @@ const FLIP = flag('--flip');                  // turn the model around (front wa
 const LIGHT = flag('--light');                // drop interior/engine
 const DOORS = !flag('--no-doors');            // Escarabajo-style completion (opening doors + hood)
 const NOCAP = flag('--no-cap');               // lift the per-file point cap in ⚡
+const NO_READY = flag('--no-ready');          // skip the UV ⚡ (toSheet/glass/plate/tail): keep the raw convert output (gtv98-copied UVs)
 const [MODEL_DIR, OUT_DIR] = args;
 if (!MODEL_DIR || !OUT_DIR) {
   console.error('usage: node tools/build-canyon.mjs <model-dir> <out-dir> [--name canyon] [--body new|old] [--poly 60000|4800] [--colour tail|pickup|band|one] [--no-fit] [--light] [--no-doors] [--no-cap]');
@@ -109,6 +110,20 @@ try {
   }, NAME);
   if (!built) throw new Error('build produced nothing (see easy> errors above)');
   say(`converted: ${built.files.length} files`);
+
+  if (NO_READY) {
+    // Keep the raw convert output (gtv98-copied template UVs), no ⚡ toSheet repack. Write + zip here.
+    const outZip = path.join(path.resolve(OUT_DIR), `${NAME}.zip`);
+    const stage = path.join(path.resolve(OUT_DIR), '_stage');
+    fs.rmSync(stage, { recursive: true, force: true });
+    for (const f of built.files) { const p = path.join(stage, f.path); fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, Buffer.from(f.b64, 'base64')); }
+    const { execSync } = await import('node:child_process');
+    fs.rmSync(outZip, { force: true });
+    execSync(`cd ${JSON.stringify(stage)} && zip -qr ${JSON.stringify(outZip)} ${JSON.stringify(NAME)}`);
+    say(`saved ${outZip} (raw convert output, no ⚡)`);
+    await browser.close(); srv.close();
+    process.exit(0);
+  }
 
   // ---- Page B: RayCity UV — ⚡ make it game-ready, capture the download ------------------------------
   const uv = await ctx.newPage();

@@ -234,11 +234,98 @@ function glass(c, W, H) {
   c.restore();
 }
 
+// ===== ชุด "ครบรอบ 1 เดือน" (1 MONTH) — โทนแดง + ชมพู, ข้อความ RAYCITY PG / 1 MONTH =====
+const RED = ['#ff2446', '#a60c26'], REDHI = '#ff6f84', PINK = ['#ff86bd', '#ff3d92'], PINKHI = '#ffd9ec', MAROON = '#2b0410';
+function redGround(c, x, y, w, h) { const g = c.createLinearGradient(0, y, 0, y + h); g.addColorStop(0, REDHI); g.addColorStop(0.5, RED[0]); g.addColorStop(1, RED[1]); c.fillStyle = g; c.fillRect(x, y, w, h); }
+function pinkGround(c, x, y, w, h) { const g = c.createLinearGradient(0, y, 0, y + h); g.addColorStop(0, PINK[0]); g.addColorStop(1, PINK[1]); c.fillStyle = g; c.fillRect(x, y, w, h); }
+// "1M" badge: rounded pink tile, white 1M
+function badge1m(c, x, y, s) {
+  c.save(); rr(c, x, y, s, s, s * 0.18); c.clip(); pinkGround(c, x, y, s, s); c.restore();
+  c.strokeStyle = PINKHI; c.lineWidth = s * 0.05; rr(c, x + s * 0.05, y + s * 0.05, s * 0.9, s * 0.9, s * 0.14); c.stroke();
+  text(c, '1M', x + s / 2, y + s * 0.56, s * 0.56, 900, s * 0.82, WHITE, { italic: true, stroke: [MAROON, s * 0.07] });
+}
+// plate 256 × 128: red field, pink frame, four screws, 1M badge, RAYCITY PG / 1 MONTH
+function plate1m(c, W, H) {
+  c.save(); c.scale(W / 256, H / 128);
+  c.fillStyle = '#ffffff'; rr(c, 0, 0, 256, 128, 14); c.fill();
+  c.save(); rr(c, 5, 5, 246, 118, 11); c.clip(); redGround(c, 0, 0, 256, 128); c.restore();
+  c.lineWidth = 3; c.strokeStyle = PINKHI; rr(c, 11, 11, 234, 106, 8); c.stroke();
+  c.lineWidth = 1.5; c.strokeStyle = PINK[0]; rr(c, 15, 15, 226, 98, 6); c.stroke();
+  for (const [x, y] of [[20, 20], [236, 20], [20, 108], [236, 108]]) {
+    const g = c.createRadialGradient(x - 1.5, y - 1.5, 0.5, x, y, 5); g.addColorStop(0, '#ffffff'); g.addColorStop(1, '#c08aa0');
+    c.fillStyle = g; c.beginPath(); c.arc(x, y, 5, 0, 7); c.fill();
+  }
+  badge1m(c, 28, 30, 68);
+  text(c, 'RAYCITY PG', 170, 52, 34, 900, 150, WHITE, { stroke: [MAROON, 4] });
+  c.fillStyle = PINKHI; c.fillRect(108, 72, 124, 3);
+  text(c, '1 MONTH', 170, 95, 30, 900, 140, PINKHI, { italic: true, stroke: [MAROON, 4] });
+  c.restore();
+}
+// TE37 for the 1-month set: red spokes, pink centre cap + lip, red-pink caliper strip, 1M on the barrel, RAYCITY PG round the tyre
+function te37_1m(c, W, H) {
+  const d = c.getImageData(0, 0, W, H); const p = d.data; const B = [220, 34, 70];
+  const inFace = (x, y) => x < 112 && y >= 108 && y < 232; const inBand = (x, y) => y >= 145 && y < 213 && x >= 100;
+  for (let py = 0; py < H; py++) for (let px = 0; px < W; px++) {
+    const x = px * 256 / W, y = py * 256 / H;
+    const q = (py * W + px) * 4; const r = p[q], g = p[q + 1], b = p[q + 2]; const lum = 0.3 * r + 0.59 * g + 0.11 * b; const sat = Math.max(r, g, b) - Math.min(r, g, b);
+    if (Math.hypot(x - 179, y - 133) < 10 && lum > 120) { const k = lum / 255; p[q] = 255 * k; p[q + 1] = 125 * k; p[q + 2] = 175 * k; continue; } // pink centre cap
+    if ((inFace(x, y) || inBand(x, y)) && sat < 40 && lum > 70) {
+      const k = Math.min(1.28, lum / 195); const hi = Math.max(0, (lum - 235) / 20) * 0.3;
+      for (let j = 0; j < 3; j++) p[q + j] = Math.min(255, B[j] * k + (255 - B[j] * k) * hi);
+    }
+    if (x >= 112 && x < 250 && y >= 212 && y < 243 && lum > 30) { p[q] = 40; p[q + 1] = 8; p[q + 2] = 24; } // deep maroon tyre band
+  }
+  c.putImageData(d, 0, 0); c.save(); c.scale(W / 256, H / 256);
+  c.fillStyle = '#6a0f2a'; c.fillRect(118, 156, 66, 28);
+  text(c, '1M', 151, 171, 24, 900, 60, PINKHI, { italic: true, stroke: ['#2a0610', 3] });
+  const lg = c.createLinearGradient(0, 243, 0, 256); lg.addColorStop(0, '#ff6f9e'); lg.addColorStop(0.5, '#ff3d7e'); lg.addColorStop(1, '#b02558'); c.fillStyle = lg; c.fillRect(185, 243, 31, 13);
+  c.fillStyle = PINKHI; c.fillRect(185, 248.5, 31, 1.6);
+  const g = c.createLinearGradient(195, 0, 256, 0); g.addColorStop(0, '#ff4f72'); g.addColorStop(1, '#a01030'); c.fillStyle = g; c.fillRect(195, 0, 61, 145);
+  text(c, 'RAYCITY PG', 226, 72, 34, 900, 132, WHITE, { rot: -Math.PI / 2, stroke: ['#4a0818', 3] });
+  const s = 'RAYCITY PG'; const cx = 186, cy = 420, R = 196; c.font = FONT(800, 17); c.fillStyle = PINKHI; c.textAlign = 'center'; c.textBaseline = 'alphabetic';
+  const ws = [...s].map((ch) => c.measureText(ch).width + 0.6); const tot = ws.reduce((a, b) => a + b, 0); let a = -Math.PI / 2 - tot / 2 / R;
+  for (let i = 0; i < s.length; i++) { const m = a + ws[i] / 2 / R; c.save(); c.translate(cx + R * Math.cos(m), cy + R * Math.sin(m)); c.rotate(m + Math.PI / 2); c.fillText(s[i], 0, 0); c.restore(); a += ws[i] / R; }
+  c.restore();
+}
+// car-body decal (1024): point-symmetric red/pink stripe livery (no text, looks the same whichever way a car maps a side)
+function decal1m(c, W, H) {
+  c.save(); c.scale(W / 1024, H / 1024);
+  const stripe = (cy, h, kind) => {
+    const y = cy - h / 2;
+    if (kind === 'red') { redGround(c, 0, y, 1024, h); c.fillStyle = PINKHI; c.fillRect(0, y, 1024, 6); c.fillRect(0, y + h - 6, 1024, 6); }
+    else { pinkGround(c, 0, y, 1024, h); }
+  };
+  stripe(512, 72, 'red');   // centre band
+  stripe(300, 32, 'red');   // upper accent
+  stripe(724, 32, 'red');   // lower accent (mirror)
+  stripe(362, 8, 'pink');   // thin pink pinstripes, symmetric pair
+  stripe(662, 8, 'pink');
+  c.restore();
+}
+// window film (glass 128): art in the top band (window UV y 0–72), red-pink tint, RAYCITY PG / 1 MONTH
+function glass1m(c, W, H) {
+  c.save(); c.scale(W / 128, H / 128);
+  c.fillStyle = '#000000'; c.fillRect(0, 0, 128, 128);
+  const g = c.createLinearGradient(0, 0, 128, 72); g.addColorStop(0, '#ff2d5a'); g.addColorStop(0.55, '#c01038'); g.addColorStop(1, '#5a0820'); c.fillStyle = g; c.fillRect(0, 0, 128, 72);
+  text(c, 'RAYCITY', 64, 22, 28, 900, 120, WHITE, { italic: true, stroke: ['#2a0610', 4] });
+  text(c, 'PG', 28, 52, 22, 900, 24, PINKHI, { italic: true, stroke: ['#2a0610', 4] });
+  text(c, '1 MONTH', 82, 52, 20, 900, 74, PINKHI, { italic: true, stroke: ['#2a0610', 4] });
+  c.restore();
+}
+// a 64 px decal icon for the 1-month set: 1M over RAYCITY on a dark rounded tile
+window.badge1mIcon = async (size) => {
+  await document.fonts.load(FONT(900, 40, true));
+  const cv = document.createElement('canvas'); cv.width = cv.height = size; const c = cv.getContext('2d'); const k = size / 64;
+  c.fillStyle = '#17060e'; rr(c, 2 * k, 2 * k, 60 * k, 60 * k, 8 * k); c.fill();
+  badge1m(c, 8 * k, 9 * k, 32 * k); text(c, 'RAYCITY', 46 * k, 22 * k, 10 * k, 900, 32 * k, WHITE); text(c, '1 MONTH', 46 * k, 36 * k, 9 * k, 900, 32 * k, PINKHI);
+  return cv.toDataURL('image/png');
+};
+
 window.paint = async (kind, W, H, base) => {
   await document.fonts.load(FONT(900, 40)); await document.fonts.load(FONT(800, 40)); await document.fonts.load(FONT(900, 40, true));
   const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const c = cv.getContext('2d', { willReadFrequently: true });
   if (base) c.putImageData(new ImageData(unb64(base), W, H), 0, 0);
-  ({ plate, plateLion, roofSign, te37, te37gold, te37krathong, decal, decalSym, decalStripe, glass })[kind](c, W, H);
+  ({ plate, plateLion, roofSign, te37, te37gold, te37krathong, decal, decalSym, decalStripe, glass, plate1m, te37_1m, decal1m, glass1m })[kind](c, W, H);
   return b64(c.getImageData(0, 0, W, H).data);
 };
 // a film icon: the art band drawn straight into a square, like the game's glass icons

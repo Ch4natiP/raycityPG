@@ -29,6 +29,11 @@ export const PARTS = [
   // the winged-lion (gold/black) set — the lamp is a converted model, built separately; here are its matching wheel + plate
   { type: 'plate', name: 'pg_lion', tex: 'common_plate_pg_lion', paint: 'plateLion', size: [256, 128], like: 'common_plate_default' },
   { type: 'wheel', name: 'pg_lion_gold', mesh: 'rbrc_wolk_te37w', tex: 'common_wheel_pg_lion_gold', paint: 'te37gold', base: 'rbrc_te37w_white', slot: [0, 0.75, 0.25], view: [-1.7, 0.35, 0.55], wide: true, flatAlpha: [[112, 212, 250, 243]] },
+  // the "1 month anniversary" set (red/pink) — the lamp "1M" is a converted model, built separately; here are its matching plate + wheel + decal + film
+  { type: 'plate', name: 'pg_1m', tex: 'common_plate_pg_1m', paint: 'plate1m', size: [256, 128], like: 'common_plate_default' },
+  { type: 'wheel', name: 'pg_1m', mesh: 'rbrc_wolk_te37w', tex: 'common_wheel_pg_1m', paint: 'te37_1m', base: 'rbrc_te37w_white', slot: [0, 0.75, 0.25], view: [-1.7, 0.35, 0.55], wide: true, flatAlpha: [[112, 212, 250, 243]] },
+  { type: 'decalinfo', name: 'pg_1m', tex: 'decel_pg_1m', paint: 'decal1m', like: 'decel_rbrc_gp_2022', decal: true, icon: 'badge1m', xml: "<?xml version='1.0' encoding='UTF-16'?>\r\n<part>\r\n\t<color>\r\n\t\t<custom>no</custom>\r\n\t</color>\r\n</part>" },
+  { type: 'glass', name: 'pg_1m', tex: 'common_glass_pg_1m', paint: 'glass1m', like: 'common_glass_rbrc_gp_2022', icon: 'film' },
 ];
 
 // list.xml: UTF-16 (BOM kept), lines as the file has them; new <part> lines go before </partlist>, written like the last one
@@ -71,9 +76,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const [game, out] = process.argv.slice(2);
   if (!game || !out) { console.error('usage: node tools/make-parts.mjs <game folder> <out folder>'); process.exit(1); }
   const common = path.join(game, 'car', '1.common'); const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const only = process.env.ONLY ? new Set(process.env.ONLY.split(',')) : null;
   const { pg, close } = await page(root); const lists = {}; const report = []; const shots = [];
   try {
     for (const p of PARTS) {
+      if (only && !only.has(p.name)) continue;
       const dir = path.join(common, p.type); const od = path.join(out, 'car', '1.common', p.type); fs.mkdirSync(path.join(od, 'icon'), { recursive: true });
       // the picture: over the one it starts from (opaque while drawn, its alpha put back after) or on a blank
       const like = fs.readFileSync(path.join(dir, `${p.base || p.like}_s.dds`)); const src = dds(like); const w = src.w, h = src.h;
@@ -89,6 +96,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       if (p.xml) fs.writeFileSync(path.join(od, `${p.tex}.xml`), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(p.xml, 'utf16le')]));
       // icons (and a bigger look for the preview)
       const shot = async (mesh, size) => (p.icon === 'badge' ? pg.evaluate((s) => window.badgeIcon(s), size)
+        : p.icon === 'badge1m' ? pg.evaluate((s) => window.badge1mIcon(s), size)
         : p.icon === 'film' ? pg.evaluate((o) => window.filmIcon(o.tex, o.w, o.h, o.size), { tex: rgba.toString('base64'), w, h, size })
           : mesh ? pg.evaluate((o) => window.render(o), { mesh: [...fs.readFileSync(path.join(dir, `${mesh}_2.0m`))], tex: rgba.toString('base64'), w, h, slot: p.slot, view: p.view, size, glow: size <= 64 })
             : pg.evaluate((o) => window.flat(o), { tex: rgba.toString('base64'), w, h, size }));

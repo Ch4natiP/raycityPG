@@ -321,48 +321,63 @@ window.badge1mIcon = async (size) => {
   return cv.toDataURL('image/png');
 };
 
-// ===== ป้ายประมูลพรีเมียม "รวย 999" — ทอง/แดงมงคล, เลขทองเด่น, ฟอนต์ไทย (Loma) =====
-// a 4-point sparkle
-function star(c, x, y, r) {
-  c.save(); c.translate(x, y); c.beginPath();
-  for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2, a2 = a + Math.PI / 4; const fn = i ? 'lineTo' : 'moveTo'; c[fn](Math.cos(a) * r * 2.4, Math.sin(a) * r * 2.4); c.lineTo(Math.cos(a2) * r * 0.5, Math.sin(a2) * r * 0.5); }
-  c.closePath(); c.fill(); c.restore();
-}
-// shiny gold text: dark outline + vertical gold gradient fill (Thai uses Loma)
-function richGold(c, s, x, y, size, maxW, thai) {
-  c.save();
-  c.font = (thai ? '700 ' : '900 ') + size + 'px ' + (thai ? '"Loma", ' : '') + 'Inter, "DejaVu Sans", sans-serif';
-  c.textAlign = 'center'; c.textBaseline = 'middle';
-  const w = c.measureText(s).width; c.translate(x, y); if (w > maxW) c.scale(maxW / w, 1);
-  c.lineWidth = size * 0.15; c.strokeStyle = '#3a2408'; c.lineJoin = 'round'; c.strokeText(s, 0, 0);
-  const g = c.createLinearGradient(0, -size * 0.58, 0, size * 0.58); g.addColorStop(0, '#fff6cf'); g.addColorStop(0.44, '#ffd657'); g.addColorStop(0.56, '#e7a327'); g.addColorStop(1, '#9c6414');
-  c.fillStyle = g; c.fillText(s, 0, 0);
+// ===== ป้ายกราฟิกไทยสมจริง "รวย 999" — ท้องฟ้าพระอาทิตย์ตก + สกายไลน์กรุงเทพ, เลขดำ, RAYCITY PG ล่าง =====
+// a Bangkok-style skyline silhouette along baseY (temples, prang, bridge pylons, buildings)
+function cityline(c, baseY, color, s) {
+  c.save(); c.fillStyle = color; c.strokeStyle = color;
+  c.fillRect(0, baseY, 256, 26); // ground
+  const bld = (x, w, h) => c.fillRect(x, baseY - h * s, w, h * s);
+  const chedi = (x, h) => { const bw = 6 * s; c.beginPath(); c.moveTo(x - bw, baseY); c.lineTo(x - bw * 0.62, baseY - h * s * 0.42); c.quadraticCurveTo(x, baseY - h * s * 0.72, x + bw * 0.62, baseY - h * s * 0.42); c.lineTo(x + bw, baseY); c.closePath(); c.fill(); c.beginPath(); c.moveTo(x - 1.4 * s, baseY - h * s * 0.42); c.lineTo(x, baseY - h * s); c.lineTo(x + 1.4 * s, baseY - h * s * 0.42); c.closePath(); c.fill(); };
+  const prang = (x, h) => { const w = 8 * s; c.beginPath(); c.moveTo(x - w, baseY); c.lineTo(x - w * 0.6, baseY - h * s * 0.5); c.lineTo(x - w * 0.26, baseY - h * s * 0.8); c.lineTo(x, baseY - h * s); c.lineTo(x + w * 0.26, baseY - h * s * 0.8); c.lineTo(x + w * 0.6, baseY - h * s * 0.5); c.lineTo(x + w, baseY); c.closePath(); c.fill(); };
+  const pylon = (x, h) => { c.save(); c.lineWidth = 1.1 * s; c.fillRect(x - 1 * s, baseY - h * s, 2 * s, h * s); c.beginPath(); for (let k = 1; k <= 5; k++) { c.moveTo(x, baseY - h * s); c.lineTo(x + k * 4.5 * s, baseY); c.moveTo(x, baseY - h * s); c.lineTo(x - k * 4.5 * s, baseY); } c.stroke(); c.restore(); };
+  bld(12, 6, 11); bld(19, 5, 7); bld(26, 7, 15);
+  pylon(44, 30);
+  bld(58, 6, 9); bld(65, 8, 13); chedi(81, 26);
+  bld(93, 7, 11);
+  prang(104, 20); prang(119, 34); prang(133, 21);
+  bld(146, 6, 13); chedi(159, 24);
+  bld(171, 8, 17); bld(180, 6, 11); bld(188, 7, 20);
+  pylon(208, 27);
+  bld(221, 6, 11); bld(228, 8, 16); bld(237, 6, 9);
   c.restore();
 }
-// premium auction plate, 256 × 128: gold rim, maroon radial field with golden rays + sparkles, ornate gold frame,
-// รวย on top and a big shiny 999, RAYCITY PG ribbon at the bottom
+// the plate registration (Thai + number), black with a light halo so it reads over the sky
+function plateNum(c, s, x, y, size, maxW) {
+  c.save(); c.font = '700 ' + size + 'px "Loma", Inter, "DejaVu Sans", sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  const w = c.measureText(s).width; c.translate(x, y); if (w > maxW) c.scale(maxW / w, 1);
+  c.lineJoin = 'round'; c.lineWidth = size * 0.14; c.strokeStyle = 'rgba(255,255,255,0.5)'; c.strokeText(s, 0, 0);
+  c.lineWidth = size * 0.05; c.strokeStyle = 'rgba(18,16,28,0.9)'; c.strokeText(s, 0, 0);
+  c.fillStyle = '#121019'; c.fillText(s, 0, 0); c.restore();
+}
+// realistic Thai graphic plate, 256 × 128: metal frame, sunset sky + sun, Bangkok skyline, รวย 999 on top, RAYCITY PG below
 function plateRich999(c, W, H) {
   c.save(); c.scale(W / 256, H / 128);
-  const rim = c.createLinearGradient(0, 0, 0, 128); rim.addColorStop(0, '#ffe9a8'); rim.addColorStop(0.5, '#d6a93a'); rim.addColorStop(1, '#7f560f');
-  c.fillStyle = rim; rr(c, 0, 0, 256, 128, 16); c.fill();
-  c.save(); rr(c, 7, 7, 242, 114, 11); c.clip();
-  const bg = c.createRadialGradient(128, 60, 6, 128, 66, 180); bg.addColorStop(0, '#7a1626'); bg.addColorStop(0.5, '#3c0a12'); bg.addColorStop(1, '#170407'); c.fillStyle = bg; c.fillRect(0, 0, 256, 128);
-  // golden rays behind the number
-  c.save(); c.translate(128, 64); for (let i = 0; i < 18; i++) { c.rotate(Math.PI / 9); c.fillStyle = 'rgba(255,208,110,0.045)'; c.beginPath(); c.moveTo(0, 0); c.lineTo(-7, -170); c.lineTo(7, -170); c.closePath(); c.fill(); } c.restore();
-  // soft warm glow centre
-  const gl = c.createRadialGradient(128, 66, 2, 128, 66, 70); gl.addColorStop(0, 'rgba(255,190,90,0.35)'); gl.addColorStop(1, 'rgba(255,190,90,0)'); c.fillStyle = gl; c.fillRect(0, 0, 256, 128);
-  // sparkles
-  c.fillStyle = 'rgba(255,235,165,0.95)'; for (const [sx, sy, ss] of [[40, 30, 2.3], [220, 34, 1.9], [34, 98, 1.7], [224, 100, 2.1], [150, 22, 1.4], [104, 108, 1.5]]) star(c, sx, sy, ss);
+  // metal frame
+  const fr = c.createLinearGradient(0, 0, 0, 128); fr.addColorStop(0, '#edeef3'); fr.addColorStop(0.18, '#b9bac6'); fr.addColorStop(0.5, '#7c7d8f'); fr.addColorStop(0.84, '#c9cad4'); fr.addColorStop(1, '#9a9ba9');
+  c.fillStyle = fr; rr(c, 0, 0, 256, 128, 15); c.fill();
+  c.strokeStyle = 'rgba(38,38,52,0.55)'; c.lineWidth = 1.2; rr(c, 5, 5, 246, 118, 11); c.stroke();
+  // image area
+  c.save(); rr(c, 8, 8, 240, 112, 9); c.clip();
+  // sunset sky
+  const sky = c.createLinearGradient(0, 8, 0, 120);
+  sky.addColorStop(0, '#45457e'); sky.addColorStop(0.24, '#6f72ab'); sky.addColorStop(0.45, '#9d93c1'); sky.addColorStop(0.62, '#d2a6ba'); sky.addColorStop(0.75, '#f3b58e'); sky.addColorStop(0.86, '#ffd98f'); sky.addColorStop(1, '#f7ecd4');
+  c.fillStyle = sky; c.fillRect(0, 0, 256, 128);
+  // sun near the horizon
+  const sun = c.createRadialGradient(128, 92, 3, 128, 92, 42); sun.addColorStop(0, 'rgba(255,248,214,0.98)'); sun.addColorStop(0.5, 'rgba(255,228,158,0.55)'); sun.addColorStop(1, 'rgba(255,228,158,0)'); c.fillStyle = sun; c.beginPath(); c.arc(128, 92, 42, 0, 7); c.fill();
+  // skyline: a far (light) layer then a near (dark) layer
+  cityline(c, 104, 'rgba(126,124,172,0.5)', 0.82);
+  cityline(c, 106, 'rgba(68,64,104,0.84)', 1.0);
+  // pale ground haze under the skyline (where the province line sits)
+  const grd = c.createLinearGradient(0, 100, 0, 120); grd.addColorStop(0, 'rgba(246,236,212,0)'); grd.addColorStop(1, 'rgba(245,235,212,0.9)'); c.fillStyle = grd; c.fillRect(0, 100, 256, 20);
   c.restore();
-  // ornate gold double frame + corner diamonds
-  c.strokeStyle = '#ecc65d'; c.lineWidth = 3; rr(c, 13, 13, 230, 102, 9); c.stroke();
-  c.strokeStyle = '#8a5f16'; c.lineWidth = 1; rr(c, 17, 17, 222, 94, 7); c.stroke();
-  c.fillStyle = GOLDHI; for (const [dx, dy] of [[22, 22], [234, 22], [22, 106], [234, 106]]) { c.save(); c.translate(dx, dy); c.rotate(Math.PI / 4); c.fillRect(-3.2, -3.2, 6.4, 6.4); c.restore(); }
-  // text
-  richGold(c, 'รวย', 128, 37, 30, 118, true);
-  richGold(c, '999', 128, 80, 60, 176, false);
-  const rb = c.createLinearGradient(0, 108, 0, 122); rb.addColorStop(0, '#d6a93a'); rb.addColorStop(1, '#9c6f1d'); c.fillStyle = rb; rr(c, 78, 107, 100, 15, 7); c.fill();
-  richGold(c, 'RAYCITY PG', 128, 114.5, 12, 92, false);
+  // รวย 999 (black, top)
+  plateNum(c, 'รวย  999', 128, 42, 40, 196);
+  // RAYCITY PG (bottom province line)
+  c.font = '700 15px Inter, "DejaVu Sans", sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.save(); c.translate(128, 112); const bw = c.measureText('RAYCITY PG').width; if (bw > 150) c.scale(150 / bw, 1);
+  c.lineJoin = 'round'; c.lineWidth = 3; c.strokeStyle = 'rgba(255,255,255,0.55)'; c.strokeText('RAYCITY PG', 0, 0); c.fillStyle = '#1b1733'; c.fillText('RAYCITY PG', 0, 0); c.restore();
+  // small hologram emblem bottom-right
+  const ho = c.createRadialGradient(226, 101, 1, 226, 101, 8); ho.addColorStop(0, 'rgba(225,233,255,0.85)'); ho.addColorStop(0.6, 'rgba(180,192,224,0.35)'); ho.addColorStop(1, 'rgba(180,192,224,0)'); c.fillStyle = ho; c.beginPath(); c.arc(226, 101, 8, 0, 7); c.fill();
   c.restore();
 }
 

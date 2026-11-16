@@ -34,6 +34,8 @@ export const PARTS = [
   { type: 'wheel', name: 'pg_1m', mesh: 'rbrc_wolk_te37w', tex: 'common_wheel_pg_1m', paint: 'te37_1m', base: 'rbrc_te37w_white', slot: [0, 0.75, 0.25], view: [-1.7, 0.35, 0.55], wide: true, flatAlpha: [[112, 212, 250, 243]] },
   { type: 'decalinfo', name: 'pg_1m', tex: 'decel_pg_1m', paint: 'decal1m', like: 'decel_rbrc_gp_2022', decal: true, icon: 'badge1m', xml: "<?xml version='1.0' encoding='UTF-16'?>\r\n<part>\r\n\t<color>\r\n\t\t<custom>no</custom>\r\n\t</color>\r\n</part>" },
   { type: 'glass', name: 'pg_1m', tex: 'common_glass_pg_1m', paint: 'glass1m', like: 'common_glass_rbrc_gp_2022', icon: 'film' },
+  // premium auction-style plate "รวย 999" (gold / lucky red)
+  { type: 'plate', name: 'pg_rich999', tex: 'common_plate_pg_rich999', paint: 'plateRich999', size: [256, 128], like: 'common_plate_default' },
 ];
 
 // list.xml: UTF-16 (BOM kept), lines as the file has them; new <part> lines go before </partlist>, written like the last one

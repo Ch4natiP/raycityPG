@@ -321,11 +321,57 @@ window.badge1mIcon = async (size) => {
   return cv.toDataURL('image/png');
 };
 
+// ===== ป้ายประมูลพรีเมียม "รวย 999" — ทอง/แดงมงคล, เลขทองเด่น, ฟอนต์ไทย (Loma) =====
+// a 4-point sparkle
+function star(c, x, y, r) {
+  c.save(); c.translate(x, y); c.beginPath();
+  for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2, a2 = a + Math.PI / 4; const fn = i ? 'lineTo' : 'moveTo'; c[fn](Math.cos(a) * r * 2.4, Math.sin(a) * r * 2.4); c.lineTo(Math.cos(a2) * r * 0.5, Math.sin(a2) * r * 0.5); }
+  c.closePath(); c.fill(); c.restore();
+}
+// shiny gold text: dark outline + vertical gold gradient fill (Thai uses Loma)
+function richGold(c, s, x, y, size, maxW, thai) {
+  c.save();
+  c.font = (thai ? '700 ' : '900 ') + size + 'px ' + (thai ? '"Loma", ' : '') + 'Inter, "DejaVu Sans", sans-serif';
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  const w = c.measureText(s).width; c.translate(x, y); if (w > maxW) c.scale(maxW / w, 1);
+  c.lineWidth = size * 0.15; c.strokeStyle = '#3a2408'; c.lineJoin = 'round'; c.strokeText(s, 0, 0);
+  const g = c.createLinearGradient(0, -size * 0.58, 0, size * 0.58); g.addColorStop(0, '#fff6cf'); g.addColorStop(0.44, '#ffd657'); g.addColorStop(0.56, '#e7a327'); g.addColorStop(1, '#9c6414');
+  c.fillStyle = g; c.fillText(s, 0, 0);
+  c.restore();
+}
+// premium auction plate, 256 × 128: gold rim, maroon radial field with golden rays + sparkles, ornate gold frame,
+// รวย on top and a big shiny 999, RAYCITY PG ribbon at the bottom
+function plateRich999(c, W, H) {
+  c.save(); c.scale(W / 256, H / 128);
+  const rim = c.createLinearGradient(0, 0, 0, 128); rim.addColorStop(0, '#ffe9a8'); rim.addColorStop(0.5, '#d6a93a'); rim.addColorStop(1, '#7f560f');
+  c.fillStyle = rim; rr(c, 0, 0, 256, 128, 16); c.fill();
+  c.save(); rr(c, 7, 7, 242, 114, 11); c.clip();
+  const bg = c.createRadialGradient(128, 60, 6, 128, 66, 180); bg.addColorStop(0, '#7a1626'); bg.addColorStop(0.5, '#3c0a12'); bg.addColorStop(1, '#170407'); c.fillStyle = bg; c.fillRect(0, 0, 256, 128);
+  // golden rays behind the number
+  c.save(); c.translate(128, 64); for (let i = 0; i < 18; i++) { c.rotate(Math.PI / 9); c.fillStyle = 'rgba(255,208,110,0.045)'; c.beginPath(); c.moveTo(0, 0); c.lineTo(-7, -170); c.lineTo(7, -170); c.closePath(); c.fill(); } c.restore();
+  // soft warm glow centre
+  const gl = c.createRadialGradient(128, 66, 2, 128, 66, 70); gl.addColorStop(0, 'rgba(255,190,90,0.35)'); gl.addColorStop(1, 'rgba(255,190,90,0)'); c.fillStyle = gl; c.fillRect(0, 0, 256, 128);
+  // sparkles
+  c.fillStyle = 'rgba(255,235,165,0.95)'; for (const [sx, sy, ss] of [[40, 30, 2.3], [220, 34, 1.9], [34, 98, 1.7], [224, 100, 2.1], [150, 22, 1.4], [104, 108, 1.5]]) star(c, sx, sy, ss);
+  c.restore();
+  // ornate gold double frame + corner diamonds
+  c.strokeStyle = '#ecc65d'; c.lineWidth = 3; rr(c, 13, 13, 230, 102, 9); c.stroke();
+  c.strokeStyle = '#8a5f16'; c.lineWidth = 1; rr(c, 17, 17, 222, 94, 7); c.stroke();
+  c.fillStyle = GOLDHI; for (const [dx, dy] of [[22, 22], [234, 22], [22, 106], [234, 106]]) { c.save(); c.translate(dx, dy); c.rotate(Math.PI / 4); c.fillRect(-3.2, -3.2, 6.4, 6.4); c.restore(); }
+  // text
+  richGold(c, 'รวย', 128, 37, 30, 118, true);
+  richGold(c, '999', 128, 80, 60, 176, false);
+  const rb = c.createLinearGradient(0, 108, 0, 122); rb.addColorStop(0, '#d6a93a'); rb.addColorStop(1, '#9c6f1d'); c.fillStyle = rb; rr(c, 78, 107, 100, 15, 7); c.fill();
+  richGold(c, 'RAYCITY PG', 128, 114.5, 12, 92, false);
+  c.restore();
+}
+
 window.paint = async (kind, W, H, base) => {
   await document.fonts.load(FONT(900, 40)); await document.fonts.load(FONT(800, 40)); await document.fonts.load(FONT(900, 40, true));
+  await document.fonts.load('700 40px Loma').catch(() => {});
   const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const c = cv.getContext('2d', { willReadFrequently: true });
   if (base) c.putImageData(new ImageData(unb64(base), W, H), 0, 0);
-  ({ plate, plateLion, roofSign, te37, te37gold, te37krathong, decal, decalSym, decalStripe, glass, plate1m, te37_1m, decal1m, glass1m })[kind](c, W, H);
+  ({ plate, plateLion, roofSign, te37, te37gold, te37krathong, decal, decalSym, decalStripe, glass, plate1m, te37_1m, decal1m, glass1m, plateRich999 })[kind](c, W, H);
   return b64(c.getImageData(0, 0, W, H).data);
 };
 // a film icon: the art band drawn straight into a square, like the game's glass icons

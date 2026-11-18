@@ -65,6 +65,18 @@
   .checks li.warn::before { content: "!"; color: var(--gold); }
   .checks li.ok { color: var(--muted); }
   #srcBadge { font-size: 13px; padding: 4px 12px; }
+
+  /* Simple mode */
+  .wrap[data-mode="simple"] .expert-only { display: none; }
+  .s-big { font-size: clamp(32px, 6vw, 48px); font-weight: 700; line-height: 1.1; }
+  .s-hero { display: flex; flex-direction: column; gap: 12px; }
+  .s-start { font-size: 16px; padding: 14px 22px; background: var(--gold); border-color: var(--gold); color: var(--gold-ink); }
+  .s-bot[data-on="true"] { border-color: color-mix(in srgb, var(--bull) 55%, var(--line)); }
+  .s-bot[data-on="true"] .s-start { background: var(--panel-2); border-color: var(--line); color: var(--fg); }
+  .s-seg { display: flex; } .s-seg button { flex: 1; font-family: var(--font-body); padding: 9px 8px; }
+  .s-list { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+  .s-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 8px; background: var(--panel-2); }
+  .s-row .num { white-space: nowrap; }
   #srcBadge[data-kind="sim"] { border-color: var(--gold); color: var(--gold); }
   #srcBadge[data-kind="real"] { border-color: var(--bull); color: var(--bull); }
 
@@ -192,18 +204,107 @@
           <span id="pxMid" class="num text-2xl font-semibold">—</span>
           <span id="pxChg" class="num text-sm muted">—</span>
         </div>
-        <div class="num text-xs muted">Bid <span id="pxBid">—</span> · Ask <span id="pxAsk">—</span> · Spread <span id="pxSpread">—</span></div>
+        <div class="num text-xs muted expert-only">Bid <span id="pxBid">—</span> · Ask <span id="pxAsk">—</span> · Spread <span id="pxSpread">—</span></div>
       </div>
       <span id="srcBadge" class="pill" data-kind="sim">ราคาจำลอง</span>
-      <span id="feedPill" class="pill" data-state="off"><span class="dot"></span><span id="feedPillText">ยังไม่เชื่อมต่อ</span></span>
+      <span id="feedPill" class="pill expert-only" data-state="off"><span class="dot"></span><span id="feedPillText">ยังไม่เชื่อมต่อ</span></span>
       <label class="switch" for="autoToggle">
         <input type="checkbox" id="autoToggle">
         <span class="track"></span>
         <span class="flex flex-col leading-tight"><span class="font-semibold">Auto Bot</span><span id="botChip" class="text-xs muted">ปิดอยู่</span></span>
       </label>
+      <button type="button" class="btn btn-sm" id="modeBtn">โหมดผู้เชี่ยวชาญ</button>
     </div>
   </header>
 
+  <!-- ============ SIMPLE MODE ============ -->
+  <div id="simpleView" class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <div class="flex flex-col gap-4 lg:col-span-2 min-w-0">
+      <section class="panel s-hero" aria-label="เครดิตทดลอง">
+        <div class="flex flex-wrap items-end justify-between gap-4">
+          <div class="min-w-0">
+            <div class="eyebrow">เครดิตทดลองฟรี (เงินจำลอง)</div>
+            <div id="sBalance" class="display s-big num">—</div>
+            <div id="sBalanceSub" class="muted text-sm num">—</div>
+          </div>
+          <div class="text-right">
+            <div class="eyebrow">กำไรวันนี้</div>
+            <div id="sToday" class="num text-2xl font-semibold">—</div>
+            <div id="sTodaySub" class="muted text-xs num">—</div>
+          </div>
+        </div>
+        <div class="progress" aria-hidden="true"><span id="sTodayBar"></span></div>
+      </section>
+
+      <section class="panel s-bot" id="sBotPanel" data-on="false">
+        <div class="flex flex-wrap items-center gap-4">
+          <button type="button" class="btn s-start" id="sBotBtn">▶ เริ่มให้บอทเทรด</button>
+          <div class="min-w-0 flex-1">
+            <div id="sBotTitle" class="display text-lg font-semibold">บอทยังไม่ได้เริ่ม</div>
+            <div id="sBotText" class="muted text-sm">กดปุ่มเริ่ม บอทจะเข้าและออกออเดอร์ให้เองด้วยเครดิตทดลอง</div>
+          </div>
+          <div class="flex items-center gap-3">
+            <div id="sArrow" class="big-arrow flat" aria-hidden="true">◆</div>
+            <div>
+              <div id="sAction" class="display text-2xl font-bold flat">รอ</div>
+              <div id="sStrength" class="muted text-xs num">แรงสัญญาณ 0 / 35</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div id="simpleChartSlot"></div>
+    </div>
+
+    <div class="flex flex-col gap-4 min-w-0">
+      <section class="panel flex flex-col gap-3">
+        <h2>ราคาที่ใช้เทรด</h2>
+        <div class="seg s-seg" role="group" aria-label="แหล่งราคา" id="sSrcSeg">
+          <button type="button" data-src="binance">ราคาทองจริง</button>
+          <button type="button" data-src="sim">ราคาจำลอง</button>
+        </div>
+        <p id="sSrcHint" class="muted text-xs m-0">—</p>
+      </section>
+
+      <section class="panel flex flex-col gap-3">
+        <h2>ความเสี่ยงต่อไม้</h2>
+        <div class="seg s-seg" role="group" aria-label="ความเสี่ยงต่อไม้" id="sRiskSeg">
+          <button type="button" data-risk="1">ต่ำ 1%</button>
+          <button type="button" data-risk="2">กลาง 2%</button>
+          <button type="button" data-risk="3">สูง 3%</button>
+        </div>
+        <p id="sRiskHint" class="muted text-xs m-0">—</p>
+      </section>
+
+      <section class="panel flex flex-col gap-3">
+        <div class="flex items-center justify-between gap-2"><h2>ออเดอร์ที่เปิดอยู่</h2><span id="sPosCount" class="pill">0</span></div>
+        <div id="sPos" class="s-list"></div>
+        <div class="flex gap-2">
+          <button type="button" class="btn btn-buy btn-sm flex-1" id="sBuy">▲ ซื้อเอง</button>
+          <button type="button" class="btn btn-sell btn-sm flex-1" id="sSell">▼ ขายเอง</button>
+        </div>
+      </section>
+
+      <section class="panel flex flex-col gap-3">
+        <h2>เทรดล่าสุด</h2>
+        <div id="sTrades" class="s-list"></div>
+        <div id="sStats" class="muted text-xs num">—</div>
+      </section>
+
+      <section class="panel flex flex-col gap-3">
+        <h2>เริ่มเครดิตทดลองใหม่</h2>
+        <div class="flex flex-wrap items-end gap-2">
+          <label class="field flex-1" for="sCredit">จำนวนเครดิต
+            <select id="sCredit"><option value="500">500 บาท</option><option value="1000">1,000 บาท</option><option value="5000">5,000 บาท</option><option value="10000">10,000 บาท</option></select>
+          </label>
+          <button type="button" class="btn" id="sReset">เริ่มใหม่</button>
+        </div>
+        <p class="muted text-xs m-0">ล้างประวัติเดิมแล้วเริ่มนับใหม่ เป็นเงินจำลองทั้งหมด ไม่มีเงินจริงเกี่ยวข้อง</p>
+      </section>
+    </div>
+  </div>
+
+  <div id="expertView" class="flex flex-col gap-4" hidden>
   <!-- ============ ACCOUNT STRIP ============ -->
   <section class="panel !p-0 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5" aria-label="สรุปพอร์ต">
     <div class="stat">
@@ -235,8 +336,8 @@
   </section>
 
   <!-- ============ CHART + SIGNAL ============ -->
-  <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-    <div class="panel lg:col-span-2">
+  <section class="grid grid-cols-1 lg:grid-cols-3 gap-4" id="chartHome">
+    <div class="panel lg:col-span-2" id="chartPanel">
       <div class="panel-head">
         <div>
           <h2>XAU/USD</h2>
@@ -641,6 +742,8 @@
     </div>
   </section>
 
+  </div>
+
   <footer class="muted text-xs">
     เครื่องมือนี้เป็นระบบจำลองเพื่อการศึกษา (Paper Trading) ไม่ใช่คำแนะนำการลงทุน การเทรดทองคำด้วย Leverage มีความเสี่ยงสูงและอาจสูญเสียเงินทุนทั้งหมด
   </footer>
@@ -704,6 +807,7 @@ const DEFAULT_SETTINGS = {
   dailyTargetPct: 10, stopAtTarget: false, dailyMaxLossPct: 15,
   startCapitalThb: 500, thbPerUsd: 33, leverage: 1000, spread: 0.20,
   autoTrade: false,
+  uiMode: 'simple',
   feed: {
     source: 'sim', simStart: 4000,
     binanceSymbol: 'PAXGUSDT',
@@ -1470,6 +1574,7 @@ const App = {
     UI.buildMatrix();
     Charts.init();
     UI.syncSettings();
+    UI.applyMode();
     this.connectFeed(this.state.settings.feed.source, { silent: true });
     setInterval(() => this.housekeeping(), 1000);
     window.addEventListener('beforeunload', () => this.saveNow());
@@ -1848,6 +1953,13 @@ const App = {
     return { day, equity, pnl, pct: day.open > 0 ? pnl / day.open * 100 : 0 };
   },
 
+  setAuto(on) {
+    this.s.autoTrade = on;
+    $('autoToggle').checked = on;
+    this.markDirty(); this.runBot();
+    toast(on ? 'บอทเริ่มทำงาน' : 'บอทหยุดแล้ว (ออเดอร์ที่เปิดอยู่ยังมี SL/TP ดูแล)');
+  },
+
   resetPortfolio() {
     if (this.state.positions.length) this.closeAll('RESET');
     this.state = freshState(this.state.settings);
@@ -1887,10 +1999,23 @@ const UI = {
   toThb(usc) { return usc / 100 * App.s.thbPerUsd; },
 
   bindControls() {
-    $('autoToggle').addEventListener('change', (e) => {
-      App.s.autoTrade = e.target.checked; App.markDirty(); App.runBot();
-      toast(e.target.checked ? 'Auto Bot ทำงาน' : 'Auto Bot หยุด');
+    $('autoToggle').addEventListener('change', (e) => App.setAuto(e.target.checked));
+    $('modeBtn').addEventListener('click', () => { App.s.uiMode = App.s.uiMode === 'simple' ? 'expert' : 'simple'; App.markDirty(); this.applyMode(); });
+    $('sBotBtn').addEventListener('click', () => App.setAuto(!App.s.autoTrade));
+    $('sSrcSeg').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-src]'); if (!b || b.dataset.src === App.s.feed.source) return;
+      App.s.feed.source = b.dataset.src; App.markDirty(); this.syncFeedForm(); App.connectFeed(b.dataset.src);
     });
+    $('sRiskSeg').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-risk]'); if (!b) return;
+      App.s.riskPct = +b.dataset.risk; App.markDirty(); this.syncSettings();
+    });
+    $('sBuy').addEventListener('click', () => App.openPosition('BUY', 'MANUAL'));
+    $('sSell').addEventListener('click', () => App.openPosition('SELL', 'MANUAL'));
+    $('sPos').addEventListener('click', (e) => { const b = e.target.closest('[data-close]'); if (b) App.closePosition(b.dataset.close); });
+    $('sReset').addEventListener('click', (e) => this.armConfirm(e.currentTarget, 'เริ่มใหม่', () => {
+      App.s.startCapitalThb = +$('sCredit').value; App.resetPortfolio(); this.syncSettings();
+    }));
     $('btnBuy').addEventListener('click', () => App.openPosition('BUY', 'MANUAL'));
     $('btnSell').addEventListener('click', () => App.openPosition('SELL', 'MANUAL'));
     $('btnCloseAll').addEventListener('click', () => App.closeAll());
@@ -1961,16 +2086,30 @@ const UI = {
     });
 
     $('btnExport').addEventListener('click', () => this.exportCsv());
-    $('btnReset').addEventListener('click', (e) => this.confirmReset(e.currentTarget));
+    $('btnReset').addEventListener('click', (e) => this.armConfirm(e.currentTarget, 'เริ่มพอร์ตใหม่', () => App.resetPortfolio()));
   },
 
   pressed(groupId, btn) { $(groupId).querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === btn))); },
 
   /** Two-step confirm in the page itself (no blocking dialogs). */
-  confirmReset(btn) {
-    if (btn.dataset.armed) { delete btn.dataset.armed; btn.textContent = 'เริ่มพอร์ตใหม่'; btn.classList.remove('btn-sell'); App.resetPortfolio(); return; }
+  armConfirm(btn, label, onConfirm) {
+    const disarm = () => { delete btn.dataset.armed; btn.textContent = label; btn.classList.remove('btn-sell'); };
+    if (btn.dataset.armed) { disarm(); onConfirm(); return; }
     btn.dataset.armed = '1'; btn.textContent = 'กดอีกครั้งเพื่อยืนยัน (ล้างประวัติ)'; btn.classList.add('btn-sell');
-    setTimeout(() => { if (btn.dataset.armed) { delete btn.dataset.armed; btn.textContent = 'เริ่มพอร์ตใหม่'; btn.classList.remove('btn-sell'); } }, 4000);
+    setTimeout(() => { if (btn.dataset.armed) disarm(); }, 4000);
+  },
+
+  /** Simple mode shows one screen; expert mode shows every panel. The price chart moves between them. */
+  applyMode() {
+    const simple = App.s.uiMode === 'simple';
+    document.querySelector('.wrap').dataset.mode = simple ? 'simple' : 'expert';
+    $('simpleView').hidden = !simple; $('expertView').hidden = simple;
+    $('modeBtn').textContent = simple ? 'โหมดผู้เชี่ยวชาญ' : 'โหมดง่าย';
+    const panel = $('chartPanel');
+    if (simple) $('simpleChartSlot').appendChild(panel);
+    else $('chartHome').prepend(panel);
+    if (Charts.price) Charts.price.resize();
+    this.renderSimple();
   },
 
   syncSettings() {
@@ -1986,6 +2125,9 @@ const UI = {
     $('btRiskLbl').textContent = s.riskPct;
     $('riskSeg').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.risk === s.riskPct)));
     $('autoToggle').checked = s.autoTrade;
+    $('sRiskSeg').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.risk === s.riskPct)));
+    $('sSrcSeg').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.src === s.feed.source)));
+    $('sCredit').value = String(s.startCapitalThb);
     $('stTargetPct').textContent = s.dailyTargetPct;
     $('growthTargetLbl').textContent = s.dailyTargetPct;
     $('pvAtrMult').textContent = s.slAtrMult; $('pvRr').textContent = s.rr;
@@ -2179,6 +2321,74 @@ const UI = {
 
     this.renderPositions();
     this.renderPending();
+    this.renderSimple();
+  },
+
+  /* ----- simple mode: everything in baht and plain words ----- */
+  renderSimple() {
+    if (App.s.uiMode !== 'simple') return;
+    const s = App.s, md = App.md, acct = App.state.account, thb = (v) => this.toThb(v);
+    const floating = App.broker.floating(md.bid, md.ask), equity = acct.balance + floating;
+    $('sBalance').textContent = `${fmt(thb(equity))} ฿`;
+    const growth = (equity - acct.startBalance) / acct.startBalance * 100;
+    $('sBalanceSub').innerHTML = `เริ่มต้น ${fmt(thb(acct.startBalance), 0)} บาท · <span class="${cls(growth)}">${signed(growth)}%</span>` +
+      (floating ? ` · ออเดอร์ที่เปิดอยู่ <span class="${cls(floating)}">${signed(thb(floating))} ฿</span>` : '');
+    const t = App.todayStats();
+    const td = $('sToday'); td.textContent = `${signed(thb(t.pnl))} ฿`; td.className = `num text-2xl font-semibold ${cls(t.pnl)}`;
+    $('sTodaySub').textContent = `${signed(t.pct)}% · เป้า ${s.dailyTargetPct}% = ${fmt(thb(t.day.open * s.dailyTargetPct / 100))} ฿`;
+    $('sTodayBar').style.width = `${clamp(t.pct / s.dailyTargetPct, 0, 1) * 100}%`;
+
+    const risk = acct.balance * s.riskPct / 100;
+    $('sRiskHint').textContent = `ถ้าไม้นี้แพ้ เสียประมาณ ${fmt(thb(risk))} บาท · ถ้าชนะ ได้ประมาณ ${fmt(thb(risk * s.rr))} บาท`;
+
+    const real = App.feed && App.feed.name !== 'Simulator' && App.feed.state === 'live';
+    let hint = real ? 'ราคาทองจริงจาก Binance (PAXG ราคาใกล้เคียง XAUUSD) · เงินยังเป็นเครดิตทดลอง' : 'ราคาจำลองขยับตลอดเวลา ใช้ลองระบบได้ทุกที่ทุกเวลา';
+    if (s.feed.source !== 'sim' && !real) hint = 'กำลังเชื่อมต่อราคาจริง…';
+    if (real && goldMarketClosed(Date.now())) hint += ' · ตอนนี้ตลาดทองปิด (เสาร์–อาทิตย์) ราคาจะแทบไม่ขยับ';
+    if (Env.cspBlocked) hint = 'หน้านี้ใช้ราคาจริงไม่ได้ ต้องดาวน์โหลดไฟล์ index.html ไปเปิดในเครื่อง';
+    $('sSrcHint').textContent = hint;
+
+    const list = App.state.positions;
+    $('sPosCount').textContent = list.length;
+    $('sPos').innerHTML = list.map(p => {
+      const pnl = App.broker.pnl(p, md.bid, md.ask);
+      return `<div class="s-row"><span><span class="tag ${p.side === 'BUY' ? 'tag-buy' : 'tag-sell'}">${p.side === 'BUY' ? 'ซื้อ' : 'ขาย'}</span>
+        <span class="num muted">${p.lot.toFixed(2)} lot @ ${fmt(p.entry)}</span>${p.trailActive ? ' <span class="tag tag-trail">ล็อกกำไร</span>' : ''}</span>
+        <span class="flex items-center gap-2"><span class="num ${cls(pnl)}">${signed(thb(pnl))} ฿</span>
+        <button type="button" class="btn btn-sm" data-close="${p.id}">ปิด</button></span></div>`;
+    }).join('') || '<div class="empty">ยังไม่มีออเดอร์</div>';
+
+    const reason = { TP: 'ถึงเป้า', SL: 'ตัดขาดทุน', TRAIL: 'ล็อกกำไร', BE: 'เท่าทุน', MANUAL: 'ปิดเอง', TIME: 'หมดเวลา' };
+    const recent = App.state.trades.slice(-5).reverse();
+    $('sTrades').innerHTML = recent.map(t => `<div class="s-row"><span><span class="tag ${t.side === 'BUY' ? 'tag-buy' : 'tag-sell'}">${t.side === 'BUY' ? 'ซื้อ' : 'ขาย'}</span>
+      <span class="muted text-xs">${timeStr(t.closeTs)} · ${reason[t.reason] || t.reason}</span></span>
+      <span class="num ${cls(t.pnl)}">${signed(thb(t.pnl))} ฿</span></div>`).join('') || '<div class="empty">ยังไม่มีประวัติ</div>';
+    const all = App.state.trades, wins = all.filter(x => x.pnl > 0).length, total = all.reduce((a, x) => a + x.pnl, 0);
+    $('sStats').textContent = all.length ? `ทั้งหมด ${all.length} ไม้ · ชนะ ${fmt(wins / all.length * 100, 0)}% · รวม ${signed(thb(total))} บาท` : 'บอทจะบันทึกทุกไม้ให้อัตโนมัติ';
+  },
+
+  /** One plain sentence about what the bot is doing, for simple mode. */
+  renderSimpleBot() {
+    const s = App.s, sig = App.signal, m = App.matrix, on = s.autoTrade;
+    $('sBotPanel').dataset.on = String(on);
+    $('sBotBtn').textContent = on ? '■ หยุดบอท' : '▶ เริ่มให้บอทเทรด';
+    const color = sig.action === 'BUY' ? 'up' : sig.action === 'SELL' ? 'down' : 'flat';
+    $('sArrow').textContent = sig.action === 'BUY' ? '▲' : sig.action === 'SELL' ? '▼' : '◆';
+    $('sArrow').className = `big-arrow ${color}`;
+    $('sAction').textContent = sig.action === 'BUY' ? 'ซื้อ' : sig.action === 'SELL' ? 'ขาย' : 'รอ';
+    $('sAction').className = `display text-2xl font-bold ${color}`;
+    $('sStrength').textContent = `แรงสัญญาณ ${fmt(Math.abs(sig.score), 0)} / ${s.entryThreshold}`;
+    let title, text;
+    const real = App.feed && App.feed.name !== 'Simulator';
+    const pos = App.state.positions[0];
+    if (!on) { title = 'บอทยังไม่ได้เริ่ม'; text = 'กดปุ่มเริ่ม บอทจะเข้าและออกออเดอร์ให้เองด้วยเครดิตทดลอง'; }
+    else if (App.tradeBlocker()) { title = 'บอทหยุดพักวันนี้'; text = App.tradeBlocker(); }
+    else if (pos) { title = 'บอทกำลังถือออเดอร์'; text = `${pos.side === 'BUY' ? 'ซื้อ' : 'ขาย'}ไว้ที่ ${fmt(pos.entry)} · ตั้งตัดขาดทุนและเป้ากำไรไว้แล้ว บอทจะปิดให้เอง`; }
+    else if (real && goldMarketClosed(Date.now())) { title = 'บอทรอตลาดเปิด'; text = 'ตลาดทองปิดเสาร์–อาทิตย์ จะเปิดอีกครั้งเช้าวันจันทร์ประมาณ 05:00 น. เวลาไทย'; }
+    else if (!m) { title = 'บอทกำลังทำงาน'; text = 'กำลังเก็บข้อมูลราคา'; }
+    else if (Math.abs(sig.score) < s.entryThreshold) { title = 'บอทกำลังรอจังหวะ'; text = `แรงสัญญาณยังไม่พอ (${fmt(Math.abs(sig.score), 0)} จาก ${s.entryThreshold}) กราฟแต่ละช่วงเวลายังไปคนละทาง บอทจะไม่เข้าตอนตลาดไม่ชัด`; }
+    else { title = 'บอทกำลังรอจังหวะ'; text = `แนวโน้มใหญ่ไปทาง${sig.score > 0 ? 'ขึ้น' : 'ลง'}แล้ว รอให้กราฟ 1 นาทีและ 1 วินาทียืนยันก่อนเข้า`; }
+    $('sBotTitle').textContent = title; $('sBotText').textContent = text;
   },
 
   maxDrawdown() {
@@ -2290,6 +2500,7 @@ const UI = {
   },
 
   setBotStatus(text, chip) {
+    this.renderSimpleBot();
     $('botStatus').textContent = text;
     if (chip) $('botChip').textContent = chip;
     this.renderChecks();

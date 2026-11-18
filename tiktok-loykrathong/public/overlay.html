@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ลอยกระทงออนไลน์ — Overlay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Kanit:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  body { font-family: 'Kanit', system-ui, sans-serif; color: #fff; }
+  /* เวที 1080x1920 ย่อ/ขยายให้พอดีหน้าต่างเสมอ */
+  #stage { position: absolute; left: 50%; top: 50%; width: 1080px; height: 1920px; transform-origin: 0 0; }
+  #cv { position: absolute; inset: 0; width: 1080px; height: 1920px; }
+  .hud { position: absolute; pointer-events: none; }
+  #title { left: 0; right: 0; top: 34px; text-align: center; }
+  #title h1 { margin: 0; font-size: 86px; font-weight: 800; line-height: 1.1;
+    background: linear-gradient(180deg, #fff6c8 0%, #ffd665 45%, #e59a1c 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 4px 0 #6b3a00) drop-shadow(0 0 22px rgba(255,190,60,.55)); }
+  #title p { margin: 10px auto 0; display: inline-block; font-size: 32px; font-weight: 500; color: #fff3cf;
+    padding: 6px 26px; border-radius: 40px; background: rgba(20,10,40,.55); border: 2px solid rgba(255,210,110,.55); }
+  .box { background: linear-gradient(180deg, rgba(25,14,55,.82), rgba(12,8,30,.82)); border: 3px solid rgba(255,206,100,.75);
+    border-radius: 22px; padding: 16px 20px; box-shadow: 0 0 24px rgba(255,180,60,.25), inset 0 0 18px rgba(255,200,90,.08); }
+  .box h3 { margin: 0 0 8px; font-size: 27px; color: #ffd667; font-weight: 700; text-align: center; }
+  #wishes { left: 26px; top: 560px; width: 330px; min-height: 150px; }
+  #wishes ul { list-style: none; margin: 0; padding: 0; font-size: 22px; line-height: 1.3; }
+  #wishes li { margin: 6px 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  #wishes li b { color: #ffe08a; font-weight: 500; }
+  #top { left: 26px; top: 800px; width: 330px; }
+  #top ol { margin: 0; padding: 0; list-style: none; font-size: 24px; }
+  #top li { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+  #top li .rk { width: 30px; text-align: center; font-weight: 700; color: #ffd667; }
+  #top li img, #top li .av { width: 38px; height: 38px; border-radius: 50%; object-fit: cover; border: 2px solid #ffd667; background: #5a3d8a; flex: none; }
+  #top li .nm { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #top li .pt { color: #ffe08a; font-weight: 700; }
+  #tiers { right: 26px; top: 560px; width: 340px; }
+  #tiers .row { display: flex; align-items: center; gap: 10px; margin: 8px 0; font-size: 22px; line-height: 1.2; }
+  #tiers .row canvas { flex: none; }
+  #tiers .row .c { color: #ffd667; font-weight: 700; white-space: nowrap; }
+  #tiers .row small { display: block; color: #e9defc; font-size: 20px; }
+  #goal { left: 170px; right: 170px; bottom: 26px; }
+  #goal .bar { height: 44px; border-radius: 30px; background: rgba(10,6,25,.8); border: 3px solid #ffcf68; overflow: hidden; position: relative; }
+  #goal .fill { position: absolute; inset: 0 auto 0 0; width: 0; background: linear-gradient(90deg, #ff9d2e, #ffe07a); transition: width .6s ease; box-shadow: 0 0 20px #ffb640; }
+  #goal .txt { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 700; color: #fff; text-shadow: 0 2px 3px #000, 0 0 6px #000; }
+  #toasts { left: 0; right: 0; top: 250px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .toast { display: flex; align-items: center; gap: 14px; font-size: 30px; font-weight: 500; padding: 10px 30px 10px 12px; border-radius: 50px;
+    background: linear-gradient(90deg, rgba(120,40,160,.92), rgba(220,90,40,.92)); border: 3px solid #ffe08a;
+    box-shadow: 0 0 30px rgba(255,170,60,.6); animation: tin .45s cubic-bezier(.2,1.6,.4,1) both; max-width: 940px; }
+  .toast.out { animation: tout .4s ease forwards; }
+  .toast img { width: 58px; height: 58px; border-radius: 50%; object-fit: cover; border: 2px solid #fff; background: #fff2; }
+  .toast b { color: #ffe68f; }
+  @keyframes tin { from { transform: translateY(-30px) scale(.6); opacity: 0 } to { transform: none; opacity: 1 } }
+  @keyframes tout { to { transform: translateY(-20px); opacity: 0 } }
+  #goalBanner { left: 0; right: 0; top: 860px; text-align: center; font-size: 110px; font-weight: 800; color: #ffe27a; opacity: 0;
+    text-shadow: 0 6px 0 #7a3c00, 0 0 40px #ffb02e; transition: opacity .5s; }
+  #conn { right: 14px; top: 10px; font-size: 18px; opacity: .55; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="cv" width="1080" height="1920"></canvas>
+  <div class="hud" id="title"><h1 id="tTitle"></h1><p id="tSub"></p></div>
+  <div class="hud box" id="wishes"><h3>✨ คำอธิษฐานล่าสุด</h3><ul id="wishList"><li>พิมพ์ <b>ลอย ตามด้วยคำอธิษฐาน</b></li></ul></div>
+  <div class="hud box" id="top"><h3>🏆 Top 5 ผู้ร่วมลอยกระทง</h3><ol id="topList"></ol></div>
+  <div class="hud box" id="tiers"><h3>🎁 ของขวัญ → เลือกกระทง</h3><div id="tierList"></div></div>
+  <div class="hud" id="toasts"></div>
+  <div class="hud" id="goalBanner">🎉 ครบเป้าแล้ว! 🎉</div>
+  <div class="hud" id="goal"><div class="bar"><div class="fill" id="gFill"></div><div class="txt" id="gTxt"></div></div></div>
+  <div class="hud" id="conn">●</div>
+</div>
+<script src="overlay.js"></script>
+</body>
+</html>

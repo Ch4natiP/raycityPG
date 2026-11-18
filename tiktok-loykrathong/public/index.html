@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ลอยกระทงออนไลน์ — แผงควบคุม</title>
+<link href="https://fonts.googleapis.com/css2?family=Kanit:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root { --bg: #0b0a14; --panel: #15121f; --line: #3a2f1a; --gold: #f2c14e; --gold2: #b8862b; --text: #f3ead6; --muted: #a99f8a; --ok: #5ee08a; --bad: #ff6b6b; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: 'Kanit', system-ui, sans-serif; font-size: 14px; }
+  .app { display: grid; grid-template-columns: 150px 380px 1fr; height: 100vh; gap: 0; }
+  nav { background: #100e18; border-right: 1px solid var(--line); padding: 14px 8px; display: flex; flex-direction: column; gap: 4px; }
+  nav .brand { color: var(--gold); font-weight: 700; font-size: 17px; line-height: 1.2; padding: 4px 8px 14px; }
+  nav button { all: unset; cursor: pointer; padding: 9px 10px; border-radius: 8px; color: var(--text); display: flex; gap: 8px; align-items: center; }
+  nav button:hover { background: #1f1a2b; }
+  nav button.on { background: linear-gradient(90deg, var(--gold2), #8a6520); color: #fff; font-weight: 500; }
+  nav .foot { margin-top: auto; font-size: 12px; color: var(--muted); padding: 8px; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--bad); margin-right: 6px; }
+  .dot.ok { background: var(--ok); } .dot.wait { background: #ffc94a; }
+  main { background: var(--panel); border-right: 1px solid var(--line); padding: 16px 18px; overflow-y: auto; }
+  main h2 { color: var(--gold); margin: 0 0 12px; font-size: 19px; }
+  .tab { display: none; } .tab.on { display: block; }
+  label { display: block; margin: 12px 0 4px; color: var(--gold); font-size: 13px; }
+  input[type=text], input[type=number], input[type=password], select, textarea {
+    width: 100%; background: #0d0b14; color: var(--text); border: 1px solid #3a3350; border-radius: 6px; padding: 8px 10px; font: inherit; }
+  input:focus, select:focus, textarea:focus { outline: 1px solid var(--gold); }
+  .btn { all: unset; cursor: pointer; display: inline-block; padding: 7px 13px; margin: 6px 4px 0 0; border-radius: 6px; font-weight: 500;
+    background: linear-gradient(180deg, #c99a3a, #8f6a22); color: #fff; border: 1px solid #e3b65a; box-shadow: 0 2px 0 #4d3810; }
+  .btn:hover { filter: brightness(1.12); } .btn:active { transform: translateY(1px); box-shadow: none; }
+  .btn.ghost { background: #241f33; border-color: #4a4066; box-shadow: none; }
+  .btn.red { background: linear-gradient(180deg, #c8463f, #8a2620); border-color: #ff8a80; }
+  .row { display: flex; gap: 8px; align-items: center; } .row > * { flex: 1; }
+  .check { display: flex; gap: 8px; align-items: center; margin: 10px 0; color: var(--text); font-size: 14px; }
+  .hint { color: var(--muted); font-size: 12.5px; line-height: 1.5; margin: 6px 0; }
+  .card { background: #0f0d17; border: 1px solid #2c2540; border-radius: 10px; padding: 12px; margin: 12px 0; }
+  .status { padding: 10px 12px; border-radius: 8px; background: #0f0d17; border: 1px solid #2c2540; margin-top: 12px; }
+  code, .url { background: #000; padding: 6px 8px; border-radius: 6px; color: #ffd98a; display: block; word-break: break-all; margin-top: 4px; font-size: 13px; }
+  ol.steps { padding-left: 20px; line-height: 1.7; color: var(--text); } ol.steps li { margin: 4px 0; }
+  .tiers .t { display: grid; grid-template-columns: 1fr 70px; gap: 6px; margin: 6px 0; }
+  #log { font-family: ui-monospace, monospace; font-size: 12.5px; line-height: 1.55; max-height: calc(100vh - 120px); overflow-y: auto; }
+  #log div { border-bottom: 1px solid #221d30; padding: 3px 0; } #log .warn { color: #ffb36b; }
+  .preview { position: relative; background: #050409; display: flex; align-items: center; justify-content: center; padding: 12px; }
+  .preview .frame { height: 100%; aspect-ratio: 9/16; max-width: 100%; border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 1px #3a2f1a, 0 10px 40px #000; }
+  .preview iframe { width: 100%; height: 100%; border: 0; display: block; }
+  .preview .tag { position: absolute; top: 10px; right: 14px; color: var(--muted); font-size: 12px; }
+  @media (max-width: 900px) { .app { grid-template-columns: 1fr; height: auto; } nav { flex-direction: row; flex-wrap: wrap; } .preview { height: 80vh; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <nav>
+    <div class="brand">🪷 ลอยกระทง<br>ออนไลน์</div>
+    <button data-tab="live" class="on">🚀 เริ่มไลฟ์</button>
+    <button data-tab="scene">🏞️ ฉาก/ข้อความ</button>
+    <button data-tab="krathong">🪷 กระทง/ของขวัญ</button>
+    <button data-tab="test">🧪 ทดสอบ</button>
+    <button data-tab="log">📜 บันทึก</button>
+    <div class="foot"><span class="dot" id="navDot"></span><span id="navStatus">ออฟไลน์</span></div>
+  </nav>
+
+  <main>
+    <!-- ================= เริ่มไลฟ์ ================= -->
+    <section class="tab on" id="tab-live">
+      <h2>🚀 เชื่อมต่อ TikTok LIVE</h2>
+      <label>ชื่อผู้ใช้ TikTok ของคุณ (ไม่ต้องใส่ @)</label>
+      <input type="text" id="username" placeholder="เช่น mychannel">
+      <details class="hint"><summary>ตัวเลือกขั้นสูง</summary>
+        <label>Euler Stream API Key (ไม่บังคับ)</label>
+        <input type="password" id="apikey" placeholder="ใส่เมื่อเชื่อมต่อไม่ได้บ่อย ๆ / โดนจำกัด">
+        <div class="hint">ไลบรารีใช้เซิร์ฟเวอร์ลงชื่อ (sign) ของ eulerstream.com — ใช้ฟรีได้แต่มีโควตา ถ้าโดนจำกัดให้สมัครคีย์ฟรีที่เว็บนั้นแล้วใส่ตรงนี้</div>
+      </details>
+      <div>
+        <span class="btn" id="btnConnect">▶ เชื่อมต่อ</span>
+        <span class="btn ghost" id="btnDisconnect">■ ตัดการเชื่อมต่อ</span>
+      </div>
+      <div class="status"><span class="dot" id="stDot"></span><span id="stMsg">ยังไม่ได้เชื่อมต่อ</span></div>
+      <div class="hint">ต้อง <b>เริ่มไลฟ์ใน TikTok ก่อน</b> แล้วค่อยกดเชื่อมต่อ (ถ้ายังไม่ได้ไลฟ์ ระบบจะลองใหม่ให้เองทุก 15 วินาที)</div>
+
+      <div class="card">
+        <b>ลิงก์ฉากสำหรับใส่ในไลฟ์</b>
+        <span class="url" id="overlayUrl"></span>
+        <span class="btn ghost" id="btnCopy">📋 คัดลอกลิงก์</span>
+        <span class="btn ghost" id="btnOpen">↗ เปิดหน้าต่างใหม่</span>
+      </div>
+      <div class="card">
+        <b>วิธีเอาขึ้นไลฟ์</b>
+        <ol class="steps">
+          <li><b>OBS</b>: Sources → <i>Browser</i> → ใส่ลิงก์ด้านบน, ขนาด <b>1080 × 1920</b>, ติ๊ก "Control audio via OBS" ถ้าต้องการเสียง แล้วไลฟ์ไป TikTok ด้วย Stream Key</li>
+          <li><b>TikTok LIVE Studio</b>: ถ้ามีแหล่งที่มาแบบ <i>ลิงก์/Link</i> ให้วางลิงก์ด้านบน — ถ้าไม่มี ให้กด "เปิดหน้าต่างใหม่" แล้วเพิ่มแหล่งที่มาแบบ <i>จับภาพหน้าต่าง (Window capture)</i> เลือกหน้าต่างนั้น</li>
+          <li>ตั้งไลฟ์เป็นแนวตั้ง (Portrait) ให้ฉากเต็มจอ</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ================= ฉาก ================= -->
+    <section class="tab" id="tab-scene">
+      <h2>🏞️ ฉากและข้อความ</h2>
+      <label>หัวข้อ</label><input type="text" id="cTitle">
+      <label>ข้อความใต้หัวข้อ</label><input type="text" id="cSub">
+      <label>เป้าหมายจำนวนกระทง (0 = ซ่อนแถบ)</label><input type="number" id="cGoal" min="0">
+      <label>ทุก ๆ กี่ไลค์ยิงพลุ 1 ชุด (0 = ปิด)</label><input type="number" id="cLikes" min="0">
+      <label class="check"><input type="checkbox" id="cChars"> แสดงตัวละครผู้ชมบนท่าน้ำ</label>
+      <label class="check"><input type="checkbox" id="cSound"> เปิดเสียงเอฟเฟกต์</label>
+      <span class="btn" data-save>💾 บันทึก</span>
+    </section>
+
+    <!-- ================= กระทง ================= -->
+    <section class="tab" id="tab-krathong">
+      <h2>🪷 กระทงและของขวัญ</h2>
+      <label>คำสั่งลอยกระทงฟรี (คั่นด้วยจุลภาค)</label><input type="text" id="cKeywords">
+      <div class="hint">พิมพ์ข้อความต่อท้ายได้ = คำอธิษฐาน เช่น <b>ลอย ขอให้สอบผ่าน</b> • พิมพ์ <b>ชาย</b>/<b>หญิง</b> เปลี่ยนตัวละคร • พิมพ์ <b>สวัสดี</b> ตัวละครจะไหว้</div>
+      <label>ลอยฟรีได้ทุกกี่วินาทีต่อคน</label><input type="number" id="cCooldown" min="0">
+      <label>จำนวนกระทงสูงสุดที่แสดงต่อของขวัญ 1 ครั้ง</label><input type="number" id="cMaxGift" min="1">
+      <label>ระดับกระทง (ตามราคาของขวัญต่อชิ้น เป็นเหรียญ)</label>
+      <div class="tiers" id="tierEdit"></div>
+      <div class="hint">ส่งของขวัญ N ชิ้น = ลอยกระทงระดับนั้น N ใบ • 99+ เหรียญมีพลุ • 500+ มีโคมลอย</div>
+      <span class="btn" data-save>💾 บันทึก</span>
+      <span class="btn ghost" id="btnResetCfg">↺ ค่าเริ่มต้น</span>
+    </section>
+
+    <!-- ================= ทดสอบ ================= -->
+    <section class="tab" id="tab-test">
+      <h2>🧪 ทดสอบ (จำลองผู้ชม)</h2>
+      <label>ชื่อผู้ชม</label>
+      <input type="text" id="tName" value="สมชาย">
+      <div>
+        <span class="btn" data-sim="join">คนเข้า</span>
+        <span class="btn" data-sim="float">🪷 ลอยกระทง</span>
+        <span class="btn" data-sim="follow">ติดตาม</span>
+        <span class="btn" data-sim="share">แชร์</span>
+        <span class="btn" data-sim="like">ไลค์ x50</span>
+      </div>
+      <label>คอมเมนต์</label>
+      <input type="text" id="tChat" placeholder="เช่น ลอย ขอให้รวย / ลอยกระทง / สวัสดี / ชาย / หญิง">
+      <span class="btn" id="btnChat">ส่งคอมเมนต์</span>
+      <label>ของขวัญ</label>
+      <select id="tGift">
+        <option value="Rose|1">กุหลาบ (Rose) — 1 เหรียญ</option>
+        <option value="TikTok|1">TikTok — 1 เหรียญ</option>
+        <option value="Finger Heart|5">Finger Heart — 5 เหรียญ</option>
+        <option value="Doughnut|30">Doughnut — 30 เหรียญ</option>
+        <option value="Hand Hearts|100">Hand Hearts — 100 เหรียญ</option>
+        <option value="Corgi|299">Corgi — 299 เหรียญ</option>
+        <option value="Galaxy|1000">Galaxy — 1000 เหรียญ</option>
+        <option value="Lion|29999">Lion — 29999 เหรียญ</option>
+      </select>
+      <label>จำนวน</label>
+      <input type="number" id="tCount" value="1" min="1">
+      <span class="btn" id="btnGift">ส่งของขวัญ</span>
+      <label class="check"><input type="checkbox" id="tAuto"> จำลองผู้ชมอัตโนมัติ</label>
+      <div>
+        <span class="btn ghost" data-fx="fireworks">🎆 พลุ</span>
+        <span class="btn ghost" data-fx="lanterns">🏮 โคมลอย</span>
+      </div>
+      <div style="margin-top:18px"><span class="btn red" id="btnReset">ล้างข้อมูล (รีเซ็ต)</span></div>
+      <div class="hint">ปุ่มทดสอบใช้ได้ทั้งตอนออฟไลน์และระหว่างไลฟ์จริง (ผู้ชมจะเห็นด้วย)</div>
+    </section>
+
+    <!-- ================= บันทึก ================= -->
+    <section class="tab" id="tab-log">
+      <h2>📜 บันทึกเหตุการณ์</h2>
+      <div id="log"></div>
+    </section>
+  </main>
+
+  <div class="preview">
+    <span class="tag">ตัวอย่าง (ปิดเสียง)</span>
+    <div class="frame"><iframe src="/overlay?mute=1" title="overlay preview"></iframe></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+let ws, config = null;
+const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+
+// tabs
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.id === 'tab-' + b.dataset.tab));
+  store.set('tab', b.dataset.tab);
+});
+const lastTab = store.get('tab'); if (lastTab) document.querySelector(`nav button[data-tab="${lastTab}"]`)?.click();
+
+const overlayUrl = `${location.origin}/overlay`;
+$('overlayUrl').textContent = overlayUrl;
+$('btnCopy').onclick = () => navigator.clipboard?.writeText(overlayUrl);
+$('btnOpen').onclick = () => window.open(overlayUrl, 'loykrathong', 'width=540,height=960');
+$('username').value = store.get('username', '');
+$('apikey').value = store.get('apikey', '');
+
+function send(m) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); }
+
+function connectWs() {
+  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+  ws.onmessage = e => {
+    const m = JSON.parse(e.data);
+    if (m.type === 'config') { config = m.config; fillConfig(); }
+    if (m.type === 'status') showStatus(m.status);
+    if (m.type === 'log') addLog(m.line);
+  };
+  ws.onclose = () => { showStatus({ state: 'error', message: 'ขาดการติดต่อกับโปรแกรม (server.js ปิดอยู่?)' }); setTimeout(connectWs, 2000); };
+}
+connectWs();
+
+function showStatus(s) {
+  const cls = s.state === 'connected' ? 'ok' : (s.state === 'connecting' || s.state === 'retrying') ? 'wait' : '';
+  for (const id of ['stDot', 'navDot']) $(id).className = 'dot ' + cls;
+  $('stMsg').textContent = s.message;
+  $('navStatus').textContent = s.state === 'connected' ? 'LIVE @' + s.username : s.state === 'idle' ? 'ออฟไลน์' : 'กำลังเชื่อมต่อ…';
+}
+function addLog(l) {
+  const d = document.createElement('div'); if (l.level === 'warn') d.className = 'warn';
+  d.textContent = `${new Date(l.t).toLocaleTimeString('th-TH')}  ${l.text}`;
+  $('log').prepend(d); while ($('log').children.length > 400) $('log').lastChild.remove();
+}
+
+$('btnConnect').onclick = () => {
+  const u = $('username').value.trim(); if (!u) return $('username').focus();
+  store.set('username', u); store.set('apikey', $('apikey').value.trim());
+  send({ type: 'connect', username: u, signApiKey: $('apikey').value.trim() || undefined });
+};
+$('btnDisconnect').onclick = () => send({ type: 'disconnect' });
+
+// ---------- config ----------
+function fillConfig() {
+  $('cTitle').value = config.title; $('cSub').value = config.subtitle; $('cGoal').value = config.goal;
+  $('cLikes').value = config.likesPerFirework; $('cChars').checked = config.showCharacters; $('cSound').checked = config.sound;
+  $('cKeywords').value = config.floatKeywords.join(', '); $('cCooldown').value = config.freeCooldownSec; $('cMaxGift').value = config.maxPerGift;
+  $('tierEdit').innerHTML = '';
+  config.tiers.forEach((t, i) => {
+    const d = document.createElement('div'); d.className = 't';
+    d.innerHTML = `<input type="text" data-tn="${i}"><input type="number" min="0" data-tc="${i}" ${t.free ? 'disabled title="ฟรี (พิมพ์คำสั่ง)"' : ''}>`;
+    d.querySelector('[data-tn]').value = t.name; d.querySelector('[data-tc]').value = t.free ? '' : t.minCoins;
+    $('tierEdit').append(d);
+  });
+}
+function readConfig() {
+  const tiers = config.tiers.map((t, i) => ({ ...t, name: document.querySelector(`[data-tn="${i}"]`).value.trim() || t.name,
+    minCoins: t.free ? 0 : Math.max(1, Number(document.querySelector(`[data-tc="${i}"]`).value) || 1) }));
+  return {
+    title: $('cTitle').value, subtitle: $('cSub').value, goal: Math.max(0, Number($('cGoal').value) || 0),
+    likesPerFirework: Math.max(0, Number($('cLikes').value) || 0), showCharacters: $('cChars').checked, sound: $('cSound').checked,
+    floatKeywords: $('cKeywords').value.split(',').map(s => s.trim()).filter(Boolean),
+    freeCooldownSec: Math.max(0, Number($('cCooldown').value) || 0), maxPerGift: Math.max(1, Number($('cMaxGift').value) || 1), tiers,
+  };
+}
+document.querySelectorAll('[data-save]').forEach(b => b.onclick = () => { const c = readConfig(); if (!c.floatKeywords.length) c.floatKeywords = ['ลอย']; send({ type: 'config', config: c }); });
+$('btnResetCfg').onclick = () => confirm('คืนค่าการตั้งค่าทั้งหมดเป็นค่าเริ่มต้น?') && send({ type: 'resetConfig' });
+
+// ---------- test / simulate ----------
+function simUser(name) { name = name || $('tName').value.trim() || 'ผู้ชม'; return { id: 'sim_' + name, name }; }
+function sim(kind, extra = {}, name) { send({ type: 'sim', event: { kind, user: simUser(name), ...extra } }); }
+document.querySelectorAll('[data-sim]').forEach(b => b.onclick = () => {
+  const k = b.dataset.sim;
+  if (k === 'float') sim('chat', { comment: (config?.floatKeywords?.[0] || 'ลอย') });
+  else if (k === 'like') sim('like', { count: 50 });
+  else sim(k);
+});
+$('btnChat').onclick = () => { const c = $('tChat').value.trim(); if (c) sim('chat', { comment: c }); };
+$('tChat').onkeydown = e => { if (e.key === 'Enter') $('btnChat').click(); };
+$('btnGift').onclick = () => {
+  const [name, diamonds] = $('tGift').value.split('|');
+  sim('gift', { gift: { name, diamonds: Number(diamonds), count: Math.max(1, Number($('tCount').value) || 1) } });
+};
+document.querySelectorAll('[data-fx]').forEach(b => b.onclick = () => send({ type: 'fx', fx: b.dataset.fx, power: 5, n: 25 }));
+$('btnReset').onclick = () => confirm('ล้างจำนวนกระทง อันดับ และคำอธิษฐานทั้งหมด?') && send({ type: 'reset' });
+
+const BOT_NAMES = ['แม่มะลิ', 'Pla', 'น้องเมย์', 'Aom', 'May', 'ต้นข้าว', 'บอส', 'ฟ้าใส', 'Nong Bee', 'เจ๊หมวย', 'Toon', 'ปาล์ม', 'ใบเตย', 'Golf', 'มายด์', 'Ploy'];
+const WISHES = ['ขอให้รวยๆ', 'ขอให้สอบผ่าน', 'ขอให้ครอบครัวสุขภาพแข็งแรง', 'ขอให้เจอเนื้อคู่', 'ขอให้งานปัง', 'ขอให้ถูกหวย', '', '', 'ขอให้ทุกคนมีความสุข'];
+let autoTimer = null;
+$('tAuto').onchange = e => {
+  clearInterval(autoTimer);
+  if (!e.target.checked) return;
+  autoTimer = setInterval(() => {
+    const n = BOT_NAMES[Math.random() * BOT_NAMES.length | 0], r = Math.random();
+    if (r < .25) sim('join', {}, n);
+    else if (r < .7) sim('chat', { comment: ('ลอย ' + WISHES[Math.random() * WISHES.length | 0]).trim() }, n);
+    else if (r < .85) sim('like', { count: 5 + (Math.random() * 30 | 0) }, n);
+    else if (r < .97) { const g = [['Rose', 1], ['Finger Heart', 5], ['Doughnut', 30], ['Hand Hearts', 100]][Math.random() * 4 | 0]; sim('gift', { gift: { name: g[0], diamonds: g[1], count: 1 + (Math.random() * 3 | 0) } }, n); }
+    else sim('follow', {}, n);
+  }, 900);
+};
+</script>
+</body>
+</html>

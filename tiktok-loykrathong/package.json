@@ -1,0 +1,15 @@
+{
+  "name": "tiktok-loykrathong",
+  "version": "1.0.0",
+  "description": "ลอยกระทงออนไลน์ — TikTok LIVE interactive overlay",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "tiktok-live-connector": "^2.5.0",
+    "ws": "^8.23.0"
+  },
+  "private": true
+}

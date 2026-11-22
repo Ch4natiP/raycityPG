@@ -727,7 +727,7 @@ function applyCatalog(name) {
 
 // ---------------- XDF definitions ----------------
 let xdf = null, xdfSel = null, xdfCells = new Set(), xdfDrag = null;
-const xdfItems = () => xdf ? [...xdf.tables, ...xdf.constants, ...xdf.flags] : [];
+const xdfItems = () => xdf ? [...(xdf.bytefns || []), ...xdf.tables, ...xdf.constants, ...xdf.flags] : [];
 $('xdfFile').onchange = async e => {
   const f = e.target.files[0]; if (!f) return; e.target.value = '';
   const buf = new Uint8Array(await f.arrayBuffer());
@@ -740,26 +740,30 @@ $('xdfFile').onchange = async e => {
   if (bin && xdf.size && xdf.size !== bin.length) toast(`ขนาด BIN (${Math.round(bin.length / 1024)}KB) ไม่ตรงกับ XDF (${Math.round(xdf.size / 1024)}KB) — อาจเป็นคนละรุ่น`, 7000);
   renderXdfList(); fillRtMaps();
   const first = xdf.tables.find(t => /fuel|น้ำมัน/i.test(t.title) && t.z.rows > 2) || xdf.tables[0];
-  if (first) selectXdf(first.id);
+  if (first) selectXdf(first.id); else if (xdf.flags.length) selectXdf('__svc');
 };
 $('xdfClose').onclick = () => { xdf = null; $('xdfPanel').hidden = true; fillRtMaps(); };
 $('xdfSearch').oninput = () => renderXdfList();
 function renderXdfList() {
   const q = $('xdfSearch').value.trim().toLowerCase(), groups = new Map();
+  const svc = (xdf.flags.length || (xdf.bytefns || []).length) && !q;
   for (const it of xdfItems()) {
     if (q && !it.title.toLowerCase().includes(q) && !(it.cats || []).join(' ').toLowerCase().includes(q)) continue;
-    const g = it.kind === 'flag' ? 'สวิตช์ / เซนเซอร์' : (it.cats[0] || 'อื่น ๆ');
+    const g = it.kind === 'bytes' ? 'รหัสกล่อง / ID' : it.kind === 'flag' ? 'สวิตช์ / เซนเซอร์' : (it.cats[0] || 'อื่น ๆ');
     if (!groups.has(g)) groups.set(g, []); groups.get(g).push(it);
   }
-  $('xdfList').innerHTML = [...groups].map(([g, items]) => `<div class="cat">${esc(g)}</div>` + items.map(it => `<button data-xi="${it.id}" class="${xdfSel?.id === it.id ? 'on' : ''}"><span>${esc(it.title)}</span><small>${it.kind === 'table' ? `${it.z.cols}×${it.z.rows}` : it.kind === 'flag' ? 'สวิตช์' : 'ค่า'}</small></button>`).join('')).join('') || '<p class="muted" style="padding:10px">ไม่พบ</p>';
+  const svcBtn = svc ? `<div class="cat">บริการช่าง</div><button data-xi="__svc" class="${xdfSel === '__svc' ? 'on' : ''}"><span>🔧 เปิด/ปิด DTC &amp; รหัสกล่อง</span><small>Service</small></button>` : '';
+  $('xdfList').innerHTML = svcBtn + ([...groups].map(([g, items]) => `<div class="cat">${esc(g)}</div>` + items.map(it => `<button data-xi="${it.id}" class="${xdfSel?.id === it.id ? 'on' : ''}"><span>${esc(it.title)}</span><small>${it.kind === 'table' ? `${it.z.cols}×${it.z.rows}` : it.kind === 'flag' ? 'สวิตช์' : it.kind === 'bytes' ? 'ID' : 'ค่า'}</small></button>`).join('')).join('') || '<p class="muted" style="padding:10px">ไม่พบ</p>');
 }
 $('xdfList').onclick = e => { const b = e.target.closest('[data-xi]'); if (b) selectXdf(b.dataset.xi); };
-function selectXdf(id) { xdfSel = xdfItems().find(i => i.id === id); xdfCells.clear(); renderXdfList(); renderXdfItem(); }
+function selectXdf(id) { xdfSel = id === '__svc' ? '__svc' : xdfItems().find(i => i.id === id); xdfCells.clear(); renderXdfList(); renderXdfItem(); }
 const fmt = (v, d) => v == null ? '—' : typeof v === 'number' ? +v.toFixed(d ?? 2) : v;
 function renderXdfItem() {
   const it = xdfSel; if (!it) return;
+  if (it === '__svc') return renderService();
   $('xdfItem').textContent = it.title;
   $('xdfTools').hidden = it.kind !== 'table';
+  if (it.kind === 'bytes') return renderBytes(it);
   if (it.kind === 'table') {
     $('xdfUnits').textContent = it.z.units ? `· ${it.z.units}` : '';
     $('xdfAddr').textContent = `0x${it.z.addr.toString(16).toUpperCase()} · ${it.z.bits}-bit · ${it.z.eq}`;
@@ -793,6 +797,32 @@ function renderXdfItem() {
       $('xdfConstSet').onclick = () => { const x = parseFloat($('xdfConst').value); if (!isNaN(x)) { Xdf.setConst(bin, it, x); afterXdfEdit(); } };
     }
   }
+}
+function renderBytes(it) {
+  $('xdfItem').textContent = it.title; $('xdfUnits').textContent = ''; $('xdfAddr').textContent = it.regs.map(r => '0x' + r.addr.toString(16).toUpperCase()).join(', ');
+  if (!bin) { $('xdfGrid').innerHTML = '<p class="muted" style="padding:14px;margin:0">เปิดไฟล์ .bin ก่อน</p>'; return; }
+  $('xdfGrid').innerHTML = '<div class="xdf-form" style="padding:14px">' + it.regs.map((r, i) => {
+    const cur = Xdf.readBytes(bin, r.addr, r.len), was = Xdf.readBytes(orig, r.addr, r.len);
+    return `<div class="item" style="flex-wrap:wrap"><span>${esc(r.label || ('ส่วน ' + (i + 1)))} <small class="muted">0x${r.addr.toString(16).toUpperCase()} · ${r.len} ไบต์</small></span>
+      <span class="row"><input data-breg="${i}" value="${Xdf.toHex(cur)}" size="${r.len * 3}" class="mono" aria-label="hex"><span class="muted mono">"${esc(Xdf.toAscii(cur))}"</span><button class="btn" data-bset="${i}">บันทึก</button></span>
+      <div class="muted" style="flex-basis:100%">เดิม: ${Xdf.toHex(was)} "${esc(Xdf.toAscii(was))}"</div></div>`;
+  }).join('') + '<p class="muted">รหัสกล่อง (ECM ID) ใช้ตอนเปลี่ยนกล่องให้ตรงรุ่นเดิม แก้เป็นเลขฐานสิบหกทีละไบต์ · จำนวนไบต์ต้องเท่าเดิม</p></div>';
+  it.regs.forEach((r, i) => $('xdfGrid').querySelector(`[data-bset="${i}"]`).onclick = () => {
+    const by = Xdf.parseHex($('xdfGrid').querySelector(`[data-breg="${i}"]`).value);
+    if (by.length !== r.len) return toast(`ต้องมี ${r.len} ไบต์ (ตอนนี้ ${by.length})`);
+    Xdf.writeBytes(bin, r.addr, by); afterXdfEdit(); renderBytes(it); toast('แก้รหัสแล้ว');
+  });
+}
+function renderService() {
+  $('xdfItem').textContent = 'บริการช่าง'; $('xdfUnits').textContent = ''; $('xdfAddr').textContent = ''; $('xdfTools').hidden = true;
+  if (!bin) { $('xdfGrid').innerHTML = '<p class="muted" style="padding:14px;margin:0">เปิดไฟล์ .bin ก่อน</p>'; return; }
+  let h = '<div class="xdf-form" style="padding:14px"><b>เปิด/ปิด DTC เซนเซอร์ (ปิดเมื่อถอดอุปกรณ์นั้นออก)</b>';
+  xdf.flags.forEach((f, i) => { const on = Xdf.flagValue(bin, f), was = Xdf.flagValue(orig, bin ? f : f); h += `<div class="item"><span>${esc(f.title)}</span><label class="row"><input type="checkbox" data-sflag="${i}" ${on ? 'checked' : ''}> <span data-slab="${i}">${on ? 'เปิด' : 'ปิด'}</span></label></div>`; });
+  h += '<p class="muted">ปิดสวิตช์เพื่อดับไฟโชว์ของเซนเซอร์ที่ถอดออกจริง ไม่ควรปิดเซนเซอร์ที่ยังติดอยู่ หรือตัวที่เกี่ยวกับความปลอดภัย (มุมเอียง/ไอเสีย) เพราะรถอาจทำงานผิดปกติ</p>';
+  for (const b of (xdf.bytefns || [])) for (let i = 0; i < b.regs.length; i++) { const r = b.regs[i], cur = Xdf.readBytes(bin, r.addr, r.len); h += `<div class="item"><span>${esc(b.title)} ${esc(r.label || '')}</span><span class="muted mono">${Xdf.toHex(cur)}</span></div>`; }
+  h += '<p class="muted">แก้รหัสกล่องได้ที่หมวด “รหัสกล่อง / ID” ทางซ้าย</p></div>';
+  $('xdfGrid').innerHTML = h;
+  xdf.flags.forEach((f, i) => { const cb = $('xdfGrid').querySelector(`[data-sflag="${i}"]`); cb.onchange = () => { Xdf.setFlag(bin, f, cb.checked); $('xdfGrid').querySelector(`[data-slab="${i}"]`).textContent = cb.checked ? 'เปิด' : 'ปิด'; checkSum(); showHex(); showMap(); }; });
 }
 function afterXdfEdit() { renderXdfItem(); checkSum(); showHex(); showMap(); }
 $('xdfGrid').addEventListener('mousedown', e => {

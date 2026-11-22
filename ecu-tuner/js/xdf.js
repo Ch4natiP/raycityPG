@@ -131,8 +131,17 @@
     // axes that point at another table (embedinfo type 3) read that table's values
     const byUid = new Map(tables.map(t => [t.uid, t]));
     for (const t of tables) for (const a of [t.x, t.y]) if (a.link != null) a.linked = byUid.get(a.link) || null;
+    // XDFFUNCTION / string tables = raw byte regions (ECM ID, Software): editable as hex + ASCII
+    const bytefns = [];
+    for (const fn of kids(x, 'XDFFUNCTION')) {
+      const regs = kids(fn, 'XDFAXIS').map(ax => { const e = kid(ax, 'EMBEDDEDDATA')?.attrs || {}; return { addr: e.mmedaddress != null ? num(e.mmedaddress) + base : null, len: num(txt(ax, 'indexcount')) || num(e.mmedcolcount) || 1, label: txt(ax, 'units') }; }).filter(r => r.addr != null);
+      if (regs.length) bytefns.push({ kind: 'bytes', id: 'b' + bytefns.length, title: txt(fn, 'title') || `ไบต์ ${bytefns.length + 1}`, cats: catsOf(fn), regs });
+    }
+    for (const t of tables) {   // 1-row 8-bit "string" tables with empty labels are ID/software byte strings
+      if (t.z.bits === 8 && t.z.rows === 1 && t.z.cols >= 3 && /id|software|รหัส/i.test(t.title)) t.asBytes = { addr: t.z.addr, len: t.z.cols };
+    }
     const region = kid(h, 'REGION')?.attrs;
-    return { title: txt(h, 'deftitle') || txt(h, 'description'), size: region ? num(region.size) : null, categories: Object.values(cats), tables, constants, flags };
+    return { title: txt(h, 'deftitle') || txt(h, 'description'), size: region ? num(region.size) : null, categories: Object.values(cats), tables, constants, flags, bytefns };
   }
 
   // ---------- reading / writing through a definition ----------
@@ -160,8 +169,13 @@
   }
   const constValue = (bin, c) => { const v = readRaw(bin, c.addr, c.bits, c.signed, c.lsb); return v == null ? null : c.f(v); };
   const setConst = (bin, c, real) => writeRaw(bin, c.addr, c.bits, c.signed, c.lsb, c.inv(real));
+  function readBytes(bin, addr, len) { const o = []; for (let k = 0; k < len; k++) o.push(bin[addr + k] ?? 0); return o; }
+  function writeBytes(bin, addr, bytes) { for (let k = 0; k < bytes.length; k++) bin[addr + k] = bytes[k] & 255; }
+  const toHex = a => a.map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+  const toAscii = a => a.map(b => (b >= 32 && b < 127 ? String.fromCharCode(b) : '.')).join('');
+  const parseHex = s => (String(s).match(/[0-9a-f]{2}/gi) || []).map(h => parseInt(h, 16));
   const flagValue = (bin, f) => { const v = readRaw(bin, f.addr, f.bits, false, f.lsb); return v == null ? null : (v & f.mask) !== 0; };
   function setFlag(bin, f, on) { const v = readRaw(bin, f.addr, f.bits, false, f.lsb); writeRaw(bin, f.addr, f.bits, false, f.lsb, on ? v | f.mask : v & ~f.mask); }
 
-  return { parse, isEncrypted, compileMath, inverse, readRaw, writeRaw, cellAddr, tableRaw, tableValue, setTableValue, axisValues, constValue, setConst, flagValue, setFlag };
+  return { parse, isEncrypted, compileMath, inverse, readRaw, writeRaw, cellAddr, tableRaw, tableValue, setTableValue, axisValues, constValue, setConst, flagValue, setFlag, readBytes, writeBytes, toHex, toAscii, parseHex };
 });

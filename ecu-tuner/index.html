@@ -44,6 +44,7 @@
     --rail: #091014; --rail-ink: #d5e2e7; --rail-muted: #789099; --rail-line: #1c2b33; color-scheme: dark; }
 
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html, body { height: 100%; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--font-body); }
   button, input, select, textarea { font: inherit; color: inherit; }
@@ -141,6 +142,23 @@
   .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); }
   .legend i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 6px; }
 
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; background: var(--surface); max-width: 100%; overflow-x: auto; }
+  .seg button { appearance: none; border: 0; background: none; padding: 8px 14px; cursor: pointer; font-size: 14px; white-space: nowrap; color: var(--muted); }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.on { background: var(--accent-soft); color: var(--ink); box-shadow: inset 0 -2px 0 var(--accent); font-weight: 600; }
+  .afr { display: grid; gap: 10px; align-content: start; }
+  .afr .k, .rtnow .k { font: 500 12px/1.2 var(--font-body); color: var(--muted); display: block; }
+  .afr-big { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .afr-big b { font: 600 56px/1 var(--font-mono); font-variant-numeric: tabular-nums; }
+  .pill { font: 600 13px/1 var(--font-body); padding: 5px 9px; border-radius: 99px; background: var(--surface-2); color: var(--muted); }
+  .pill.lean { background: var(--bad-soft); color: var(--bad); } .pill.rich { background: var(--warn-soft); color: var(--warn); } .pill.ok { background: var(--ok-soft); color: var(--ok); }
+  .rt { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px; align-items: start; }
+  .rtnow { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .rtnow b { font: 600 26px/1.15 var(--font-mono); font-variant-numeric: tabular-nums; }
+  .rtnow .wide { grid-column: 1 / -1; }
+  table.map td.cur { outline: 3px solid var(--ink); outline-offset: -3px; position: relative; z-index: 1; }
+  table.map td.near { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--ink) 55%, transparent); }
+  table.map td.nodata { background: var(--surface-2) !important; color: var(--muted); }
   /* tables */
   .tw { overflow-x: auto; }
   table.list { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -201,6 +219,7 @@
     .flow a::after { display: none; }
     .toolist { grid-template-columns: 1fr; }
     .tach { grid-template-columns: 1fr; }
+    .rt { grid-template-columns: 1fr; }
   }
   @media (max-width: 480px) { .link-card { grid-template-columns: 1fr; } .ph h1 { font-size: 24px; } }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
@@ -286,15 +305,81 @@
     <section class="page" id="p-live">
       <div class="ph"><div><div class="eyebrow">อ่านจากรถ</div><h1>Live Data</h1><p>ค่าเซนเซอร์แบบเรียลไทม์ อ่านอย่างเดียว ไม่เขียนอะไรลงกล่อง</p></div>
         <div class="row"><button class="btn o" id="liveStart">เริ่มอ่าน</button><button class="btn" id="liveStop" disabled>หยุด</button><button class="btn" id="liveRec">บันทึก Log</button></div></div>
-      <div class="stack">
-        <div class="muted mono" id="liveInfo">ยังไม่ได้อ่าน · กด “เริ่มอ่าน” หลังเชื่อมต่อ</div>
+      <div class="seg" role="tablist" aria-label="มุมมอง Live">
+        <button id="lvTab1" class="on" data-lv="1" role="tab">หน้า 1 · หน้าปัด</button>
+        <button id="lvTab2" data-lv="2" role="tab">หน้า 2 · ตารางเรียลไทม์ + จูนอัตโนมัติ</button>
+      </div>
+      <div class="muted mono" id="liveInfo" style="margin:10px 0 12px">ยังไม่ได้อ่าน · กด “เริ่มอ่าน” หลังเชื่อมต่อ</div>
+
+      <!-- view 1: dashboard -->
+      <div class="stack" id="lv1">
         <div class="tach">
           <div class="panel"><canvas class="cv" id="gauge" width="640" height="300"></canvas></div>
-          <div class="panel stack"><canvas class="cv" id="chart" width="1400" height="420"></canvas>
-            <div class="legend"><span><i style="background:var(--amber)"></i>รอบ</span><span><i style="background:var(--accent)"></i>ลิ้นเร่ง %</span><span><i style="background:var(--ok)"></i>เวลาฉีด</span></div></div>
+          <div class="panel afr">
+            <div class="row" style="justify-content:space-between">
+              <span class="k">AF · อากาศ : น้ำมัน</span>
+              <select id="afrSrc" aria-label="แหล่งค่า AF"><option value="nb">O2 เดิมของรถ (ค่าประมาณ)</option><option value="wb">Wideband (สาย USB ตัวที่ 2)</option></select>
+            </div>
+            <div class="afr-big"><b id="afrVal">—</b><span id="afrState" class="pill">ยังไม่มีข้อมูล</span></div>
+            <canvas class="cv" id="afrBar" width="900" height="120"></canvas>
+            <div class="row" style="justify-content:space-between">
+              <span class="muted" id="afrNote">O2 เดิมเป็นแบบแคบ บอกได้แค่หนา/บางรอบ ๆ 14.7 ถ้าจะจูนจริงควรใช้ Wideband</span>
+              <button class="btn" id="wbConn">เชื่อมต่อ Wideband</button>
+            </div>
+          </div>
         </div>
+        <div class="panel stack"><canvas class="cv" id="chart" width="1600" height="380"></canvas>
+          <div class="legend"><span><i style="background:var(--amber)"></i>รอบ</span><span><i style="background:var(--accent)"></i>ลิ้นเร่ง %</span><span><i style="background:var(--ok)"></i>เวลาฉีด</span><span><i style="background:var(--bad)"></i>AF (10–18)</span></div></div>
         <div class="vals" id="vals"></div>
-        <p class="muted">ตัวเลขเล็กใต้ค่าคือไบต์ดิบจากกล่อง ใช้เทียบกับเครื่องสแกนตัวอื่น ถ้าค่าไหนไม่ตรง แจ้งรุ่นรถมาเพื่อปรับสูตร</p>
+        <p class="muted">ตัวเลขเล็กใต้ค่าคือไบต์ดิบจากกล่อง ใช้เทียบกับเครื่องสแกนตัวอื่น ค่าที่ไม่มีไบต์ดิบเป็นค่าคำนวณ ถ้าค่าไหนไม่ตรง แจ้งรุ่นรถมาเพื่อปรับสูตร</p>
+      </div>
+
+      <!-- view 2: realtime table + autotune -->
+      <div class="stack" id="lv2" hidden>
+        <div class="panel stack">
+          <div class="row end">
+            <label class="f">แมพที่ดู<select id="rtMap"></select></label>
+            <label class="f">แสดงในช่อง<select id="rtMode"><option value="val">ค่าในแมพ</option><option value="afr">AF เฉลี่ยที่วัดได้</option><option value="hits">จำนวนข้อมูล</option><option value="sug">ค่าแนะนำ (%)</option></select></label>
+            <label class="f">แกนแถว<select id="rtYsrc"><option value="rpm">รอบ (rpm)</option><option value="tps">ลิ้นเร่ง %</option><option value="map">MAP kPa</option></select></label>
+            <label class="f">ค่าจริง = ดิบ ×<input id="rtYk" size="6"></label>
+            <label class="f">แกนคอลัมน์<select id="rtXsrc"><option value="tps">ลิ้นเร่ง %</option><option value="map">MAP kPa</option><option value="rpm">รอบ (rpm)</option></select></label>
+            <label class="f">ค่าจริง = ดิบ ×<input id="rtXk" size="6"></label>
+            <button class="btn" id="rtDemo">ใช้แมพตัวอย่าง</button>
+          </div>
+          <div class="muted" id="rtHint">เลือกแมพจาก “แก้แมพ” (เปิดไฟล์ .bin แล้วกดค้นหาแมพอัตโนมัติ) หรือกด “ใช้แมพตัวอย่าง” เพื่อลองกับ ECU จำลอง · ตัวคูณแกนเดาให้ก่อน ต้องยืนยันกับรถจริง</div>
+        </div>
+        <div class="rt">
+          <div class="mapwrap" id="rtWrap"><p class="muted" style="padding:14px;margin:0">ยังไม่ได้เลือกแมพ</p></div>
+          <div class="stack">
+            <div class="panel rtnow">
+              <div><span class="k">รอบ</span><b id="rtRpm">—</b></div>
+              <div><span class="k">ลิ้นเร่ง</span><b id="rtTps">—</b></div>
+              <div><span class="k">AF วัดได้</span><b id="rtAfr">—</b></div>
+              <div><span class="k">AF เป้าหมาย</span><b id="rtTgt">—</b></div>
+              <div class="wide"><span class="k">ช่องปัจจุบัน</span><span id="rtCell" class="mono">—</span></div>
+            </div>
+            <div class="panel stack">
+              <b>จูนน้ำมันอัตโนมัติ</b>
+              <div class="row end">
+                <label class="f">AF ครูซ<input id="atCruise" value="14.7" size="4"></label>
+                <label class="f">AF เต็มคันเร่ง<input id="atWot" value="12.8" size="4"></label>
+                <label class="f">เริ่มหนาที่ TPS %<input id="atFrom" value="60" size="4"></label>
+              </div>
+              <div class="row end">
+                <label class="f">ข้อมูลขั้นต่ำ/ช่อง<input id="atMinW" value="15" size="4"></label>
+                <label class="f">ปรับได้สูงสุด ±%<input id="atMax" value="8" size="4"></label>
+                <label class="row muted" style="gap:6px"><input type="checkbox" id="atWarm" checked> เก็บเฉพาะเครื่องร้อน (≥ 70°C)</label>
+              </div>
+              <div class="row">
+                <button class="btn o" id="atStart">เริ่มเก็บข้อมูล</button>
+                <button class="btn" id="atStop" disabled>หยุด</button>
+                <button class="btn" id="atClear">ล้างข้อมูล</button>
+                <button class="btn o" id="atApply">นำค่าแนะนำไปใช้</button>
+              </div>
+              <div class="muted" id="atInfo">ขี่ให้ผ่านหลาย ๆ ช่องในตาราง โปรแกรมจะเทียบ AF ที่วัดได้กับเป้าหมายแล้วคำนวณว่าแต่ละช่องต้องเพิ่ม/ลดน้ำมันกี่ %</div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -460,6 +545,7 @@
 <script src="js/honda.js"></script>
 <script src="js/link.js"></script>
 <script src="js/mapfinder.js"></script>
+<script src="js/autotune.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

@@ -144,22 +144,71 @@
       if (cmd === 0x60 && arg === 0x03) { this.dtcNow = []; this.dtcPast = []; return Honda.frame(0x02, [0x60, 0x03]); }
       return null;
     }
-    table(t) {
+    /** operating point: rpm and throttle wander independently so every map cell gets visited */
+    state() {
       const s = (Date.now() - this.t0) / 1000;
+      // two incommensurate sweeps (Lissajous) so rpm × throttle covers the whole table within a minute or two
+      const tps = Math.max(0, Math.min(100, 50 + 52 * Math.sin(s / 1.9 + 1)));
+      const rpm = Math.round(5200 + 4000 * Math.sin(s / 5.3));
+      return { s, rpm, tps };
+    }
+    /** "true" AFR of the virtual engine: lean pocket around 6000 rpm / 45 % throttle, slightly rich at full load */
+    afrAt(rpm, tps) {
+      const lean = 1 + 0.09 * Math.exp(-(((rpm - 6000) / 1500) ** 2) - (((tps - 45) / 20) ** 2));
+      const rich = 1 - 0.05 * Math.max(0, (tps - 80) / 20) * Math.max(0, (rpm - 6500) / 3000);
+      let fuel = 1; for (const f of this.scales || []) fuel *= f(rpm, tps);
+      return 14.7 * lean * rich / fuel;
+    }
+    /** autotune result applied to the virtual engine (stands in for flashing the new map) */
+    applyFuelScale(fn) { (this.scales ||= []).push(fn); }
+    afr() { const { rpm, tps } = this.state(); return +(this.afrAt(rpm, tps) + (Math.random() - 0.5) * 0.2).toFixed(2); }
+    table(t) {
+      const { s, rpm, tps } = this.state();
       if (t === 0x00) return [0x38, 0x12, 0x4B, 0x30, 0x4A, 0x00, 0x41, 0x30];  // "K0W-A" style id bytes
       if (t === 0x11) {
-        const rev = Math.max(0, Math.sin(s / 3));
-        const rpm = Math.round(1500 + rev * 7500 + Math.sin(s * 9) * 40);
-        const tps = Math.round(rev * 160);
+        const load = tps / 100;
         const ect = Math.min(40 + 95, Math.round(40 + 30 + s * 1.5));
-        const inj = Math.round((2.1 + rev * 4) * 1000 / 4);
-        return [rpm >> 8, rpm & 255, 26 + Math.round(rev * 180), tps, 90, ect, 120, 40 + 32, 60 + Math.round(rev * 60), 35 + Math.round(rev * 60),
-                0, 0, 138 + Math.round(Math.sin(s) * 3), Math.round(rev * 95), inj >> 8, inj & 255, Math.round((12 + rev * 18 + 64) * 2), 0, 0, 0];
+        const inj = Math.round((2.1 + load * 4 + rpm / 9000) * 1000 / 4);
+        return [rpm >> 8, rpm & 255, 26 + Math.round(load * 180), Math.round(tps * 1.6), 90, ect, 120, 40 + 32, 60 + Math.round(load * 60), 35 + Math.round(load * 60),
+                0, 0, 138 + Math.round(Math.sin(s) * 3), Math.round(load * rpm / 95), inj >> 8, inj & 255, Math.round((12 + load * 18 + 64) * 2), 0, 0, 0];
       }
-      if (t === 0x20) return [Math.round(128 + Math.sin(s * 4) * 110), 128 + Math.round(Math.sin(s / 2) * 10), 0, 0];
+      if (t === 0x20) {
+        const afr = this.afrAt(rpm, tps), o2 = 0.45 + 0.4 * Math.tanh((14.7 - afr) * 3);
+        return [Math.round(o2 / 1.25 * 256), 128 + Math.round(Math.sin(s / 2) * 10), 0, 0];
+      }
       return [];
     }
   }
 
-  return { SerialLink, SimLink, hex, sleep };
+  /** Wideband AFR controller on a second USB serial port (most print one reading per line, e.g. "14.7" or "AFR 14.70").
+   *  Values below 2 are taken as lambda and converted to petrol AFR. */
+  class WidebandLink {
+    async open(baud = 9600) {
+      this.port = await navigator.serial.requestPort();
+      await this.port.open({ baudRate: baud });
+      this.value = null; this.at = 0; this.reading = true; this.buf = '';
+      const dec = new TextDecoder();
+      (async () => {
+        while (this.reading && this.port.readable) {
+          this.reader = this.port.readable.getReader();
+          try {
+            for (;;) {
+              const { value, done } = await this.reader.read(); if (done) break;
+              this.buf += dec.decode(value, { stream: true });
+              let i; while ((i = this.buf.search(/[\r\n]/)) >= 0) {
+                const line = this.buf.slice(0, i); this.buf = this.buf.slice(i + 1);
+                const m = line.match(/(\d+(?:\.\d+)?)/);
+                if (m) { let v = parseFloat(m[1]); if (v > 0 && v < 2) v *= 14.7; if (v > 6 && v < 25) { this.value = +v.toFixed(2); this.at = Date.now(); } }
+              }
+              if (this.buf.length > 200) this.buf = '';
+            }
+          } catch {} finally { try { this.reader.releaseLock(); } catch {} }
+        }
+      })();
+    }
+    afr() { return Date.now() - this.at < 1500 ? this.value : null; }
+    async close() { this.reading = false; try { await this.reader?.cancel(); } catch {} try { await this.port?.close(); } catch {} }
+  }
+
+  return { SerialLink, SimLink, WidebandLink, hex, sleep };
 });

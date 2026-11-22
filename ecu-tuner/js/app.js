@@ -146,15 +146,21 @@ async function liveLoop() {
   while (livePolling && link) {
     const t = performance.now();
     const r11 = Honda.decodeTableReply(await link.transact(Honda.CMD.readTable(0x11), 300));
-    const r20 = (n % 4 === 0) ? Honda.decodeTableReply(await link.transact(Honda.CMD.readTable(0x20), 300)) : null;
+    const r20 = (n % 2 === 0) ? Honda.decodeTableReply(await link.transact(Honda.CMD.readTable(0x20), 300)) : null;
     if (r11) {
       n++;
       const vals = [...r11.values, ...(r20 ? r20.values : (liveLoop.last20 || []))];
       if (r20) liveLoop.last20 = r20.values;
-      renderVals(vals);
       const get = k => vals.find(v => v.key === k)?.value ?? 0;
-      hist.push({ rpm: get('rpm'), tps: get('tps'), inj: get('inj') }); if (hist.length > 300) hist.shift();
-      drawGauge(get('rpm')); drawChart();
+      // derived values: AF ratio, lambda, injector duty (4-stroke: one injection per 2 revolutions)
+      const afr = currentAfr(get('o2V'));
+      if (afr != null) vals.push({ key: 'afr', name: 'AF อากาศ:น้ำมัน', unit: afrSource() === 'nb' ? '(ประมาณ)' : '', value: afr, raw: [], max: 18 },
+                                 { key: 'lambda', name: 'Lambda', unit: 'λ', value: +(afr / 14.7).toFixed(3), raw: [], max: 1.3 });
+      vals.push({ key: 'duty', name: 'Injector duty', unit: '%', value: +(get('inj') * get('rpm') / 1200).toFixed(1), raw: [], max: 100 });
+      renderVals(vals);
+      hist.push({ rpm: get('rpm'), tps: get('tps'), inj: get('inj'), afr, afr10: afr == null ? 0 : Math.max(0, afr - 10) }); if (hist.length > 300) hist.shift();
+      drawGauge(get('rpm')); drawChart(); drawAfr(afr);
+      onLiveSample({ rpm: get('rpm'), tps: get('tps'), map: get('map'), ect: get('ect'), afr });
       if (recording) recording.push([Date.now(), ...vals.map(v => v.value)]), recording.cols ||= vals.map(v => `${v.name} (${v.unit})`);
       $('liveInfo').textContent = `${(n / ((performance.now() - t0) / 1000)).toFixed(1)} ครั้ง/วิ${recording ? ` • กำลังบันทึก ${recording.length} แถว` : ''}`;
     } else $('liveInfo').textContent = 'ECU ไม่ตอบตาราง 0x11 — รุ่นนี้อาจใช้ตารางอื่น (ดูใน Terminal / สำรองตาราง)';
@@ -202,6 +208,7 @@ function drawChart() {
     g.stroke();
   };
   line('rpm', 12000, css('--amber')); line('tps', 100, css('--accent')); line('inj', 15, css('--ok'));
+  g.save(); g.setLineDash([8, 6]); line('afr10', 8, css('--bad')); g.restore();
 }
 function stopLive() { livePolling = false; $('liveStart').disabled = false; $('liveStop').disabled = true; }
 $('liveStart').onclick = () => { if (!needLink()) return; livePolling = true; $('liveStart').disabled = true; $('liveStop').disabled = false; liveLoop(); };
@@ -218,6 +225,172 @@ $('liveRec').onclick = async () => {
 drawGauge(0); drawChart();
 document.fonts?.ready.then(() => { drawGauge(hist.length ? hist[hist.length - 1].rpm : 0); drawChart(); });
 matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => { drawGauge(hist.length ? hist[hist.length - 1].rpm : 0); drawChart(); });
+
+// ---------------- AFR source ----------------
+let wideband = null;
+const afrSource = () => $('afrSrc').value;
+function currentAfr(o2V) {
+  if (afrSource() === 'wb') return link?.afr ? link.afr() : wideband?.afr() ?? null;   // the virtual ECU doubles as a wideband
+  return o2V ? AutoTune.narrowbandAfr(o2V) : null;
+}
+function afrTargetNow(rpm, tps) { return AutoTune.targetAfr(tps, rpm, atOpts()); }
+function drawAfr(afr) {
+  const c = $('afrBar'), g = c.getContext('2d'), W = c.width, H = c.height, lo = 10, hi = 18;
+  g.clearRect(0, 0, W, H);
+  const x = v => 20 + (W - 40) * (Math.min(hi, Math.max(lo, v)) - lo) / (hi - lo);
+  const grd = g.createLinearGradient(x(lo), 0, x(hi), 0);
+  grd.addColorStop(0, css('--warn')); grd.addColorStop(0.5, css('--ok')); grd.addColorStop(1, css('--bad'));
+  g.fillStyle = grd; g.globalAlpha = .35; g.fillRect(x(lo), 30, x(hi) - x(lo), 26); g.globalAlpha = 1;
+  g.fillStyle = css('--muted'); g.font = `22px ${css('--font-mono')}`; g.textAlign = 'center';
+  for (let v = lo; v <= hi; v += 1) g.fillText(v, x(v), 92);
+  g.textAlign = 'left'; g.fillText('หนา', x(lo), 20); g.textAlign = 'right'; g.fillText('บาง', x(hi), 20);
+  const last = hist.length ? hist[hist.length - 1] : null, tgt = last ? afrTargetNow(last.rpm, last.tps) : 14.7;
+  g.fillStyle = css('--ink'); g.fillRect(x(tgt) - 1.5, 24, 3, 38);
+  if (afr != null) { g.fillStyle = css('--ink'); g.beginPath(); g.moveTo(x(afr), 62); g.lineTo(x(afr) - 11, 80); g.lineTo(x(afr) + 11, 80); g.fill(); }
+  $('afrVal').textContent = afr == null ? '—' : afr.toFixed(1);
+  const st = $('afrState');
+  if (afr == null) { st.className = 'pill'; st.textContent = afrSource() === 'wb' ? 'ยังไม่มีสัญญาณ Wideband' : 'ยังไม่มีข้อมูล'; return; }
+  const d = afr - tgt;
+  st.className = 'pill ' + (d > 0.4 ? 'lean' : d < -0.4 ? 'rich' : 'ok');
+  st.textContent = d > 0.4 ? `บาง (+${d.toFixed(1)} จากเป้า ${tgt.toFixed(1)})` : d < -0.4 ? `หนา (${d.toFixed(1)} จากเป้า ${tgt.toFixed(1)})` : `พอดี (เป้า ${tgt.toFixed(1)})`;
+}
+$('afrSrc').onchange = () => {
+  $('afrNote').textContent = afrSource() === 'wb'
+    ? (link?.afr ? 'ECU จำลองส่งค่า AF แบบ Wideband ให้' : wideband ? 'รับค่าจาก Wideband อยู่' : 'กด “เชื่อมต่อ Wideband” แล้วเลือกพอร์ตของกล่อง Wideband (ส่งค่าเป็นข้อความทีละบรรทัด)')
+    : 'O2 เดิมเป็นแบบแคบ บอกได้แค่หนา/บางรอบ ๆ 14.7 ถ้าจะจูนจริงควรใช้ Wideband';
+  drawAfr(null);
+};
+$('wbConn').onclick = async () => {
+  if (!SerialLink.supported()) return toast('ต้องใช้ Chrome หรือ Edge บนคอม (Web Serial) เพื่อต่อ Wideband', 5000);
+  try { await wideband?.close(); wideband = new Link.WidebandLink(); await wideband.open(9600); $('afrSrc').value = 'wb'; $('afrSrc').onchange(); toast('เชื่อมต่อ Wideband แล้ว'); }
+  catch (e) { wideband = null; if (e?.name !== 'NotFoundError') toast('เปิดพอร์ต Wideband ไม่ได้: ' + (e.message || e), 5000); }
+};
+drawAfr(null);
+
+// ---------------- Live view switch ----------------
+document.querySelectorAll('[data-lv]').forEach(b => b.onclick = () => {
+  document.querySelectorAll('[data-lv]').forEach(x => x.classList.toggle('on', x === b));
+  $('lv1').hidden = b.dataset.lv !== '1'; $('lv2').hidden = b.dataset.lv !== '2';
+  if (b.dataset.lv === '2') { fillRtMaps(); buildRt(); }
+});
+
+// ---------------- Realtime table ----------------
+let rt = null;            // { t: table def, yAx, xAx, tds[][], log }
+let atOn = false, lastTps = null;
+const atOpts = () => ({ cruise: +$('atCruise').value || 14.7, wot: +$('atWot').value || 12.8, enrichFrom: +$('atFrom').value || 60 });
+function rtTables() {
+  const list = [];
+  for (const t of found) if (t.anchored) list.push({ ...t, label: `${hx(t.off)} · ${t.cols}×${t.rows}${t.twin ? ` ชุด ${t.twin + 1}` : ''}` });
+  for (const m of savedMaps) if (m.axis != null) list.push({ off: m.off, rows: m.rows, cols: m.cols, type: m.type, axisOff: m.axis, label: `${m.name} @${hx(m.off)}` });
+  return list;
+}
+function fillRtMaps() {
+  const list = rtTables(), cur = $('rtMap').value;
+  $('rtMap').innerHTML = list.length ? list.map((t, i) => `<option value="${i}">${esc(t.label)}</option>`).join('') : '<option value="">ยังไม่มีแมพ</option>';
+  if (cur && +cur < list.length) $('rtMap').value = cur;
+}
+function buildRt() {
+  const list = rtTables(), t = list[+$('rtMap').value];
+  if (!bin || !t) { rt = null; $('rtWrap').innerHTML = '<p class="muted" style="padding:14px;margin:0">ยังไม่ได้เลือกแมพ</p>'; return; }
+  const w = width(t.type);
+  const yAx = Array.from({ length: t.rows }, (_, r) => rd(bin, t.axisOff + r * w, t.type));
+  const xAx = Array.from({ length: t.cols }, (_, c) => rd(bin, t.axisOff + (t.rows + c) * w, t.type));
+  // axis scale guesses: rpm axes stored ×4 when they run past 20000; throttle axis end = 100 %
+  if (!$('rtYk').value || rt?.t.off !== t.off) $('rtYk').value = $('rtYsrc').value === 'rpm' ? (yAx.at(-1) > 20000 ? 0.25 : 1) : +(100 / (yAx.at(-1) || 1)).toPrecision(3);
+  if (!$('rtXk').value || rt?.t.off !== t.off) $('rtXk').value = $('rtXsrc').value === 'tps' ? +(100 / (xAx.at(-1) || 1)).toPrecision(3) : 1;
+  const ky = +$('rtYk').value || 1, kx = +$('rtXk').value || 1;
+  const keep = rt && rt.t.off === t.off && rt.log;
+  rt = { t, yAx: yAx.map(v => v * ky), xAx: xAx.map(v => v * kx), log: keep || new AutoTune.Logger(t.rows, t.cols), sug: null };
+  let h = '<table class="map"><thead><tr><th class="ax">' + ($('rtYsrc').value) + ' \\ ' + ($('rtXsrc').value) + '</th>' + rt.xAx.map(v => `<th class="ax">${+v.toFixed(v < 10 ? 1 : 0)}</th>`).join('') + '</tr></thead><tbody>';
+  for (let r = 0; r < t.rows; r++) h += `<tr><th class="ax">${Math.round(rt.yAx[r])}</th>` + '<td></td>'.repeat(t.cols) + '</tr>';
+  $('rtWrap').innerHTML = h + '</tbody></table>';
+  rt.tds = [...$('rtWrap').querySelectorAll('tbody tr')].map(tr => [...tr.querySelectorAll('td')]);
+  paintRt();
+}
+['rtMap', 'rtYsrc', 'rtXsrc'].forEach(id => $(id).onchange = () => { if (id !== 'rtMap') { $('rtYk').value = ''; $('rtXk').value = ''; } buildRt(); });
+['rtYk', 'rtXk'].forEach(id => $(id).onchange = () => { const off = rt?.t.off; buildRt(); });
+$('rtMode').onchange = () => paintRt();
+function cellVal(r, c) { const t = rt.t; return rd(bin, t.off + (r * t.cols + c) * width(t.type), t.type); }
+function paintRt(pos) {
+  if (!rt) return;
+  const { t, log } = rt, mode = $('rtMode').value;
+  let lo = Infinity, hi = -Infinity;
+  for (let r = 0; r < t.rows; r++) for (let c = 0; c < t.cols; c++) { const v = cellVal(r, c); lo = Math.min(lo, v); hi = Math.max(hi, v); }
+  const sug = mode === 'sug' ? (rt.sug = AutoTune.suggest(log, { minWeight: +$('atMinW').value || 15, maxStep: (+$('atMax').value || 8) / 100 })) : null;
+  for (let r = 0; r < t.rows; r++) for (let c = 0; c < t.cols; c++) {
+    const td = rt.tds[r][c], v = cellVal(r, c);
+    let text = '', bg = '', nodata = false;
+    if (mode === 'val') { text = v; const k = hi > lo ? (v - lo) / (hi - lo) : .5; bg = `hsl(${190 - k * 190} 70% 66%)`; }
+    else if (mode === 'hits') { const w = log.weight(r, c); text = w ? Math.round(w) : ''; nodata = !w; bg = w ? `hsl(170 60% ${88 - Math.min(1, w / 40) * 40}%)` : ''; }
+    else if (mode === 'afr') { const a = log.afr(r, c); nodata = a == null; text = a == null ? '' : a.toFixed(1); if (a != null) { const d = a - log.target(r, c); bg = d > 0.4 ? `hsl(0 75% ${80 - Math.min(1, d / 2) * 20}%)` : d < -0.4 ? `hsl(40 85% ${80 - Math.min(1, -d / 2) * 20}%)` : 'hsl(140 50% 75%)'; } }
+    else { const f = sug[r][c]; nodata = f == null; text = f == null ? '' : ((f - 1) * 100 > 0 ? '+' : '') + ((f - 1) * 100).toFixed(1); if (f != null) bg = f > 1.004 ? `hsl(0 75% ${85 - Math.min(1, (f - 1) / .08) * 25}%)` : f < 0.996 ? `hsl(210 75% ${85 - Math.min(1, (1 - f) / .08) * 25}%)` : 'hsl(140 50% 78%)'; }
+    td.textContent = text; td.style.background = bg; td.classList.toggle('nodata', nodata);
+  }
+  if (pos) markRt(pos);
+}
+function markRt({ rp, cp }) {
+  rt.tds.flat().forEach(td => td.classList.remove('cur', 'near'));
+  const ws = AutoTune.weights(rp, cp, rt.t.rows, rt.t.cols).sort((a, b) => b[2] - a[2]);
+  ws.forEach(([r, c], i) => rt.tds[r][c].classList.add(i ? 'near' : 'cur'));
+  const [r, c] = ws[0];
+  $('rtCell').textContent = `แถว ${r} · คอลัมน์ ${c} · ค่า ${cellVal(r, c)} · ข้อมูล ${Math.round(rt.log.weight(r, c))}`;
+}
+let rtPaintAt = 0;
+function onLiveSample(v) {
+  $('rtRpm').textContent = v.rpm.toLocaleString(); $('rtTps').textContent = v.tps.toFixed(1) + '%';
+  const tgt = afrTargetNow(v.rpm, v.tps);
+  $('rtAfr').textContent = v.afr == null ? '—' : v.afr.toFixed(1); $('rtTgt').textContent = tgt.toFixed(1);
+  if (!rt) return;
+  const src = { rpm: v.rpm, tps: v.tps, map: v.map };
+  const rp = AutoTune.axisPos(rt.yAx, src[$('rtYsrc').value]), cp = AutoTune.axisPos(rt.xAx, src[$('rtXsrc').value]);
+  // autotune sample: steady throttle, warm engine, valid AFR
+  const steady = lastTps == null || Math.abs(v.tps - lastTps) < 4; lastTps = v.tps;
+  if (atOn && v.afr != null && steady && (!$('atWarm').checked || v.ect >= 70)) {
+    rt.log.add(rp, cp, v.afr, tgt);
+    $('atInfo').textContent = `เก็บแล้ว ${rt.log.n.toLocaleString()} จุด · ${countReady()} ช่องพร้อมคำนวณ`;
+  } else if (atOn && $('atWarm').checked && v.ect < 70) $('atInfo').textContent = `รอเครื่องร้อน (ตอนนี้ ${v.ect}°C)`;
+  if (performance.now() - rtPaintAt > 250 && !$('lv2').hidden) { rtPaintAt = performance.now(); paintRt({ rp, cp }); }
+  else if (!$('lv2').hidden) markRt({ rp, cp });
+}
+function countReady() { const minW = +$('atMinW').value || 15; let n = 0; for (let k = 0; k < rt.log.w.length; k++) if (rt.log.w[k] >= minW) n++; return n; }
+$('atStart').onclick = () => {
+  if (!rt) return toast('เลือกแมพในหน้า 2 ก่อน');
+  if (!livePolling) return toast('กด “เริ่มอ่าน” ก่อน');
+  if (afrSource() === 'nb') toast('กำลังใช้ O2 เดิม (ค่าประมาณ) ผลจูนจะหยาบ แนะนำ Wideband', 5000);
+  atOn = true; $('atStart').disabled = true; $('atStop').disabled = false; $('rtMode').value = 'hits'; paintRt();
+};
+$('atStop').onclick = () => { atOn = false; $('atStart').disabled = false; $('atStop').disabled = true; $('rtMode').value = 'sug'; paintRt(); };
+$('atClear').onclick = () => { if (rt) { rt.log.clear(); paintRt(); $('atInfo').textContent = 'ล้างข้อมูลแล้ว'; } };
+$('atApply').onclick = async () => {
+  if (!rt) return;
+  const sug = AutoTune.suggest(rt.log, { minWeight: +$('atMinW').value || 15, maxStep: (+$('atMax').value || 8) / 100 });
+  const cells = []; sug.forEach((row, r) => row.forEach((f, c) => { if (f != null && Math.abs(f - 1) > 0.002) cells.push([r, c, f]); }));
+  if (!cells.length) return toast('ยังไม่มีช่องที่ข้อมูลพอ หรือทุกช่องพอดีแล้ว');
+  const twins = found.filter(t => t.anchored && t.axisOff === rt.t.axisOff && t.off !== rt.t.off && t.rows === rt.t.rows && t.cols === rt.t.cols);
+  const avg = cells.reduce((s, x) => s + (x[2] - 1), 0) / cells.length * 100;
+  if (!await ask(`ปรับ ${cells.length} ช่องในแมพ ${hx(rt.t.off)}${twins.length ? ` และแมพคู่ ${twins.map(t => hx(t.off)).join(', ')}` : ''}\nเฉลี่ย ${avg > 0 ? '+' : ''}${avg.toFixed(1)}% (สูงสุด ±${$('atMax').value}%)\n\nแก้ในไฟล์บนคอมเท่านั้น ต้องตรวจดู แก้ checksum แล้ว Flash เอง`, 'นำไปใช้')) return;
+  for (const t of [rt.t, ...twins]) for (const [r, c, f] of cells) { const o = t.off + (r * t.cols + c) * width(t.type); wr(bin, o, t.type, rd(bin, o, t.type) * f); }
+  // virtual ECU: make the simulated engine feel the new fuel map
+  if (link?.applyFuelScale) { const ax = { y: rt.yAx, x: rt.xAx }, ys = $('rtYsrc').value, xs = $('rtXsrc').value, S = sug;
+    link.applyFuelScale((rpm, tps) => { const src = { rpm, tps, map: 0 }; const ws = AutoTune.weights(AutoTune.axisPos(ax.y, src[ys]), AutoTune.axisPos(ax.x, src[xs]), S.length, S[0].length); let f = 0, wsum = 0; for (const [r, c, w] of ws) { f += (S[r][c] ?? 1) * w; wsum += w; } return wsum ? f / wsum : 1; }); }
+  rt.log.clear(); paintRt(); showMap(); checkSum(); showHex();
+  toast(`ปรับแมพแล้ว ${cells.length} ช่อง — ขี่เก็บข้อมูลอีกรอบเพื่อตรวจผล`, 5000);
+  $('atInfo').textContent = `รอบที่แล้วปรับ ${cells.length} ช่อง เฉลี่ย ${avg > 0 ? '+' : ''}${avg.toFixed(1)}% · เริ่มเก็บข้อมูลรอบใหม่เพื่อตรวจผล`;
+};
+$('rtDemo').onclick = () => {
+  // Honda-like demo file: [rpm axis ×4][throttle axis 0..743][25×29 fuel map][twin]
+  const rows = 29, cols = 25, b = new Uint8Array(0x8000).fill(0xFF), put = (o, v) => { b[o] = v & 255; b[o + 1] = v >> 8; };
+  let o = 0x100; const axisOff = o;
+  for (let r = 0; r < rows; r++, o += 2) put(o, Math.round((900 + r * 300) * 4));
+  for (let c = 0; c < cols; c++, o += 2) put(o, Math.round(c * 743 / (cols - 1)));
+  const tbl = o;
+  for (let k = 0; k < 2; k++) for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++, o += 2) put(o, Math.round(1600 + c * 260 + r * 45));
+  let s8 = 0; for (const x of b) s8 = (s8 + x) & 255; b[b.length - 1] = (b[b.length - 1] - s8) & 255;
+  loadBin('ตัวอย่าง-25x29.bin', b.buffer);
+  found = MapFinder.find(bin).filter(t => t.anchored);
+  fillRtMaps(); $('rtMap').value = '0'; $('rtYk').value = ''; $('rtXk').value = ''; buildRt();
+  toast('โหลดแมพตัวอย่างแล้ว — ต่อ ECU จำลอง เลือก AF = Wideband แล้วกดเริ่มอ่าน', 6000);
+};
 
 // ---------------- DTC ----------------
 async function readDtc(cmd) {

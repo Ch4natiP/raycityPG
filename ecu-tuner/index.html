@@ -165,6 +165,19 @@
   .dycard .k { font: 500 12.5px/1.3 var(--font-body); color: var(--muted); }
   .dycard b { font: 600 34px/1.1 var(--font-mono); font-variant-numeric: tabular-nums; }
   .dycard b.before { color: var(--before); } .dycard b.after { color: var(--after); }
+  .xdf { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 14px; align-items: start; }
+  .xdf-side { display: grid; gap: 8px; }
+  .xdf-list { max-height: 62vh; overflow: auto; border: 1px solid var(--line); border-radius: var(--r); }
+  .xdf-list .cat { font: 600 12px/1.2 var(--font-body); color: var(--muted); padding: 10px 10px 4px; position: sticky; top: 0; background: var(--surface); }
+  .xdf-list button { appearance: none; display: flex; justify-content: space-between; gap: 8px; width: 100%; text-align: left; border: 0; background: none; padding: 6px 10px; cursor: pointer; font-size: 13.5px; }
+  .xdf-list button:hover { background: var(--surface-2); }
+  .xdf-list button.on { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+  .xdf-list button small { color: var(--muted); font-family: var(--font-mono); white-space: nowrap; }
+  .xdf-form { display: grid; gap: 10px; }
+  .xdf-form .item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .rdbar { height: 10px; border-radius: 99px; background: var(--surface-2); overflow: hidden; border: 1px solid var(--line); }
+  .rdbar div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .xdf-list .cat { position: static; }
   /* tables */
   .tw { overflow-x: auto; }
   table.list { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -226,6 +239,7 @@
     .toolist { grid-template-columns: 1fr; }
     .tach { grid-template-columns: 1fr; }
     .rt { grid-template-columns: 1fr; }
+    .xdf { grid-template-columns: 1fr; }
     .dycards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   @media (max-width: 480px) { .link-card { grid-template-columns: 1fr; } .ph h1 { font-size: 24px; } }
@@ -440,9 +454,38 @@
           <label class="btn o">เปิดไฟล์ .bin<input type="file" id="binFile" accept=".bin,.hex,.rom,.ori,application/octet-stream" hidden></label>
           <button class="btn" id="binSave" disabled>บันทึกลงคลัง</button>
           <button class="btn" id="binDl" disabled>ดาวน์โหลด</button>
+          <label class="btn">เปิด XDF<input type="file" id="xdfFile" accept=".xdf,.xml" hidden></label>
         </div></div>
       <div class="stack">
         <div class="muted mono" id="binInfo"></div>
+        <div class="note" id="catInfo" hidden></div>
+        <div class="panel stack" id="xdfPanel" hidden>
+          <div class="row" style="justify-content:space-between">
+            <div><b id="xdfTitle">XDF</b> <span class="muted" id="xdfMeta"></span></div>
+            <button class="btn" id="xdfClose">ปิด XDF</button>
+          </div>
+          <div class="xdf">
+            <div class="xdf-side">
+              <input id="xdfSearch" placeholder="ค้นหาตาราง เช่น fuel, ignition, rev" aria-label="ค้นหาตาราง">
+              <div id="xdfList" class="xdf-list"></div>
+            </div>
+            <div class="xdf-main stack">
+              <div class="row" style="justify-content:space-between">
+                <div><b id="xdfItem">เลือกตารางทางซ้าย</b> <span class="muted" id="xdfUnits"></span></div>
+                <span class="muted mono" id="xdfAddr"></span>
+              </div>
+              <div class="row" id="xdfTools">
+                <input id="xdfSet" placeholder="ค่า" size="6" aria-label="ค่าใหม่"><button class="btn" data-xa="set">= ตั้งค่า</button>
+                <button class="btn" data-xa="add" data-v="-1">−1</button><button class="btn" data-xa="add" data-v="-0.1">−0.1</button>
+                <button class="btn" data-xa="add" data-v="0.1">+0.1</button><button class="btn" data-xa="add" data-v="1">+1</button>
+                <button class="btn" data-xa="pct" data-v="-5">−5%</button><button class="btn" data-xa="pct" data-v="-1">−1%</button>
+                <button class="btn" data-xa="pct" data-v="1">+1%</button><button class="btn" data-xa="pct" data-v="5">+5%</button>
+                <button class="btn" data-xa="smooth">เกลี่ย</button><button class="btn" data-xa="undo">คืนค่าเดิม</button>
+              </div>
+              <div class="mapwrap" id="xdfGrid"><p class="muted" style="padding:14px;margin:0">เปิดไฟล์ .bin ของรุ่นเดียวกับ XDF แล้วเลือกตาราง · ลากเมาส์เลือกหลายช่อง · แก้เป็นหน่วยจริง (ms, องศา, rpm)</p></div>
+            </div>
+          </div>
+        </div>
         <div class="panel stack">
           <div class="row">
             <button class="btn o" id="mfFind" disabled><svg class="i"><use href="#i-search"/></svg>ค้นหาแมพอัตโนมัติ</button>
@@ -500,9 +543,18 @@
           <div class="row"><button class="btn o" id="recTables">สำรองตารางทั้งหมด</button><span class="muted" id="recInfo"></span></div>
         </div>
         <div class="panel stack">
-          <b>อ่านแฟลชเต็มจากกล่อง</b>
-          <span class="muted">การอ่าน/เขียนหน่วยความจำแฟลชใช้คำสั่ง bootloader ที่ต่างกันในแต่ละรุ่นกล่อง (Keihin / Shindengen / Denso / Continental) จะเปิดทีละรุ่นหลังทดสอบกับกล่องจริงแล้ว</span>
-          <div class="note">ส่งไฟล์สำรองตารางและรหัสบนกล่อง (เช่น 38770-K0W-T01) มา เพื่อเพิ่มรุ่นนั้น</div>
+          <div class="row" style="justify-content:space-between"><b>ดูดไฟล์ BIN จากกล่อง</b><span class="pill rich">ทดลอง · อ่านอย่างเดียว</span></div>
+          <span class="muted">อ่านหน่วยความจำแฟลชทีละ 12 ไบต์แบบ HondaECU (กล่อง Keihin 48–96KB รุ่นเก่า) ใช้เวลาประมาณ 2–5 นาที ไม่เขียนอะไรลงกล่อง กล่องบางรุ่นต้องปลดล็อก (Security Access) ก่อน ซึ่งยังไม่รองรับ</span>
+          <div class="row end">
+            <label class="f">รุ่นกล่อง<select id="rdModel"></select></label>
+            <label class="f">Start (hex)<input id="rdStart" value="8000" size="7"></label>
+            <label class="f">ขนาด (KB)<input id="rdKb" value="64" size="5"></label>
+            <button class="btn o" id="rdGo">ดูดไฟล์</button>
+            <button class="btn" id="rdStop" disabled>หยุด</button>
+          </div>
+          <div class="rdbar"><div id="rdFill"></div></div>
+          <div class="row muted mono" id="rdInfo">—</div>
+          <div class="note">ถ้ามีไฟล์ต้นฉบับจากโปรแกรมอื่นของกล่องเดียวกัน ให้เปิดใน “แก้แมพ” แล้วกด “เทียบกับไฟล์อื่น” กับไฟล์ที่ดูดได้ ต้องตรงกันทุกไบต์ ถ้าไม่ตรงหรือดูดไม่ได้ ส่ง Terminal log มา</div>
         </div>
       </div>
     </section>
@@ -590,6 +642,8 @@
 <script src="js/mapfinder.js"></script>
 <script src="js/autotune.js"></script>
 <script src="js/dyno.js"></script>
+<script src="js/xdf.js"></script>
+<script src="js/catalog.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

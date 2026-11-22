@@ -42,16 +42,18 @@
     dtcCurrent: page => frame(0x72, [0x74, page & 0xFF]),
     dtcPast: page => frame(0x72, [0x73, page & 0xFF]),
     clearDtc: () => frame(0x72, [0x60, 0x03]),
+    /** flash read (HondaECU "do_read_flash"): type 82 82 00, address bytes [A23..16, A7..0, A15..8], length */
+    readFlash: (addr, n) => { const body = [0x82, 0x82, 0x00, 9, (addr >> 16) & 255, addr & 255, (addr >> 8) & 255, n & 255]; return Uint8Array.from([...body, checksum(body)]); },
   };
 
   /** Pulls complete, checksum-valid frames out of a byte buffer.
    *  Returns { frames: Uint8Array[], rest: number[] }. Bytes that cannot start a frame are dropped. */
-  function parseStream(buf) {
+  function parseStream(buf, hdr = 1) {
     const frames = [];
     let i = 0;
-    while (i + 2 <= buf.length) {
-      const len = buf[i + 1];
-      if (len < 3 || len > 255) { i++; continue; }
+    while (i + hdr + 1 <= buf.length) {
+      const len = buf[i + hdr];
+      if (len < hdr + 2 || len > 255) { i++; continue; }
       if (i + len > buf.length) break;           // wait for more bytes
       const f = buf.slice(i, i + len);
       let s = 0; for (const b of f) s = (s + b) & 0xFF;

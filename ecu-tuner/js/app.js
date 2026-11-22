@@ -284,6 +284,7 @@ function rtTables() {
   const list = [];
   for (const t of found) if (t.anchored) list.push({ ...t, label: `${hx(t.off)} · ${t.cols}×${t.rows}${t.twin ? ` ชุด ${t.twin + 1}` : ''}` });
   for (const m of savedMaps) if (m.axis != null) list.push({ off: m.off, rows: m.rows, cols: m.cols, type: m.type, axisOff: m.axis, label: `${m.name} @${hx(m.off)}` });
+  if (xdf) for (const t of xdf.tables) if (t.z.rows > 3 && t.z.cols > 3) list.unshift({ xdf: t, off: t.z.addr, rows: t.z.rows, cols: t.z.cols, label: `XDF · ${t.title}` });
   return list;
 }
 function fillRtMaps() {
@@ -295,8 +296,12 @@ function buildRt() {
   const list = rtTables(), t = list[+$('rtMap').value];
   if (!bin || !t) { rt = null; $('rtWrap').innerHTML = '<p class="muted" style="padding:14px;margin:0">ยังไม่ได้เลือกแมพ</p>'; return; }
   const w = width(t.type);
-  const yAx = Array.from({ length: t.rows }, (_, r) => rd(bin, t.axisOff + r * w, t.type));
-  const xAx = Array.from({ length: t.cols }, (_, c) => rd(bin, t.axisOff + (t.rows + c) * w, t.type));
+  const yAx = t.xdf ? Xdf.axisValues(bin, t.xdf.y).map(Number) : Array.from({ length: t.rows }, (_, r) => rd(bin, t.axisOff + r * w, t.type));
+  const xAx = t.xdf ? Xdf.axisValues(bin, t.xdf.x).map(Number) : Array.from({ length: t.cols }, (_, c) => rd(bin, t.axisOff + (t.rows + c) * w, t.type));
+  if (t.xdf && rt?.t.off !== t.off) {   // XDF axes are already in real units: pick the live source from the unit text
+    const src = u => /rpm|รอบ/i.test(u || '') ? 'rpm' : /kpa|map/i.test(u || '') ? 'map' : 'tps';
+    $('rtYsrc').value = src(t.xdf.y.units); $('rtXsrc').value = src(t.xdf.x.units); $('rtYk').value = 1; $('rtXk').value = 1;
+  }
   // axis scale guesses: rpm axes stored ×4 when they run past 20000; throttle axis end = 100 %
   if (!$('rtYk').value || rt?.t.off !== t.off) $('rtYk').value = $('rtYsrc').value === 'rpm' ? (yAx.at(-1) > 20000 ? 0.25 : 1) : +(100 / (yAx.at(-1) || 1)).toPrecision(3);
   if (!$('rtXk').value || rt?.t.off !== t.off) $('rtXk').value = $('rtXsrc').value === 'tps' ? +(100 / (xAx.at(-1) || 1)).toPrecision(3) : 1;
@@ -312,7 +317,7 @@ function buildRt() {
 ['rtMap', 'rtYsrc', 'rtXsrc'].forEach(id => $(id).onchange = () => { if (id !== 'rtMap') { $('rtYk').value = ''; $('rtXk').value = ''; } buildRt(); });
 ['rtYk', 'rtXk'].forEach(id => $(id).onchange = () => { const off = rt?.t.off; buildRt(); });
 $('rtMode').onchange = () => paintRt();
-function cellVal(r, c) { const t = rt.t; return rd(bin, t.off + (r * t.cols + c) * width(t.type), t.type); }
+function cellVal(r, c) { const t = rt.t; if (t.xdf) return +Xdf.tableValue(bin, t.xdf, r, c).toFixed(t.xdf.z.decimals ?? 2); return rd(bin, t.off + (r * t.cols + c) * width(t.type), t.type); }
 function paintRt(pos) {
   if (!rt) return;
   const { t, log } = rt, mode = $('rtMode').value;
@@ -368,14 +373,16 @@ $('atApply').onclick = async () => {
   const sug = AutoTune.suggest(rt.log, { minWeight: +$('atMinW').value || 15, maxStep: (+$('atMax').value || 8) / 100 });
   const cells = []; sug.forEach((row, r) => row.forEach((f, c) => { if (f != null && Math.abs(f - 1) > 0.002) cells.push([r, c, f]); }));
   if (!cells.length) return toast('ยังไม่มีช่องที่ข้อมูลพอ หรือทุกช่องพอดีแล้ว');
-  const twins = found.filter(t => t.anchored && t.axisOff === rt.t.axisOff && t.off !== rt.t.off && t.rows === rt.t.rows && t.cols === rt.t.cols);
+  const twins = rt.t.xdf
+    ? (xdf?.tables || []).filter(t => t !== rt.t.xdf && t.z.rows === rt.t.rows && t.z.cols === rt.t.cols && t.title.replace(/[\s#\d]+$/, '') === rt.t.xdf.title.replace(/[\s#\d]+$/, '')).map(t => ({ xdf: t, off: t.z.addr, rows: t.z.rows, cols: t.z.cols }))
+    : found.filter(t => t.anchored && t.axisOff === rt.t.axisOff && t.off !== rt.t.off && t.rows === rt.t.rows && t.cols === rt.t.cols);
   const avg = cells.reduce((s, x) => s + (x[2] - 1), 0) / cells.length * 100;
   if (!await ask(`ปรับ ${cells.length} ช่องในแมพ ${hx(rt.t.off)}${twins.length ? ` และแมพคู่ ${twins.map(t => hx(t.off)).join(', ')}` : ''}\nเฉลี่ย ${avg > 0 ? '+' : ''}${avg.toFixed(1)}% (สูงสุด ±${$('atMax').value}%)\n\nแก้ในไฟล์บนคอมเท่านั้น ต้องตรวจดู แก้ checksum แล้ว Flash เอง`, 'นำไปใช้')) return;
-  for (const t of [rt.t, ...twins]) for (const [r, c, f] of cells) { const o = t.off + (r * t.cols + c) * width(t.type); wr(bin, o, t.type, rd(bin, o, t.type) * f); }
+  for (const t of [rt.t, ...twins]) for (const [r, c, f] of cells) { if (t.xdf) { Xdf.setTableValue(bin, t.xdf, r, c, Xdf.tableValue(bin, t.xdf, r, c) * f); continue; } const o = t.off + (r * t.cols + c) * width(t.type); wr(bin, o, t.type, rd(bin, o, t.type) * f); }
   // virtual ECU: make the simulated engine feel the new fuel map
   if (link?.applyFuelScale) { const ax = { y: rt.yAx, x: rt.xAx }, ys = $('rtYsrc').value, xs = $('rtXsrc').value, S = sug;
     link.applyFuelScale((rpm, tps) => { const src = { rpm, tps, map: 0 }; const ws = AutoTune.weights(AutoTune.axisPos(ax.y, src[ys]), AutoTune.axisPos(ax.x, src[xs]), S.length, S[0].length); let f = 0, wsum = 0; for (const [r, c, w] of ws) { f += (S[r][c] ?? 1) * w; wsum += w; } return wsum ? f / wsum : 1; }); }
-  rt.log.clear(); paintRt(); showMap(); checkSum(); showHex();
+  rt.log.clear(); paintRt(); showMap(); checkSum(); showHex(); if (xdf) renderXdfItem();
   toast(`ปรับแมพแล้ว ${cells.length} ช่อง — ขี่เก็บข้อมูลอีกรอบเพื่อตรวจผล`, 5000);
   $('atInfo').textContent = `รอบที่แล้วปรับ ${cells.length} ช่อง เฉลี่ย ${avg > 0 ? '+' : ''}${avg.toFixed(1)}% · เริ่มเก็บข้อมูลรอบใหม่เพื่อตรวจผล`;
 };
@@ -524,6 +531,41 @@ $('recTables').onclick = async () => {
   $('recInfo').textContent = `เสร็จ — อ่านได้ ${found} ตาราง เก็บในคลังไฟล์แล้ว (${name})`;
 };
 
+// ---------------- Flash read (experimental, read-only) ----------------
+let rdStop = false;
+$('rdModel').innerHTML = '<option value="">กำหนดเอง</option>' + Catalog.ROWS.filter(r => r.kb <= 96).map((r, i) => `<option value="${Catalog.ROWS.indexOf(r)}">${r.part} · ${r.model} · ${r.kb}KB</option>`).join('');
+$('rdModel').onchange = () => { const r = Catalog.ROWS[+$('rdModel').value]; if (r) { $('rdStart').value = r.start.toString(16).toUpperCase(); $('rdKb').value = r.kb; } };
+$('rdStop').onclick = () => { rdStop = true; };
+$('rdGo').onclick = async () => {
+  if (!needLink()) return;
+  if (livePolling) stopLive();
+  const start = parseInt($('rdStart').value, 16) || 0, total = Math.round((+$('rdKb').value || 64) * 1024);
+  const out = new Uint8Array(total); let pos = 0, chunk = 12, fails = 0; const t0 = performance.now(); rdStop = false;
+  $('rdGo').disabled = true; $('rdStop').disabled = false;
+  try {
+    while (pos < total && !rdStop) {
+      const n = Math.min(chunk, total - pos);
+      const r = await link.transact(Honda.CMD.readFlash(start + pos, n), 600, 3);
+      const data = r && r.length >= 5 ? r.slice(4, -1) : null;
+      if (!data || data.length !== n) {
+        if (++fails >= 3) { chunk--; fails = 0; }          // like HondaECU: shrink the request when the ECU refuses
+        if (chunk < 1 || (pos === 0 && chunk < 9)) { $('rdInfo').textContent = 'กล่องไม่ตอบคำสั่งอ่านแฟลช — รุ่นนี้อาจต้องปลดล็อก (Security Access) หรือใช้โปรโตคอลอื่น · ส่ง Terminal log มาให้ดู'; return; }
+        continue;
+      }
+      out.set(data, pos); pos += n; fails = 0;
+      const dt = (performance.now() - t0) / 1000, rate = pos / dt;
+      $('rdFill').style.width = (pos / total * 100).toFixed(1) + '%';
+      $('rdInfo').textContent = `${(pos / 1024).toFixed(1)} / ${(total / 1024).toFixed(0)} KB · ${rate.toFixed(0)} B/s · เหลือ ${Math.ceil((total - pos) / rate)} วิ`;
+    }
+    if (pos < total) { $('rdInfo').textContent = `หยุดที่ ${(pos / 1024).toFixed(1)} KB (ยังไม่ครบ ไม่ได้บันทึก)`; return; }
+    let s8 = 0; for (const b of out) s8 = (s8 + b) & 255;
+    const name = `read_${(ecu.id || 'ecu').replace(/\s/g, '')}_${start.toString(16).toUpperCase()}_${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.bin`;
+    await db.add({ name, kind: 'bin', data: out.buffer.slice(0) });
+    $('rdInfo').textContent = `ดูดเสร็จ ${(total / 1024).toFixed(0)} KB ใน ${((performance.now() - t0) / 1000).toFixed(0)} วิ · ผลรวม 8-bit = 0x${s8.toString(16).padStart(2, '0')} ${s8 === 0 ? '(ถูกต้องแบบ Keihin)' : '(ไม่เป็น 0 — ตรวจกับไฟล์ต้นฉบับ)'} · เก็บในคลังแล้ว: ${name}`;
+    loadBin(name, out.buffer.slice(0));
+  } finally { $('rdGo').disabled = false; $('rdStop').disabled = true; }
+};
+
 // ---------------- Terminal ----------------
 $('termSend').onclick = async () => {
   if (!needLink()) return;
@@ -548,7 +590,9 @@ function loadBin(name, data) {
   $('binInfo').textContent = `${bin.length.toLocaleString()} ไบต์`;
   $('binSave').disabled = $('binDl').disabled = $('mfFind').disabled = false;
   $('mfList').innerHTML = ''; renderCmp();
+  applyCatalog(name);
   showMap(); showHex(); checkSum();
+  if (xdf) renderXdfItem();
 }
 $('binFile').onchange = async e => {
   const f = e.target.files[0]; if (!f) return;
@@ -664,6 +708,123 @@ function showHex() {
   $('hexView').innerHTML = out;
 }
 $('hexShow').onclick = showHex;
+
+// ---------------- ECU catalogue ----------------
+function applyCatalog(name) {
+  const row = Catalog.match(name), hint = Catalog.nameChecksum(name), kb = Math.round(bin.length / 1024);
+  const box = $('catInfo'); box.hidden = false;
+  const cs = hint ?? row?.checksum ?? null;
+  if (bin.length > 128 * 1024) {
+    $('csType').value = 'none'; $('csOff').value = '';
+    box.textContent = `${row ? `${row.part} · ${row.model} · ` : ''}ไฟล์ ${kb}KB: กล่องรุ่นใหญ่ ไม่มีไบต์ checksum แบบผลรวม 8-bit ให้แก้ในไฟล์ โปรแกรม Flash คำนวณเองตอนเขียน`;
+  } else {
+    $('csType').value = 'sum0'; $('csOff').value = cs != null ? cs.toString(16).toUpperCase() : '';
+    box.textContent = row
+      ? `${row.part} · ${row.model} · ${row.kb}KB · Start ${row.start.toString(16).toUpperCase()} · checksum ${cs != null ? '0x' + cs.toString(16).toUpperCase() : 'ไม่ต้องแก้'}${row.src === 'sheet' ? ' (จากตารางอ้างอิงร้าน ต้องยืนยัน)' : ''}${row.kb !== kb ? ` · ⚠ ขนาดไฟล์ ${kb}KB ไม่ตรงกับรุ่นนี้ (${row.kb}KB)` : ''}`
+      : `ไม่รู้จักรหัสกล่องจากชื่อไฟล์${cs != null ? ` · ชื่อไฟล์บอก checksum ที่ 0x${cs.toString(16).toUpperCase()}` : ''} — ตั้งชื่อไฟล์ให้มีรหัส เช่น K73-T32 เพื่อให้โปรแกรมรู้รุ่น`;
+  }
+}
+
+// ---------------- XDF definitions ----------------
+let xdf = null, xdfSel = null, xdfCells = new Set(), xdfDrag = null;
+const xdfItems = () => xdf ? [...xdf.tables, ...xdf.constants, ...xdf.flags] : [];
+$('xdfFile').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return; e.target.value = '';
+  const buf = new Uint8Array(await f.arrayBuffer());
+  if (Xdf.isEncrypted(buf)) return toast('XDF ไฟล์นี้ถูกเข้ารหัส (เปิดได้เฉพาะใน TunerPro) ใช้ “ค้นหาแมพอัตโนมัติ” แทน', 7000);
+  try { xdf = Xdf.parse(new TextDecoder('windows-874').decode(buf)); }
+  catch (err) { return toast('อ่าน XDF ไม่ได้: ' + err.message, 6000); }
+  xdf.name = f.name; xdfSel = null;
+  $('xdfPanel').hidden = false; $('xdfTitle').textContent = f.name;
+  $('xdfMeta').textContent = `${xdf.tables.length} ตาราง · ${xdf.constants.length} ค่า · ${xdf.flags.length} สวิตช์${xdf.size ? ` · ไฟล์ ${Math.round(xdf.size / 1024)}KB` : ''}`;
+  if (bin && xdf.size && xdf.size !== bin.length) toast(`ขนาด BIN (${Math.round(bin.length / 1024)}KB) ไม่ตรงกับ XDF (${Math.round(xdf.size / 1024)}KB) — อาจเป็นคนละรุ่น`, 7000);
+  renderXdfList(); fillRtMaps();
+  const first = xdf.tables.find(t => /fuel|น้ำมัน/i.test(t.title) && t.z.rows > 2) || xdf.tables[0];
+  if (first) selectXdf(first.id);
+};
+$('xdfClose').onclick = () => { xdf = null; $('xdfPanel').hidden = true; fillRtMaps(); };
+$('xdfSearch').oninput = () => renderXdfList();
+function renderXdfList() {
+  const q = $('xdfSearch').value.trim().toLowerCase(), groups = new Map();
+  for (const it of xdfItems()) {
+    if (q && !it.title.toLowerCase().includes(q) && !(it.cats || []).join(' ').toLowerCase().includes(q)) continue;
+    const g = it.kind === 'flag' ? 'สวิตช์ / เซนเซอร์' : (it.cats[0] || 'อื่น ๆ');
+    if (!groups.has(g)) groups.set(g, []); groups.get(g).push(it);
+  }
+  $('xdfList').innerHTML = [...groups].map(([g, items]) => `<div class="cat">${esc(g)}</div>` + items.map(it => `<button data-xi="${it.id}" class="${xdfSel?.id === it.id ? 'on' : ''}"><span>${esc(it.title)}</span><small>${it.kind === 'table' ? `${it.z.cols}×${it.z.rows}` : it.kind === 'flag' ? 'สวิตช์' : 'ค่า'}</small></button>`).join('')).join('') || '<p class="muted" style="padding:10px">ไม่พบ</p>';
+}
+$('xdfList').onclick = e => { const b = e.target.closest('[data-xi]'); if (b) selectXdf(b.dataset.xi); };
+function selectXdf(id) { xdfSel = xdfItems().find(i => i.id === id); xdfCells.clear(); renderXdfList(); renderXdfItem(); }
+const fmt = (v, d) => v == null ? '—' : typeof v === 'number' ? +v.toFixed(d ?? 2) : v;
+function renderXdfItem() {
+  const it = xdfSel; if (!it) return;
+  $('xdfItem').textContent = it.title;
+  $('xdfTools').hidden = it.kind !== 'table';
+  if (it.kind === 'table') {
+    $('xdfUnits').textContent = it.z.units ? `· ${it.z.units}` : '';
+    $('xdfAddr').textContent = `0x${it.z.addr.toString(16).toUpperCase()} · ${it.z.bits}-bit · ${it.z.eq}`;
+    if (!bin) { $('xdfGrid').innerHTML = '<p class="muted" style="padding:14px;margin:0">เปิดไฟล์ .bin ก่อน</p>'; return; }
+    const { rows, cols, decimals } = it.z, xs = Xdf.axisValues(bin, it.x), ys = Xdf.axisValues(bin, it.y);
+    const vals = [], origVals = [];
+    let lo = Infinity, hi = -Infinity;
+    for (let r = 0; r < rows; r++) { vals.push([]); origVals.push([]); for (let c = 0; c < cols; c++) { const v = Xdf.tableValue(bin, it, r, c), o = Xdf.tableValue(orig, it, r, c); vals[r].push(v); origVals[r].push(o); if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } } }
+    const xu = it.x.units || '', yu = it.y.units || '';
+    let h = `<table class="map"><thead><tr><th class="ax">${esc(yu)}${yu || xu ? ' \\ ' : ''}${esc(xu)}</th>` + xs.map(v => `<th class="ax">${esc(fmt(v, it.x.decimals ?? 1))}</th>`).join('') + '</tr></thead><tbody>';
+    for (let r = 0; r < rows; r++) {
+      h += `<tr><th class="ax">${esc(fmt(ys[r], it.y.decimals ?? 0))}</th>`;
+      for (let c = 0; c < cols; c++) {
+        const v = vals[r][c], k = hi > lo ? (v - lo) / (hi - lo) : .5, ch = v !== origVals[r][c];
+        const cv = cmp ? Xdf.tableValue(cmp, it, r, c) : null, cd = cv != null && Math.abs(cv - v) > 1e-9;
+        h += `<td data-r="${r}" data-c="${c}" class="${xdfCells.has(r + ',' + c) ? 'sel' : ''} ${ch ? 'chg' : ''} ${cd ? 'cmpd' : ''}" style="background:hsl(${190 - k * 190} 70% 66%)" title="เดิม ${fmt(origVals[r][c], decimals)}${cd ? ` · ไฟล์เทียบ ${fmt(cv, decimals)}` : ''}">${fmt(v, decimals)}</td>`;
+      }
+      h += '</tr>';
+    }
+    $('xdfGrid').innerHTML = h + '</tbody></table>';
+  } else {
+    $('xdfUnits').textContent = it.units ? `· ${it.units}` : ''; $('xdfAddr').textContent = `0x${it.addr.toString(16).toUpperCase()}`;
+    if (!bin) { $('xdfGrid').innerHTML = '<p class="muted" style="padding:14px;margin:0">เปิดไฟล์ .bin ก่อน</p>'; return; }
+    if (it.kind === 'flag') {
+      const on = Xdf.flagValue(bin, it), was = Xdf.flagValue(orig, it);
+      $('xdfGrid').innerHTML = `<div class="xdf-form" style="padding:14px"><div class="item"><span>${esc(it.title)}${it.desc ? `<br><small class="muted">${esc(it.desc)}</small>` : ''}</span><label class="row"><input type="checkbox" id="xdfFlag" ${on ? 'checked' : ''}> ${on ? 'เปิด' : 'ปิด'}</label></div><p class="muted">ค่าเดิม: ${was ? 'เปิด' : 'ปิด'} · การปิดเซนเซอร์ที่เกี่ยวกับไอเสียหรือความปลอดภัยอาจทำให้รถทำงานผิดปกติ</p></div>`;
+      $('xdfFlag').onchange = ev => { Xdf.setFlag(bin, it, ev.target.checked); afterXdfEdit(); };
+    } else {
+      const v = Xdf.constValue(bin, it);
+      $('xdfGrid').innerHTML = `<div class="xdf-form" style="padding:14px"><div class="item"><span>${esc(it.title)}</span><span class="row"><input id="xdfConst" value="${fmt(v, it.decimals)}" size="8"> ${esc(it.units || '')} <button class="btn" id="xdfConstSet">บันทึก</button></span></div><p class="muted">ค่าเดิม: ${fmt(Xdf.constValue(orig, it), it.decimals)}</p></div>`;
+      $('xdfConstSet').onclick = () => { const x = parseFloat($('xdfConst').value); if (!isNaN(x)) { Xdf.setConst(bin, it, x); afterXdfEdit(); } };
+    }
+  }
+}
+function afterXdfEdit() { renderXdfItem(); checkSum(); showHex(); showMap(); }
+$('xdfGrid').addEventListener('mousedown', e => {
+  const td = e.target.closest('td[data-r]'); if (!td) return;
+  xdfDrag = [+td.dataset.r, +td.dataset.c]; if (!e.shiftKey && !e.ctrlKey) xdfCells.clear();
+  xdfCells.add(xdfDrag.join(',')); paintXdfSel(); e.preventDefault();
+});
+$('xdfGrid').addEventListener('mouseover', e => {
+  const td = e.target.closest('td[data-r]'); if (!td || !xdfDrag) return;
+  const [r0, c0] = xdfDrag, r1 = +td.dataset.r, c1 = +td.dataset.c; xdfCells.clear();
+  for (let r = Math.min(r0, r1); r <= Math.max(r0, r1); r++) for (let c = Math.min(c0, c1); c <= Math.max(c0, c1); c++) xdfCells.add(r + ',' + c);
+  paintXdfSel();
+});
+addEventListener('mouseup', () => xdfDrag = null);
+function paintXdfSel() { $('xdfGrid').querySelectorAll('td[data-r]').forEach(td => td.classList.toggle('sel', xdfCells.has(td.dataset.r + ',' + td.dataset.c))); }
+document.querySelectorAll('[data-xa]').forEach(b => b.onclick = () => {
+  const it = xdfSel; if (!it || it.kind !== 'table' || !bin) return;
+  if (!xdfCells.size) return toast('ลากเมาส์เลือกช่องในตารางก่อน');
+  const a = b.dataset.xa, v = +b.dataset.v, cells = [...xdfCells].map(k => k.split(',').map(Number));
+  if (a === 'smooth') {
+    const src = cells.map(([r, c]) => { let s = 0, n = 0; for (const [dr, dc] of [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]]) { const rr = r + dr, cc = c + dc; if (rr >= 0 && cc >= 0 && rr < it.z.rows && cc < it.z.cols) { s += Xdf.tableValue(bin, it, rr, cc); n++; } } return s / n; });
+    cells.forEach(([r, c], i) => Xdf.setTableValue(bin, it, r, c, src[i]));
+  } else for (const [r, c] of cells) {
+    const cur = Xdf.tableValue(bin, it, r, c);
+    if (a === 'undo') { Xdf.writeRaw(bin, Xdf.cellAddr(it.z, r, c), it.z.bits, it.z.signed, it.z.lsb, Xdf.tableRaw(orig, it, r, c)); continue; }
+    let nv = a === 'set' ? parseFloat($('xdfSet').value) : a === 'add' ? cur + v : cur * (1 + v / 100);
+    if (isNaN(nv)) return toast('ใส่ค่าก่อนกด “ตั้งค่า”');
+    if (it.z.max != null && it.z.min != null && it.z.max > it.z.min) nv = Math.max(it.z.min, Math.min(it.z.max, nv));
+    Xdf.setTableValue(bin, it, r, c, nv);
+  }
+  afterXdfEdit();
+});
 
 // ---------------- Map Finder + compare ----------------
 let found = [], cmp = null, cmpName = '';

@@ -19,13 +19,13 @@
       if (this.waiter) this.waiter();
     }
     /** Serialise requests: one transaction on the wire at a time. */
-    transact(req, timeout = 400) {
-      const run = () => this._transact(Uint8Array.from(req), timeout);
+    transact(req, timeout = 400, hdr = 1) {
+      const run = () => this._transact(Uint8Array.from(req), timeout, hdr);
       const p = this.busy.then(run, run);
       this.busy = p.catch(() => {});
       return p;
     }
-    async _transact(req, timeout) {
+    async _transact(req, timeout, hdr = 1) {
       this.rx = [];
       await this.write(req);
       this.emit('tx', req);
@@ -38,7 +38,7 @@
           echoStripped = true;
         }
         if (echoStripped) {
-          const { frames } = Honda.parseStream(this.rx);
+          const { frames } = Honda.parseStream(this.rx, hdr);
           const reply = frames.find(f => f[0] !== req[0] || f.length !== req.length || !f.every((b, i) => b === req[i]));
           if (reply) return reply;
         }
@@ -130,6 +130,12 @@
     respond(req) {
       const [type, , cmd, arg] = req;
       if (Honda.checksum(Array.from(req.slice(0, -1))) !== req[req.length - 1]) return null;
+      if (type === 0x82 && req[1] === 0x82 && this.awake) {        // flash read: 82 82 00 09 A2 A0 A1 N cs
+        const addr = (req[4] << 16) | (req[6] << 8) | req[5], n = req[7], data = [];
+        for (let k = 0; k < n; k++) data.push(this.memory[(addr + k) % this.memory.length]);
+        const body = [0x82, 0x82, 0x00, data.length + 5, ...data];
+        return Uint8Array.from([...body, Honda.checksum(body)]);
+      }
       if (type === 0xFE) return null;                                    // ping: Honda ECUs stay silent
       if (type !== 0x72 || !this.awake) return null;
       if (cmd === 0x00 && arg === 0xF0) { this.diag = true; return Honda.frame(0x02, [0x00]); }

@@ -8,18 +8,29 @@ const store = {
   set(k, v) { try { localStorage.setItem('ecu.' + k, JSON.stringify(v)); } catch {} },
 };
 function toast(msg, ms = 2600) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(() => t.style.display = 'none', ms); }
+function ask(msg, okText = 'ยืนยัน', danger = false) {
+  return new Promise(res => {
+    $('askMsg').textContent = msg; $('askOk').textContent = okText;
+    $('askOk').className = 'btn ' + (danger ? 'r' : 'o');
+    $('askModal').classList.add('on'); $('askOk').focus();
+    const done = v => { $('askModal').classList.remove('on'); $('askOk').onclick = $('askNo').onclick = null; res(v); };
+    $('askOk').onclick = () => done(true); $('askNo').onclick = () => done(false);
+  });
+}
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // ---------------- settings / branding ----------------
-const settings = { brand: 'PG PERFORMANCE', logo: 'PG', proto: 'honda', poll: 120, ...store.get('settings', {}) };
+const settings = { brand: 'SM Remap', logo: 'SM', proto: 'honda', poll: 120, ...store.get('settings', {}) };
+if (settings.brand === 'PG PERFORMANCE') Object.assign(settings, { brand: 'SM Remap', logo: 'SM' });
 function applyBrand() {
   $('brandName').textContent = settings.brand; $('heroName').textContent = settings.brand;
-  $('logoTxt').textContent = settings.logo; $('foot').textContent = `${settings.brand} · ECU TUNER`;
-  document.title = `${settings.brand} ECU Tuner`;
+  $('logoTxt').textContent = settings.logo; $('foot').textContent = `${settings.brand} · K-line 10400 baud`;
+  document.title = settings.brand;
   $('sBrand').value = settings.brand; $('sLogo').value = settings.logo; $('sProto').value = settings.proto; $('sPoll').value = settings.poll;
 }
 $('sSave').onclick = () => {
-  Object.assign(settings, { brand: $('sBrand').value.trim() || 'PG PERFORMANCE', logo: $('sLogo').value.trim() || 'PG', proto: $('sProto').value, poll: Math.max(50, +$('sPoll').value || 120) });
+  Object.assign(settings, { brand: $('sBrand').value.trim() || 'SM Remap', logo: $('sLogo').value.trim() || 'SM', proto: $('sProto').value, poll: Math.max(50, +$('sPoll').value || 120) });
   store.set('settings', settings); applyBrand(); toast('บันทึกแล้ว');
 };
 applyBrand();
@@ -65,7 +76,7 @@ async function renderFiles() {
 $('filesBody').onclick = async e => {
   const t = e.target;
   if (t.dataset.dl) { const f = await db.get(+t.dataset.dl); download(f.name, f.data); }
-  if (t.dataset.del && confirm('ลบไฟล์นี้?')) { await db.del(+t.dataset.del); renderFiles(); }
+  if (t.dataset.del && await ask('ลบไฟล์นี้ออกจากคลัง?', 'ลบไฟล์', true)) { await db.del(+t.dataset.del); renderFiles(); }
   if (t.dataset.open) { const f = await db.get(+t.dataset.open); loadBin(f.name, new Uint8Array(f.data)); go('tuner'); }
 };
 $('fileImport').onchange = async e => {
@@ -78,8 +89,8 @@ let link = null, ecu = { id: null };
 function setConn(state, text) {
   $('cDot').className = 'dot ' + (state === 'ok' ? 'ok' : state === 'wait' ? 'wait' : '');
   $('cName').textContent = text;
-  $('btnConn').textContent = state === 'ok' ? '⏏ ตัดการเชื่อมต่อ' : '🔌 เชื่อมต่อ';
-  $('fk1').textContent = state === 'ok' && ecu.id ? '✅' : '⬜';
+  $('btnConnTxt').textContent = state === 'ok' ? 'ตัดการเชื่อมต่อ' : 'เชื่อมต่อ';
+  $('fk1').textContent = state === 'ok' && ecu.id ? '[✓]' : '[ ]';
 }
 const termLog = [];
 function term(line) {
@@ -92,7 +103,7 @@ $('btnConn').onclick = () => link ? disconnect() : $('connModal').classList.add(
 $('cCancel').onclick = () => $('connModal').classList.remove('on');
 $('cSerial').onclick = () => {
   $('connModal').classList.remove('on');
-  if (!SerialLink.supported()) return alert('เบราว์เซอร์นี้ไม่รองรับ Web Serial\nกรุณาเปิดด้วย Google Chrome หรือ Microsoft Edge บนคอมพิวเตอร์');
+  if (!SerialLink.supported()) return toast('เบราว์เซอร์นี้ต่อสายไม่ได้ (ไม่มี Web Serial) — เปิดด้วย Chrome หรือ Edge บนคอม หรือเปิดแบบรันในเครื่อง (localhost)', 7000);
   connect(new SerialLink());
 };
 $('cSim').onclick = () => { $('connModal').classList.remove('on'); connect(new SimLink()); };
@@ -161,29 +172,36 @@ function renderVals(vals) {
   });
 }
 function drawGauge(rpm) {
-  const c = $('gauge'), g = c.getContext('2d'), W = c.width, cx = W / 2, cy = 290, r = 220, max = 12000;
-  g.clearRect(0, 0, W, c.height);
-  const a0 = Math.PI * .8, a1 = Math.PI * 2.2, a = a0 + (a1 - a0) * Math.min(1, rpm / max);
-  g.lineWidth = 26; g.lineCap = 'round';
-  g.strokeStyle = '#231d33'; g.beginPath(); g.arc(cx, cy, r, a0, a1); g.stroke();
-  const gr = g.createLinearGradient(cx - r, 0, cx + r, 0); gr.addColorStop(0, '#8b5cf6'); gr.addColorStop(.7, '#ff8a1f'); gr.addColorStop(1, '#ff3b3b');
-  g.strokeStyle = gr; g.beginPath(); g.arc(cx, cy, r, a0, a); g.stroke();
-  g.fillStyle = '#958ca8'; g.font = '22px Kanit'; g.textAlign = 'center';
-  for (let k = 0; k <= 12; k += 2) { const aa = a0 + (a1 - a0) * k / 12; g.fillText(k, cx + Math.cos(aa) * (r - 48), cy + Math.sin(aa) * (r - 48) + 8); }
-  g.fillStyle = '#fff'; g.font = '500 76px Kanit'; g.fillText(rpm.toLocaleString(), cx, cy - 10);
-  g.fillStyle = '#958ca8'; g.font = '24px Kanit'; g.fillText('RPM', cx, cy + 30);
+  // segmented rev strip + digital readout, like a dyno tach
+  const c = $('gauge'), g = c.getContext('2d'), W = c.width, H = c.height, max = 12000, segs = 40, red = 9500;
+  const ink = css('--ink'), muted = css('--muted'), acc = css('--accent'), amb = css('--amber'), bad = css('--bad'), off = css('--surface-2'), line = css('--line');
+  g.clearRect(0, 0, W, H);
+  const x0 = 20, sw = (W - 40) / segs, top = 34, h = 54, lit = Math.round(Math.min(1, rpm / max) * segs);
+  for (let i = 0; i < segs; i++) {
+    const v = (i + 1) / segs * max;
+    g.fillStyle = i < lit ? (v > red ? bad : v > 7000 ? amb : acc) : off;
+    g.fillRect(x0 + i * sw + 1.5, top + (h - h * (0.45 + 0.55 * i / segs)), sw - 3, h * (0.45 + 0.55 * i / segs));
+  }
+  g.fillStyle = muted; g.font = `22px ${css('--font-mono')}`; g.textAlign = 'center';
+  for (let k = 0; k <= 12; k += 2) g.fillText(k ? k + 'k' : '0', x0 + (W - 40) * k / 12, top + h + 30);
+  g.strokeStyle = line; g.beginPath(); g.moveTo(x0, top + h + 6); g.lineTo(W - 20, top + h + 6); g.stroke();
+  g.textAlign = 'left'; g.fillStyle = ink; g.font = `600 92px ${css('--font-mono')}`;
+  const txt = rpm.toLocaleString(), tw = g.measureText(txt).width;
+  g.fillText(txt, x0, H - 34);
+  g.fillStyle = muted; g.font = `26px ${css('--font-mono')}`;
+  g.fillText('rpm', x0 + tw + 12, H - 38);
 }
 function drawChart() {
   const c = $('chart'), g = c.getContext('2d'), W = c.width, H = c.height;
   g.clearRect(0, 0, W, H);
-  g.strokeStyle = '#1e1a29'; g.lineWidth = 1;
-  for (let y = 0; y <= 4; y++) { g.beginPath(); g.moveTo(0, H * y / 4); g.lineTo(W, H * y / 4); g.stroke(); }
+  g.strokeStyle = css('--line'); g.lineWidth = 1;
+  for (let y = 0; y <= 4; y++) { g.beginPath(); g.moveTo(0, H * y / 4 + .5); g.lineTo(W, H * y / 4 + .5); g.stroke(); }
   const line = (k, max, col) => {
     g.strokeStyle = col; g.lineWidth = 3; g.beginPath();
     hist.forEach((h, i) => { const x = W - (hist.length - 1 - i) * (W / 299), y = H - 6 - (H - 12) * Math.min(1, h[k] / max); i ? g.lineTo(x, y) : g.moveTo(x, y); });
     g.stroke();
   };
-  line('rpm', 12000, '#ff8a1f'); line('tps', 100, '#a78bfa'); line('inj', 15, '#3ddc84');
+  line('rpm', 12000, css('--amber')); line('tps', 100, css('--accent')); line('inj', 15, css('--ok'));
 }
 function stopLive() { livePolling = false; $('liveStart').disabled = false; $('liveStop').disabled = true; }
 $('liveStart').onclick = () => { if (!needLink()) return; livePolling = true; $('liveStart').disabled = true; $('liveStop').disabled = false; liveLoop(); };
@@ -197,7 +215,9 @@ $('liveRec').onclick = async () => {
   await db.add({ name, kind: 'log', data: new TextEncoder().encode('﻿' + csv).buffer });
   download(name, '﻿' + csv, 'text/csv'); toast('เก็บ log ในคลังไฟล์แล้ว');
 };
-drawGauge(0);
+drawGauge(0); drawChart();
+document.fonts?.ready.then(() => { drawGauge(hist.length ? hist[hist.length - 1].rpm : 0); drawChart(); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => { drawGauge(hist.length ? hist[hist.length - 1].rpm : 0); drawChart(); });
 
 // ---------------- DTC ----------------
 async function readDtc(cmd) {
@@ -216,10 +236,10 @@ $('dtcRead').onclick = async () => {
   const now = await readDtc(Honda.CMD.dtcCurrent), past = await readDtc(Honda.CMD.dtcPast);
   const rows = [...now.map(c => [c, 'ปัจจุบัน']), ...past.filter(c => !now.includes(c)).map(c => [c, 'เคยเกิด (ประวัติ)'])];
   $('dtcBody').innerHTML = rows.map(([c, st]) => `<tr><td><span class="code">${c}</span></td><td>${esc(Honda.DTC_TEXT[c] || 'ไม่ทราบความหมาย — ดูคู่มือซ่อมรุ่นนั้น')}</td><td>${st}</td></tr>`).join('')
-    || '<tr><td colspan="3"><div class="okbox">✅ ไม่พบรหัสปัญหา</div></td></tr>';
+    || '<tr><td colspan="3"><div class="okbox">ไม่พบรหัสปัญหา</div></td></tr>';
 };
 $('dtcClear').onclick = async () => {
-  if (!needLink() || !confirm('ลบรหัสปัญหาทั้งหมดในกล่อง?')) return;
+  if (!needLink() || !await ask('ลบรหัสปัญหาทั้งหมดในกล่อง?', 'ลบรหัส', true)) return;
   const r = await link.transact(Honda.CMD.clearDtc(), 600);
   toast(r ? 'ลบรหัสปัญหาแล้ว — ปิด/เปิดกุญแจแล้วอ่านใหม่อีกครั้ง' : 'ECU ไม่ตอบคำสั่งลบ', 4000);
   $('dtcRead').click();
@@ -301,11 +321,11 @@ function showMap() {
     for (let c = 0; c < m.cols; c++) {
       const o = cellOff(m, r, c), v = rd(bin, o, m.type), ov = rd(orig, o, m.type);
       const k = hi > lo ? (v - lo) / (hi - lo) : .5;
-      const hue = 240 - k * 240;                                  // blue (low) → red (high)
+      const hue = 190 - k * 190;                                  // blue (low) → red (high)
       const key = `${r},${c}`;
       const cv = cmp && o + aw <= cmp.length ? rd(cmp, o, m.type) : null;
       const cmpTxt = cv != null && cv !== v ? ` • ไฟล์เทียบ ${+(cv * m.scale).toFixed(3)} (${cv > v ? '+' : ''}${(v ? (cv - v) / v * 100 : 0).toFixed(1)}%)` : '';
-      h += `<td data-r="${r}" data-c="${c}" class="${sel.has(key) ? 'sel' : ''} ${v !== ov ? 'chg' : ''} ${cmpTxt ? 'cmpd' : ''}" style="background:hsl(${hue} 85% 62%)" title="0x${o.toString(16)} เดิม ${+(ov * m.scale).toFixed(3)}${cmpTxt}">${+(v * m.scale).toFixed(3)}</td>`;
+      h += `<td data-r="${r}" data-c="${c}" class="${sel.has(key) ? 'sel' : ''} ${v !== ov ? 'chg' : ''} ${cmpTxt ? 'cmpd' : ''}" style="background:hsl(${hue} 70% 66%)" title="0x${o.toString(16)} เดิม ${+(ov * m.scale).toFixed(3)}${cmpTxt}">${+(v * m.scale).toFixed(3)}</td>`;
     }
     h += '</tr>';
   }
@@ -350,14 +370,14 @@ function checkSum() {
   if ($('csType').value === 'none') { $('csInfo').textContent = ''; return; }
   let s = 0; for (const b of bin) s = (s + b) & 0xFF;
   const touched = bin.some((b, i) => b !== orig[i]);
-  $('csInfo').innerHTML = s === 0 ? '<span style="color:#3ddc84">✔ checksum ถูกต้อง</span>'
-    : `<span style="color:#ff4d5e">✘ ผลรวม = 0x${s.toString(16).padStart(2, '0')} (ต้องเป็น 00)${touched ? '' : ' — ไฟล์นี้น่าจะถูกแก้มาก่อนโดยไม่ได้แก้ checksum ห้ามเอาไป Flash ตรงๆ'}</span>`;
+  $('csInfo').innerHTML = s === 0 ? '<span class="good">checksum ถูกต้อง</span>'
+    : `<span class="bad">ผลรวม = 0x${s.toString(16).padStart(2, '0')} (ต้องเป็น 00)${touched ? '' : ' — ไฟล์นี้น่าจะถูกแก้มาก่อนโดยไม่ได้แก้ checksum ห้ามเอาไป Flash ตรงๆ'}</span>`;
 }
-$('csFix').onclick = () => {
+$('csFix').onclick = async () => {
   if (!bin) return;
   const at = parseInt($('csOff').value, 16);
   if (isNaN(at) || at < 0 || at >= bin.length) return toast('ใส่ตำแหน่งไบต์ checksum ก่อน (แต่ละรุ่นกล่องอยู่คนละที่ — ต้องรู้ตำแหน่งที่ถูกต้อง)', 5000);
-  if (!confirm(`แก้ไบต์ที่ 0x${at.toString(16).toUpperCase()} (ตอนนี้ = 0x${bin[at].toString(16).padStart(2, '0')}) ให้ผลรวมเป็น 0?\nถ้าตำแหน่งนี้ไม่ใช่ไบต์ checksum จริงของกล่องรุ่นนี้ ไฟล์จะเสีย`)) return;
+  if (!await ask(`แก้ไบต์ที่ 0x${at.toString(16).toUpperCase()} (ตอนนี้ = 0x${bin[at].toString(16).padStart(2, '0')}) ให้ผลรวมเป็น 0?\nถ้าตำแหน่งนี้ไม่ใช่ไบต์ checksum จริงของกล่องรุ่นนี้ ไฟล์จะเสีย`, 'แก้ checksum', true)) return;
   let s = 0; for (let i = 0; i < bin.length; i++) if (i !== at) s = (s + bin[i]) & 0xFF;
   bin[at] = (0x100 - s) & 0xFF; checkSum(); showHex(); toast(`ตั้งไบต์ 0x${at.toString(16)} = 0x${bin[at].toString(16).padStart(2, '0')}`);
 };
@@ -396,11 +416,11 @@ $('mfFind').onclick = async () => {
   const t0 = performance.now();
   found = MapFinder.find(bin).filter(t => t.anchored || t.rows * t.cols >= 36);
   const main = found.filter(t => t.anchored);
-  $('mfInfo').textContent = `เจอ ${found.length} ตาราง (${main.length} ตารางมีแกนชัดเจน ⭐) ใน ${Math.round(performance.now() - t0)} ms — กดเพื่อเปิด`;
+  $('mfInfo').textContent = `เจอ ${found.length} ตาราง (${main.length} ตารางมีแกนชัดเจน ◆) ใน ${Math.round(performance.now() - t0)} ms — กดเพื่อเปิด`;
   $('mfList').innerHTML = '<div class="pick">' + found.map((t, i) => {
     const big = t.anchored && t.rows * t.cols >= 200;
-    return `<button data-mf="${i}" title="${t.type}${t.xAxis ? ` แกน X ${t.xAxis[0]}…${t.xAxis.at(-1)}` : ''}${t.yAxis ? ` แกน Y ${t.yAxis[0]}…${t.yAxis.at(-1)}` : ''}">${t.anchored ? '⭐ ' : ''}${big ? '<b>' : ''}${hx(t.off)} · ${t.cols}×${t.rows}${t.twin ? ` (ชุด ${t.twin + 1})` : ''}${big ? '</b>' : ''}</button>`;
-  }).join('') + '</div>' + (main.some(t => t.rows * t.cols >= 200) ? '<p class="muted">ตารางใหญ่สีส้ม (เช่น 25×29, 29×29) มักเป็นแมพน้ำมันหลัก — ชุด 1/2 คือตารางคู่ที่ใช้แกนเดียวกัน ควรปรับไปพร้อมกัน ⚠ ชื่อ/หน่วยของตารางยังต้องยืนยันเอง (ไม่มี XDF)</p>' : '');
+    return `<button data-mf="${i}" title="${t.type}${t.xAxis ? ` แกน X ${t.xAxis[0]}…${t.xAxis.at(-1)}` : ''}${t.yAxis ? ` แกน Y ${t.yAxis[0]}…${t.yAxis.at(-1)}` : ''}">${t.anchored ? '◆ ' : ''}${big ? '<b>' : ''}${hx(t.off)} · ${t.cols}×${t.rows}${t.twin ? ` (ชุด ${t.twin + 1})` : ''}${big ? '</b>' : ''}</button>`;
+  }).join('') + '</div>' + (main.some(t => t.rows * t.cols >= 200) ? '<p class="muted">ตารางใหญ่ที่ตัวหนา (เช่น 25×29, 29×29) มักเป็นแมพน้ำมันหลัก ชุด 1 กับชุด 2 ใช้แกนเดียวกัน ควรปรับไปพร้อมกัน · ชื่อและหน่วยของตารางยังต้องยืนยันเอง เพราะไม่มี XDF</p>' : '');
   renderCmp();
 };
 $('mfList').onclick = e => {
@@ -419,8 +439,8 @@ function renderCmp() {
   const ranges = MapFinder.diff(bin, cmp);
   const inTable = ([s, e]) => found.find(t => s < t.off + t.bytes && e > t.off);
   const bytes = ranges.reduce((n, [s, e]) => n + e - s, 0);
-  $('cmpList').innerHTML = `<p class="muted">เทียบกับ <b>${esc(cmpName)}</b>${cmp.length !== bin.length ? ` ⚠ ขนาดไม่เท่ากัน (${cmp.length.toLocaleString()} / ${bin.length.toLocaleString()} B)` : ''} — ต่างกัน ${ranges.length} ช่วง (${bytes.toLocaleString()} ไบต์) · ช่องในตารางที่ต่างจะมีลายขีด</p>`
-    + '<div class="pick">' + ranges.slice(0, 120).map(([s, e], i) => { const t = inTable([s, e]); return `<button data-rg="${s}" title="${e - s} ไบต์">${t ? '⭐ ' : ''}${hx(s)}–${hx(e - 1)}</button>`; }).join('')
+  $('cmpList').innerHTML = `<p class="muted">เทียบกับ <b>${esc(cmpName)}</b>${cmp.length !== bin.length ? ` · ขนาดไม่เท่ากัน (${cmp.length.toLocaleString()} / ${bin.length.toLocaleString()} B)` : ''} — ต่างกัน ${ranges.length} ช่วง (${bytes.toLocaleString()} ไบต์) · ช่องในตารางที่ต่างจะมีลายขีด</p>`
+    + '<div class="pick">' + ranges.slice(0, 120).map(([s, e], i) => { const t = inTable([s, e]); return `<button data-rg="${s}" title="${e - s} ไบต์">${t ? '◆ ' : ''}${hx(s)}–${hx(e - 1)}</button>`; }).join('')
     + (ranges.length > 120 ? `<span class="muted">… อีก ${ranges.length - 120} ช่วง</span>` : '') + `<button id="cmpClear">✕ เลิกเทียบ</button></div>`;
 }
 $('cmpList').onclick = e => {

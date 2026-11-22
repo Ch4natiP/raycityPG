@@ -1,9 +1,10 @@
 {
-  "name": "PG Performance ECU Tuner",
-  "short_name": "ECU Tuner",
+  "name": "SM Remap",
+  "short_name": "SM Remap",
+  "description": "อ่านค่า วินิจฉัย และแก้แมพกล่อง ECU มอเตอร์ไซค์ผ่านสาย K-line",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#0b0a10",
-  "theme_color": "#0d0b12",
+  "background_color": "#13222b",
+  "theme_color": "#0a8f86",
   "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
 }

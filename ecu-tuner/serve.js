@@ -7,4 +7,4 @@ http.createServer((req, res) => {
   const f = path.normalize(path.join(root, p));
   if (!f.startsWith(root)) { res.writeHead(403); return res.end(); }
   fs.readFile(f, (err, buf) => { if (err) { res.writeHead(404); return res.end(); } res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream' }); res.end(buf); });
-}).listen(PORT, '127.0.0.1', () => console.log(`ECU Tuner: http://localhost:${PORT}  (เปิดด้วย Chrome หรือ Edge)`));
+}).listen(PORT, '127.0.0.1', () => console.log(`SM Remap: http://localhost:${PORT}  (เปิดด้วย Chrome หรือ Edge)`));

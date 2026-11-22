@@ -27,6 +27,7 @@
     --ok: #1d8f4e; --bad: #cc3b3b; --warn: #a86b00;
     --ok-soft: #dcf2e4; --bad-soft: #f8e1e1; --warn-soft: #fbefd5;
     --rail: #13222b; --rail-ink: #dbe6ea; --rail-muted: #8399a3; --rail-line: #24363f;
+    --before: #2563c9; --after: #d23c3c;   /* dyno run colours */
     --font-display: 'Chakra Petch', 'IBM Plex Sans Thai', system-ui, sans-serif;
     --font-body: 'IBM Plex Sans Thai', system-ui, -apple-system, 'Segoe UI', sans-serif;
     --font-mono: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
@@ -36,12 +37,12 @@
     --bg: #0d1418; --surface: #141d22; --surface-2: #19242a; --line: #263540; --ink: #e2ebee; --muted: #8b9ca4;
     --accent: #2fc2b3; --accent-soft: #123532; --accent-ink: #04211e; --amber: #f0b429;
     --ok: #3cc779; --bad: #ff6b6b; --warn: #f0b429; --ok-soft: #12301f; --bad-soft: #3a1717; --warn-soft: #33270b;
-    --rail: #091014; --rail-ink: #d5e2e7; --rail-muted: #789099; --rail-line: #1c2b33; color-scheme: dark; } }
+    --rail: #091014; --rail-ink: #d5e2e7; --rail-muted: #789099; --rail-line: #1c2b33; --before: #5b9cff; --after: #ff6b6b; color-scheme: dark; } }
   :root[data-theme="dark"] {
     --bg: #0d1418; --surface: #141d22; --surface-2: #19242a; --line: #263540; --ink: #e2ebee; --muted: #8b9ca4;
     --accent: #2fc2b3; --accent-soft: #123532; --accent-ink: #04211e; --amber: #f0b429;
     --ok: #3cc779; --bad: #ff6b6b; --warn: #f0b429; --ok-soft: #12301f; --bad-soft: #3a1717; --warn-soft: #33270b;
-    --rail: #091014; --rail-ink: #d5e2e7; --rail-muted: #789099; --rail-line: #1c2b33; color-scheme: dark; }
+    --rail: #091014; --rail-ink: #d5e2e7; --rail-muted: #789099; --rail-line: #1c2b33; --before: #5b9cff; --after: #ff6b6b; color-scheme: dark; }
 
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
@@ -159,6 +160,11 @@
   table.map td.cur { outline: 3px solid var(--ink); outline-offset: -3px; position: relative; z-index: 1; }
   table.map td.near { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--ink) 55%, transparent); }
   table.map td.nodata { background: var(--surface-2) !important; color: var(--muted); }
+  .dycards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+  .dycard { display: grid; gap: 4px; align-content: start; }
+  .dycard .k { font: 500 12.5px/1.3 var(--font-body); color: var(--muted); }
+  .dycard b { font: 600 34px/1.1 var(--font-mono); font-variant-numeric: tabular-nums; }
+  .dycard b.before { color: var(--before); } .dycard b.after { color: var(--after); }
   /* tables */
   .tw { overflow-x: auto; }
   table.list { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -220,6 +226,7 @@
     .toolist { grid-template-columns: 1fr; }
     .tach { grid-template-columns: 1fr; }
     .rt { grid-template-columns: 1fr; }
+    .dycards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   @media (max-width: 480px) { .link-card { grid-template-columns: 1fr; } .ph h1 { font-size: 24px; } }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
@@ -308,6 +315,7 @@
       <div class="seg" role="tablist" aria-label="มุมมอง Live">
         <button id="lvTab1" class="on" data-lv="1" role="tab">หน้า 1 · หน้าปัด</button>
         <button id="lvTab2" data-lv="2" role="tab">หน้า 2 · ตารางเรียลไทม์ + จูนอัตโนมัติ</button>
+        <button id="lvTab3" data-lv="3" role="tab">หน้า 3 · Dyno ก่อน/หลังจูน</button>
       </div>
       <div class="muted mono" id="liveInfo" style="margin:10px 0 12px">ยังไม่ได้อ่าน · กด “เริ่มอ่าน” หลังเชื่อมต่อ</div>
 
@@ -380,6 +388,41 @@
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- view 3: road dyno -->
+      <div class="stack" id="lv3" hidden>
+        <div class="dycards">
+          <div class="panel dycard"><span class="k">ก่อนจูน · แรงม้าสูงสุดที่ล้อ</span><b class="before" id="dyBefore">—</b><small class="muted" id="dyBeforeAt"></small></div>
+          <div class="panel dycard"><span class="k">หลังจูน · แรงม้าสูงสุดที่ล้อ</span><b class="after" id="dyAfter">—</b><small class="muted" id="dyAfterAt"></small></div>
+          <div class="panel dycard"><span class="k">ความเร็วสูงสุด</span><b id="dyVmax">—</b><small class="muted" id="dyVmaxAt"></small></div>
+          <div class="panel dycard"><span class="k" id="dyRangeLbl">15 → 68 km/h</span><b id="dyTime">—</b><small class="muted" id="dyTimeAt"></small></div>
+        </div>
+        <div class="panel stack">
+          <div class="row" style="justify-content:space-between">
+            <div class="row">
+              <div class="seg" role="radiogroup" aria-label="รอบที่วัด"><button data-dym="before" class="on">ก่อนจูน</button><button data-dym="after">หลังจูน</button></div>
+              <button class="btn o" id="dyArm">พร้อมวัด</button>
+              <button class="btn" id="dySim" hidden>จำลองการเร่ง</button>
+              <button class="btn" id="dyClear">ล้างผล</button>
+            </div>
+            <div class="seg" role="radiogroup" aria-label="แกนนอน"><button data-dyx="v" class="on">km/h</button><button data-dyx="rpm">rpm</button></div>
+          </div>
+          <div class="muted" id="dyStatus">กด “พร้อมวัด” แล้วเร่งสุดจากความเร็วต่ำกว่า 15 km/h บนทางเรียบ โปรแกรมจับรอบวิ่งให้เอง</div>
+          <canvas class="cv" id="dyChart" width="1600" height="640"></canvas>
+          <div class="legend"><span><i style="background:var(--before)"></i>ก่อนจูน</span><span><i style="background:var(--after)"></i>หลังจูน</span><span class="muted">เส้นประ = รอบเครื่อง (แกนขวา)</span></div>
+        </div>
+        <details class="panel"><summary>ตั้งค่าการคำนวณ</summary>
+          <div class="row end" style="margin-top:10px">
+            <label class="f">ความเร็วจาก<select id="dySrc"><option value="ecu">เซนเซอร์ความเร็วของกล่อง</option><option value="gps">GPS ของเครื่องนี้</option></select></label>
+            <label class="f">น้ำหนักรถ+คนขี่ (kg)<input id="dyMass" value="170" size="5"></label>
+            <label class="f">CdA (m²)<input id="dyCda" value="0.6" size="5"></label>
+            <label class="f">แรงต้านล้อ Crr<input id="dyCrr" value="0.015" size="5"></label>
+            <label class="f">จับเวลาจาก (km/h)<input id="dyFrom" value="15" size="4"></label>
+            <label class="f">ถึง (km/h)<input id="dyTo" value="68" size="4"></label>
+          </div>
+          <p class="muted">แรงม้า = มวล × ความเร่ง × ความเร็ว + แรงต้านลม + แรงต้านล้อ เป็นค่าประมาณที่ล้อ ใช้เทียบก่อน/หลังจูนบนถนนเส้นเดิม ทิศทางเดิม ลมและความชันเท่ากัน วัดหลายรอบแล้วดูค่าที่ซ้ำกัน เซนเซอร์ความเร็วของกล่องให้ค่าเป็นจำนวนเต็ม km/h ผลจึงแกว่งรอบละประมาณ ±4% ต่างกันน้อยกว่านี้ถือว่าเท่าเดิม · แรงบิดคำนวณจากรอบเครื่อง</p>
+        </details>
       </div>
     </section>
 
@@ -546,6 +589,7 @@
 <script src="js/link.js"></script>
 <script src="js/mapfinder.js"></script>
 <script src="js/autotune.js"></script>
+<script src="js/dyno.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

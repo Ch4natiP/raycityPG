@@ -145,8 +145,21 @@
       return null;
     }
     /** operating point: rpm and throttle wander independently so every map cell gets visited */
+    /** full-throttle pull from walking pace (for the road-dyno page); power rises a little with each applied tune */
+    startRun() { this.run = { last: Date.now(), v: 1.5, phase: 'pull' }; }
+    runState(s) {
+      const r = this.run, now = Date.now(), dt = Math.min(0.2, (now - r.last) / 1000); r.last = now;
+      const m = 170, drag = 0.5 * 1.2 * 0.6 * r.v * r.v, roll = 0.015 * m * 9.81;
+      const rpm = Math.min(9600, Math.round(1600 + r.v * 3.6 * 118));
+      const gain = 1 + 0.04 * (this.scales?.length || 0);
+      const hp = gain * (3.5 + 6.5 * Math.sin(Math.min(1, Math.max(0, (rpm - 1600) / 6200)) * Math.PI / 2)) * (rpm > 9000 ? 0.85 : 1);
+      if (r.phase === 'pull') { r.v += ((hp * 745.7) / Math.max(r.v, 1) - drag - roll) / m * dt; if (r.v * 3.6 >= 76) r.phase = 'coast'; }
+      else { r.v -= (drag + roll + 1.8 * m) / m * dt; if (r.v < 1) this.run = null; }
+      return { s, rpm, tps: r.phase === 'pull' ? 100 : 0, speed: r.v * 3.6 };
+    }
     state() {
       const s = (Date.now() - this.t0) / 1000;
+      if (this.run) return this.runState(s);
       // two incommensurate sweeps (Lissajous) so rpm × throttle covers the whole table within a minute or two
       const tps = Math.max(0, Math.min(100, 50 + 52 * Math.sin(s / 1.9 + 1)));
       const rpm = Math.round(5200 + 4000 * Math.sin(s / 5.3));
@@ -163,14 +176,14 @@
     applyFuelScale(fn) { (this.scales ||= []).push(fn); }
     afr() { const { rpm, tps } = this.state(); return +(this.afrAt(rpm, tps) + (Math.random() - 0.5) * 0.2).toFixed(2); }
     table(t) {
-      const { s, rpm, tps } = this.state();
+      const { s, rpm, tps, speed } = this.state();
       if (t === 0x00) return [0x38, 0x12, 0x4B, 0x30, 0x4A, 0x00, 0x41, 0x30];  // "K0W-A" style id bytes
       if (t === 0x11) {
         const load = tps / 100;
         const ect = Math.min(40 + 95, Math.round(40 + 30 + s * 1.5));
         const inj = Math.round((2.1 + load * 4 + rpm / 9000) * 1000 / 4);
         return [rpm >> 8, rpm & 255, 26 + Math.round(load * 180), Math.round(tps * 1.6), 90, ect, 120, 40 + 32, 60 + Math.round(load * 60), 35 + Math.round(load * 60),
-                0, 0, 138 + Math.round(Math.sin(s) * 3), Math.round(load * rpm / 95), inj >> 8, inj & 255, Math.round((12 + load * 18 + 64) * 2), 0, 0, 0];
+                0, 0, 138 + Math.round(Math.sin(s) * 3), Math.round(speed ?? load * rpm / 95), inj >> 8, inj & 255, Math.round((12 + load * 18 + 64) * 2), 0, 0, 0];
       }
       if (t === 0x20) {
         const afr = this.afrAt(rpm, tps), o2 = 0.45 + 0.4 * Math.tanh((14.7 - afr) * 3);

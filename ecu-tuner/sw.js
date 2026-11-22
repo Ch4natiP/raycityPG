@@ -1,6 +1,6 @@
 // Offline cache so the installed app opens without internet
-const CACHE = 'sm-remap-v4';
-const FILES = ['./', 'index.html', 'js/honda.js', 'js/link.js', 'js/app.js', 'js/mapfinder.js', 'js/autotune.js', 'manifest.webmanifest', 'icon.svg'];
+const CACHE = 'sm-remap-v5';
+const FILES = ['./', 'index.html', 'js/honda.js', 'js/link.js', 'js/app.js', 'js/mapfinder.js', 'js/autotune.js', 'js/dyno.js', 'manifest.webmanifest', 'icon.svg'];
 self.addEventListener('install', e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())));
 self.addEventListener('activate', e => e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())));
 // network first (always newest version when online), cache as fallback

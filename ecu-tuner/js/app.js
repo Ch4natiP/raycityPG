@@ -161,6 +161,7 @@ async function liveLoop() {
       hist.push({ rpm: get('rpm'), tps: get('tps'), inj: get('inj'), afr, afr10: afr == null ? 0 : Math.max(0, afr - 10) }); if (hist.length > 300) hist.shift();
       drawGauge(get('rpm')); drawChart(); drawAfr(afr);
       onLiveSample({ rpm: get('rpm'), tps: get('tps'), map: get('map'), ect: get('ect'), afr });
+      onDynoSample({ v: get('speed'), rpm: get('rpm') });
       if (recording) recording.push([Date.now(), ...vals.map(v => v.value)]), recording.cols ||= vals.map(v => `${v.name} (${v.unit})`);
       $('liveInfo').textContent = `${(n / ((performance.now() - t0) / 1000)).toFixed(1)} ครั้ง/วิ${recording ? ` • กำลังบันทึก ${recording.length} แถว` : ''}`;
     } else $('liveInfo').textContent = 'ECU ไม่ตอบตาราง 0x11 — รุ่นนี้อาจใช้ตารางอื่น (ดูใน Terminal / สำรองตาราง)';
@@ -270,7 +271,8 @@ drawAfr(null);
 // ---------------- Live view switch ----------------
 document.querySelectorAll('[data-lv]').forEach(b => b.onclick = () => {
   document.querySelectorAll('[data-lv]').forEach(x => x.classList.toggle('on', x === b));
-  $('lv1').hidden = b.dataset.lv !== '1'; $('lv2').hidden = b.dataset.lv !== '2';
+  for (const n of ['1', '2', '3']) $('lv' + n).hidden = b.dataset.lv !== n;
+  if (b.dataset.lv === '3') { $('dySim').hidden = !link?.startRun; drawDyno(); }
   if (b.dataset.lv === '2') { fillRtMaps(); buildRt(); }
 });
 
@@ -391,6 +393,95 @@ $('rtDemo').onclick = () => {
   fillRtMaps(); $('rtMap').value = '0'; $('rtYk').value = ''; $('rtXk').value = ''; buildRt();
   toast('โหลดแมพตัวอย่างแล้ว — ต่อ ECU จำลอง เลือก AF = Wideband แล้วกดเริ่มอ่าน', 6000);
 };
+
+// ---------------- Road dyno ----------------
+const dyno = { mode: 'before', xAxis: 'v', armed: false, det: null, runs: store.get('dyno', {}), gpsWatch: null };
+const dyOpts = () => ({ mass: +$('dyMass').value || 170, cda: +$('dyCda').value || 0.6, crr: +$('dyCrr').value || 0.015, from: +$('dyFrom').value || 15, to: +$('dyTo').value || 68 });
+document.querySelectorAll('[data-dym]').forEach(b => b.onclick = () => { dyno.mode = b.dataset.dym; document.querySelectorAll('[data-dym]').forEach(x => x.classList.toggle('on', x === b)); });
+document.querySelectorAll('[data-dyx]').forEach(b => b.onclick = () => { dyno.xAxis = b.dataset.dyx; document.querySelectorAll('[data-dyx]').forEach(x => x.classList.toggle('on', x === b)); drawDyno(); });
+function dyStatus(t) { $('dyStatus').textContent = t; }
+function armDyno(on) {
+  dyno.armed = on; $('dyArm').textContent = on ? 'ยกเลิก' : 'พร้อมวัด'; $('dyArm').className = 'btn ' + (on ? '' : 'o');
+  dyno.det = on ? new Dyno.RunDetector(dyOpts()) : null;
+  if (on && $('dySrc').value === 'gps') startGps(); else stopGps();
+  dyStatus(on ? `พร้อมแล้ว (${dyno.mode === 'before' ? 'ก่อนจูน' : 'หลังจูน'}) · ชะลอให้ต่ำกว่า ${dyOpts().from} km/h แล้วเร่งสุด` : 'กด “พร้อมวัด” แล้วเร่งสุดจากความเร็วต่ำกว่า 15 km/h บนทางเรียบ โปรแกรมจับรอบวิ่งให้เอง');
+}
+$('dyArm').onclick = () => {
+  if (dyno.armed) return armDyno(false);
+  if ($('dySrc').value === 'ecu' && !livePolling) return toast('เชื่อมต่อแล้วกด “เริ่มอ่าน” ก่อน (หรือเลือกความเร็วจาก GPS)', 5000);
+  armDyno(true);
+};
+$('dySim').onclick = () => { if (!livePolling) return toast('กด “เริ่มอ่าน” ก่อน'); if (!dyno.armed) armDyno(true); link.startRun(); dyStatus('ECU จำลองกำลังเร่งสุด…'); };
+$('dyClear').onclick = async () => { if (await ask(`ล้างผล${dyno.mode === 'before' ? 'ก่อนจูน' : 'หลังจูน'}?`, 'ล้างผล', true)) { delete dyno.runs[dyno.mode]; store.set('dyno', dyno.runs); drawDyno(); } };
+function onDynoSample({ v, rpm }) {
+  if (!dyno.armed || $('dySrc').value !== 'ecu') return;
+  feedDyno({ t: performance.now() / 1000, v, rpm });
+}
+function feedDyno(sample) {
+  const run = dyno.det.push(sample);
+  if (dyno.det.rec) dyStatus(`กำลังวัด… ${sample.v.toFixed(0)} km/h · ${sample.rpm ? sample.rpm + ' rpm' : ''}`);
+  if (!run) return;
+  const res = Dyno.analyse(run, dyOpts());
+  if (res.maxHp == null) { dyStatus('รอบนี้สั้นเกินไป ลองใหม่'); return; }
+  res.date = new Date().toLocaleString('th-TH'); res.src = $('dySrc').value; res.opts = dyOpts();
+  res.curve = res.curve.map(p => ({ v: +p.v.toFixed(1), rpm: p.rpm, hp: +p.hp.toFixed(2) }));
+  dyno.runs[dyno.mode] = res; store.set('dyno', dyno.runs);
+  armDyno(false);
+  dyStatus(`วัด${dyno.mode === 'before' ? 'ก่อนจูน' : 'หลังจูน'}เสร็จ: ${res.maxHp} hp ที่ ${res.atV.toFixed(0)} km/h${res.time ? ` · ${res.from}→${res.to} km/h ${res.time} วิ` : ''}`);
+  drawDyno();
+}
+function startGps() {
+  if (!navigator.geolocation) return toast('เครื่องนี้ไม่มี GPS / ไม่อนุญาตตำแหน่ง', 5000);
+  stopGps();
+  dyno.gpsWatch = navigator.geolocation.watchPosition(p => {
+    if (dyno.armed && p.coords.speed != null) feedDyno({ t: p.timestamp / 1000, v: p.coords.speed * 3.6, rpm: hist.length ? hist[hist.length - 1].rpm : 0 });
+  }, e => toast('ใช้ GPS ไม่ได้: ' + (e.message || 'ไม่ได้รับอนุญาต') + ' — เปิดแบบรันในเครื่องหรือบนมือถือ', 6000), { enableHighAccuracy: true, maximumAge: 0 });
+}
+function stopGps() { if (dyno.gpsWatch != null) navigator.geolocation.clearWatch(dyno.gpsWatch); dyno.gpsWatch = null; }
+function drawDyno() {
+  const B = dyno.runs.before, A = dyno.runs.after;
+  const fmtHp = r => r ? `${r.maxHp} HP` : '—';
+  $('dyBefore').textContent = fmtHp(B); $('dyAfter').textContent = fmtHp(A);
+  $('dyBeforeAt').textContent = B ? `ที่ ${B.atV.toFixed(0)} km/h${B.atRpm ? ` · ${B.atRpm} rpm` : ''}${B.torque ? ` · ${B.torque} N·m` : ''} · ${B.date}` : 'ยังไม่ได้วัด';
+  $('dyAfterAt').textContent = A ? `${B ? `${A.maxHp - B.maxHp >= 0 ? '+' : ''}${(A.maxHp - B.maxHp).toFixed(1)} HP (${((A.maxHp / B.maxHp - 1) * 100).toFixed(1)}%) · ` : ''}ที่ ${A.atV.toFixed(0)} km/h · ${A.date}` : 'ยังไม่ได้วัด';
+  const last = A || B;
+  $('dyVmax').textContent = last ? `${last.vmax} km/h` : '—';
+  $('dyVmaxAt').textContent = A && B ? `ก่อน ${B.vmax} · หลัง ${A.vmax}` : last ? (A ? 'หลังจูน' : 'ก่อนจูน') : '';
+  const o = dyOpts(); $('dyRangeLbl').textContent = `${o.from} → ${o.to} km/h`;
+  $('dyTime').textContent = last?.time != null ? `${last.time} s` : '—';
+  $('dyTimeAt').textContent = A && B && A.time != null && B.time != null ? `ก่อน ${B.time} s · หลัง ${A.time} s (${(A.time - B.time).toFixed(2)} s)` : last && last.time == null ? `ยังไม่ถึง ${o.to} km/h` : '';
+  // chart
+  const c = $('dyChart'), g = c.getContext('2d'), W = c.width, H = c.height, L = 70, R = 70, T = 110, Bm = 60;
+  g.clearRect(0, 0, W, H);
+  const xs = dyno.xAxis, runs = [[B, css('--before')], [A, css('--after')]].filter(r => r[0]);
+  const all = runs.flatMap(([r]) => r.curve);
+  const xmax = Math.max(xs === 'v' ? 80 : 10000, ...all.map(p => p[xs] || 0)) * 1.02, xmin = 0;
+  const hpMax = Math.max(10, ...all.map(p => p.hp)) * 1.2, rpmMax = 10000;
+  const X = v => L + (W - L - R) * (v - xmin) / (xmax - xmin), Y = hp => H - Bm - (H - T - Bm) * hp / hpMax, Yr = rpm => H - Bm - (H - T - Bm) * rpm / rpmMax;
+  g.font = `22px ${css('--font-mono')}`; g.fillStyle = css('--muted'); g.strokeStyle = css('--line'); g.lineWidth = 1;
+  const hpStep = hpMax > 30 ? 10 : hpMax > 15 ? 5 : 2;
+  g.textAlign = 'right';
+  for (let h = 0; h <= hpMax; h += hpStep) { g.beginPath(); g.moveTo(L, Y(h) + .5); g.lineTo(W - R, Y(h) + .5); g.stroke(); g.fillText(h, L - 10, Y(h) + 7); }
+  g.textAlign = 'center';
+  const xStep = xs === 'v' ? 10 : 1000;
+  for (let x = 0; x <= xmax; x += xStep) g.fillText(xs === 'v' ? x : (x / 1000) + 'k', X(x), H - Bm + 30);
+  g.textAlign = 'left'; g.fillText('HP', 10, T - 12); g.textAlign = 'right'; g.fillText(xs === 'v' ? 'km/h' : 'rpm', W - 10, H - 12);
+  if (xs === 'v') { g.fillText('rpm', W - 10, T - 26); for (let r = 0; r <= rpmMax; r += 2000) g.fillText(r / 1000 + 'k', W - 10, Yr(r) + 7); }
+  if (!runs.length) { g.textAlign = 'center'; g.fillStyle = css('--muted'); g.font = `28px ${css('--font-body')}`; g.fillText('ยังไม่มีผลวัด · กด “พร้อมวัด” แล้วเร่งสุด', W / 2, H / 2); return; }
+  runs.forEach(([r, col], ri) => {
+    const pts = r.curve.filter(p => p[xs]).sort((a, b) => a[xs] - b[xs]);
+    if (xs === 'v') { g.strokeStyle = col; g.globalAlpha = .45; g.setLineDash([8, 7]); g.lineWidth = 2; g.beginPath(); pts.forEach((p, i) => i ? g.lineTo(X(p.v), Yr(p.rpm)) : g.moveTo(X(p.v), Yr(p.rpm))); g.stroke(); g.setLineDash([]); g.globalAlpha = 1; }
+    g.strokeStyle = col; g.lineWidth = 4; g.beginPath(); pts.forEach((p, i) => i ? g.lineTo(X(p[xs]), Y(p.hp)) : g.moveTo(X(p[xs]), Y(p.hp))); g.stroke();
+    const pk = pts.reduce((m, p) => (p.hp > m.hp ? p : m), pts[0]);
+    const px = X(pk[xs]), py = Y(pk.hp);
+    g.fillStyle = col; g.beginPath(); g.arc(px, py, 8, 0, 7); g.fill();
+    const label = `MAX ${r.maxHp} HP`; g.font = `600 24px ${css('--font-mono')}`; const tw = g.measureText(label).width;
+    const bx = Math.min(W - R - tw - 24, Math.max(L, px - tw / 2 - 12)), by = py - 52 - ri * 44;   // stack labels when both runs peak close together
+    g.fillStyle = css('--surface'); g.strokeStyle = col; g.lineWidth = 2; g.beginPath(); g.roundRect(bx, by, tw + 24, 36, 8); g.fill(); g.stroke();
+    g.fillStyle = col; g.textAlign = 'left'; g.fillText(label, bx + 12, by + 26); g.font = `22px ${css('--font-mono')}`;
+  });
+}
+drawDyno();
 
 // ---------------- DTC ----------------
 async function readDtc(cmd) {

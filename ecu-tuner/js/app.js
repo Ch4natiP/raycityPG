@@ -40,6 +40,9 @@ function go(page) {
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id === 'p-' + page));
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.go === page));
   if (page === 'files') renderFiles();
+  if (page === 'calc') calc();
+  if (page === 'dtcref') renderDtcRef();
+  if (page === 'report' && !$('rpBike').value) $('rpBike').value = catBike();
   if (page !== 'live') stopLive();
   scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -904,6 +907,56 @@ $('cmpList').onclick = e => {
   const s = +b.dataset.rg, t = found.find(t => s >= t.off && s < t.off + t.bytes);
   if (t) useTable(t, `ตาราง ${hx(t.off)}`);
   else { $('hexGo').value = s.toString(16); showHex(); document.querySelector('#p-tuner details').open = true; $('hexView').scrollIntoView({ behavior: 'smooth' }); }
+};
+
+// ---------------- Shop tools ----------------
+function calc() {
+  const n = id => parseFloat($(id).value), disp = Tools.displacement(n('cBore') || 0, n('cStroke') || 0, n('cCyl') || 1);
+  $('cDisp').textContent = disp ? disp + ' cc' : '—';
+  const hp = n('cHp') || 0, injN = Math.max(1, n('cInjN') || 1), duty = Math.min(0.99, (n('cDuty') || 80) / 100);
+  const need = Tools.injectorNeeded(hp, { cyl: injN, duty });
+  $('cInjNeed').textContent = need ? need + ' cc/min' : '—';
+  $('cInjNote').textContent = need ? `ต่อหัว ${injN} หัว ที่รอบใช้งาน ${Math.round(duty * 100)}% · หัวฉีดจริงควรเผื่อขึ้นเบอร์ถัดไป` : '';
+  const sc = Tools.fuelScale({ oldCc: n('cOldCc') || null, newCc: n('cNewCc') || null, oldDisp: n('cOldD') || null, newDisp: n('cNewD') || null });
+  $('cScale').textContent = sc.toFixed(3);
+}
+['cBore', 'cStroke', 'cCyl', 'cHp', 'cInjN', 'cDuty', 'cOldCc', 'cNewCc', 'cOldD', 'cNewD'].forEach(id => $(id).addEventListener('input', calc));
+function renderDtcRef() {
+  const q = $('dtcQ').value, rows = Tools.dtcSearch(q);
+  $('dtcRefBody').innerHTML = rows.map(d => `<tr><td><span class="code">${d.code}</span></td><td>${esc(d.name)}</td><td>${esc(d.cause)}</td><td class="muted">${esc(d.check)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">ไม่พบ</td></tr>';
+}
+$('dtcQ').addEventListener('input', renderDtcRef);
+function catBike() { const r = binFileName ? Catalog.match(binFileName) : null; return r ? r.model : ''; }
+let lastReport = null;
+$('rpGen').onclick = () => {
+  const B = store.get('dyno', {}).before, A = store.get('dyno', {}).after, esc2 = esc;
+  const dtcRows = [...($('dtcBody').querySelectorAll('tr'))].map(tr => tr.textContent.trim()).filter(t => /\d-\d/.test(t));
+  const rows = [];
+  rows.push(['ร้าน', esc2(settings.brand)]);
+  if ($('rpCust').value) rows.push(['ลูกค้า', esc2($('rpCust').value)]);
+  rows.push(['รถ', esc2($('rpBike').value || catBike() || '—')]);
+  if ($('rpKm').value) rows.push(['เลขไมล์', esc2($('rpKm').value) + ' กม.']);
+  if (ecu.id) rows.push(['กล่อง ECU', esc2(ecu.id)]);
+  rows.push(['วันที่', new Date().toLocaleString('th-TH')]);
+  let dyno = '';
+  if (A && B) dyno = `<table><tr><th>แรงม้าที่ล้อ</th><td>ก่อน <b class="big">${B.maxHp}</b> → หลัง <b class="big">${A.maxHp}</b> HP (${A.maxHp - B.maxHp >= 0 ? '+' : ''}${(A.maxHp - B.maxHp).toFixed(1)} HP)</td></tr>`
+    + (A.time != null && B.time != null ? `<tr><th>${B.from}–${B.to} km/h</th><td>ก่อน ${B.time} → หลัง ${A.time} วิ</td></tr>` : '') + `<tr><th>ความเร็วสูงสุด</th><td>ก่อน ${B.vmax} → หลัง ${A.vmax} km/h</td></tr></table>`;
+  else if (A || B) { const r = A || B; dyno = `<table><tr><th>แรงม้าที่ล้อ</th><td class="big">${r.maxHp} HP</td></tr><tr><th>ความเร็วสูงสุด</th><td>${r.vmax} km/h</td></tr></table>`; }
+  const html = `<div class="sheet"><div class="hd"><div><h2>${esc2(settings.brand)}</h2><small>ใบส่งงานปรับแต่ง ECU</small></div><div class="muted">${new Date().toLocaleDateString('th-TH')}</div></div>`
+    + `<table>${rows.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('')}</table>`
+    + (dyno ? `<b>ผลทดสอบ Dyno</b>${dyno}` : '')
+    + ($('rpNote').value ? `<b>รายการที่ทำ</b><p>${esc2($('rpNote').value).replace(/\n/g, '<br>')}</p>` : '')
+    + (dtcRows.length ? `<b>รหัสปัญหาที่พบ</b><p>${dtcRows.map(esc2).join('<br>')}</p>` : '')
+    + `<p class="muted">เอกสารนี้สรุปจากข้อมูลที่วัดในเครื่องมือ SM Remap · แรงม้าเป็นค่าประมาณที่ล้อ</p></div>`;
+  $('rpOut').innerHTML = html; $('rpSave').disabled = false;
+  lastReport = `<!doctype html><html lang="th"><head><meta charset="utf-8"><title>ใบส่งรถ ${esc2($('rpBike').value || '')}</title>`
+    + `<style>body{font-family:system-ui,'Segoe UI',sans-serif;max-width:700px;margin:24px auto;padding:0 16px;color:#13222b}h2{margin:0 0 2px}.hd{display:flex;justify-content:space-between;border-bottom:2px solid #0a8f86;padding-bottom:8px;margin-bottom:10px}table{width:100%;border-collapse:collapse;margin:6px 0}td,th{border:1px solid #ccc;padding:6px 9px;text-align:left}th{background:#f3f6f7;width:38%}.big{font-size:20px;color:#0a8f86;font-weight:700}.muted{color:#5a6b73}</style></head><body>${html}</body></html>`;
+};
+$('rpSave').onclick = async () => {
+  if (!lastReport) return;
+  const name = `ใบส่งรถ_${($('rpBike').value || 'bike').replace(/\s/g, '')}_${new Date().toISOString().slice(0, 10)}.html`;
+  await db.add({ name, kind: 'other', data: new TextEncoder().encode(lastReport).buffer });
+  download(name, lastReport, 'text/html'); toast('บันทึกใบส่งรถลงคลังแล้ว');
 };
 
 // ---------------- PWA ----------------

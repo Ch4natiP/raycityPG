@@ -178,6 +178,14 @@
   .rdbar { height: 10px; border-radius: 99px; background: var(--surface-2); overflow: hidden; border: 1px solid var(--line); }
   .rdbar div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
   .xdf-list .cat { position: static; }
+  .bignum { display: grid; gap: 2px; margin-left: auto; text-align: right; }
+  .bignum b { font: 600 26px/1.1 var(--font-mono); font-variant-numeric: tabular-nums; color: var(--accent); }
+  .sheet h2 { margin: 0 0 2px; font: 700 20px var(--font-display); }
+  .sheet .hd { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--accent); padding-bottom: 8px; margin-bottom: 10px; flex-wrap: wrap; gap: 8px; }
+  .sheet table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 6px 0; }
+  .sheet td, .sheet th { border: 1px solid var(--line); padding: 6px 9px; text-align: left; }
+  .sheet th { background: var(--surface-2); font-weight: 600; width: 38%; }
+  .sheet .big { font: 600 22px var(--font-mono); color: var(--accent); }
   /* tables */
   .tw { overflow-x: auto; }
   table.list { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -260,6 +268,9 @@
   <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/></symbol>
   <symbol id="i-flask" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6L4.5 19a1.3 1.3 0 0 0 1.1 2h12.8a1.3 1.3 0 0 0 1.1-2L14 9V3"/><path d="M7 15h10"/></symbol>
   <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/></symbol>
+  <symbol id="i-calc" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 11h2M12 11h2M16 11h0M8 15h2M12 15h2M16 15v2M8 19h6"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19a2 2 0 0 0 2 2h13"/></symbol>
+  <symbol id="i-sheet" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></symbol>
 </svg>
 
 <div class="app">
@@ -285,6 +296,10 @@
       <div class="grp">จูน</div>
       <button data-go="tuner"><svg class="i"><use href="#i-map"/></svg>แก้แมพ</button>
       <button data-go="flash"><svg class="i"><use href="#i-bolt"/></svg>Flash<span class="tag">LOCK</span></button>
+      <div class="grp">เครื่องมือช่าง</div>
+      <button data-go="calc"><svg class="i"><use href="#i-calc"/></svg>คำนวณซีซี/หัวฉีด</button>
+      <button data-go="dtcref"><svg class="i"><use href="#i-book"/></svg>คู่มือรหัส DTC</button>
+      <button data-go="report"><svg class="i"><use href="#i-sheet"/></svg>ใบส่งรถลูกค้า</button>
       <div class="grp">อื่น ๆ</div>
       <button data-go="files"><svg class="i"><use href="#i-folder"/></svg>คลังไฟล์</button>
       <button data-go="term"><svg class="i"><use href="#i-term"/></svg>Terminal</button>
@@ -318,6 +333,9 @@
         <a data-go="recovery"><span class="ic"><svg class="i"><use href="#i-save"/></svg></span><span><b>สำรองกล่อง</b><small>อ่านตารางทั้งหมดจากกล่องพร้อมรหัส ECU</small></span><span class="st">พร้อม</span></a>
         <a data-go="flash"><span class="ic"><svg class="i"><use href="#i-bolt"/></svg></span><span><b>Flash แมพลงกล่อง</b><small>เปิดทีละรุ่นหลังยืนยันกับกล่องจริง</small></span><span class="st lock">รอยืนยันรุ่น</span></a>
         <a data-go="term"><span class="ic"><svg class="i"><use href="#i-term"/></svg></span><span><b>Terminal</b><small>ส่ง/ดูไบต์ดิบ ใช้ดักโปรโตคอลรุ่นใหม่</small></span><span class="st">พร้อม</span></a>
+        <a data-go="calc"><span class="ic"><svg class="i"><use href="#i-calc"/></svg></span><span><b>คำนวณซีซี/หัวฉีด</b><small>ขนาดหัวฉีดตามแรงม้า, สเกลน้ำมันเมื่อเปลี่ยนหัวฉีด/ความจุ</small></span><span class="st">พร้อม</span></a>
+        <a data-go="dtcref"><span class="ic"><svg class="i"><use href="#i-book"/></svg></span><span><b>คู่มือรหัส DTC</b><small>ความหมาย สาเหตุ และจุดที่ต้องเช็ก</small></span><span class="st">พร้อม</span></a>
+        <a data-go="report"><span class="ic"><svg class="i"><use href="#i-sheet"/></svg></span><span><b>ใบส่งรถลูกค้า</b><small>สรุปงานจูน ก่อน/หลัง พร้อมชื่อร้าน</small></span><span class="st">พร้อม</span></a>
         <a data-go="files"><span class="ic"><svg class="i"><use href="#i-folder"/></svg></span><span><b>คลังไฟล์</b><small>เก็บ bin, log และไฟล์สำรองไว้ในเครื่องนี้</small></span><span class="st">พร้อม</span></a>
       </div>
     </section>
@@ -581,6 +599,68 @@
       <div class="panel tw"><table class="list"><thead><tr><th>ชื่อ</th><th>ชนิด</th><th>ขนาด</th><th>วันที่</th><th></th></tr></thead><tbody id="filesBody"></tbody></table></div>
     </section>
 
+    <!-- ===================== CALC ===================== -->
+    <section class="page" id="p-calc">
+      <div class="ph"><div><div class="eyebrow">เครื่องมือช่าง</div><h1>คำนวณซีซี / หัวฉีด</h1><p>ประมาณขนาดหัวฉีดและสเกลน้ำมันเวลาเปลี่ยนอะไหล่ ใช้เป็นจุดตั้งต้นแล้วจูนจริงด้วย AF อีกที</p></div></div>
+      <div class="stack" style="max-width:760px">
+        <div class="panel stack">
+          <b>ความจุเครื่อง (จากบอร์ x ช่วงชัก)</b>
+          <div class="row end">
+            <label class="f">บอร์ (มม.)<input id="cBore" value="52.4" size="6"></label>
+            <label class="f">ช่วงชัก (มม.)<input id="cStroke" value="57.9" size="6"></label>
+            <label class="f">จำนวนสูบ<input id="cCyl" value="1" size="4"></label>
+            <div class="bignum"><span class="muted">ความจุ</span><b id="cDisp">—</b></div>
+          </div>
+        </div>
+        <div class="panel stack">
+          <b>ขนาดหัวฉีดที่ต้องใช้</b>
+          <div class="row end">
+            <label class="f">แรงม้าที่ล้อ (เป้า)<input id="cHp" value="15" size="6"></label>
+            <label class="f">จำนวนหัวฉีด<input id="cInjN" value="1" size="4"></label>
+            <label class="f">รอบใช้งานสูงสุด %<input id="cDuty" value="80" size="5"></label>
+            <div class="bignum"><span class="muted">ต้องการ</span><b id="cInjNeed">—</b></div>
+          </div>
+          <div class="muted" id="cInjNote"></div>
+        </div>
+        <div class="panel stack">
+          <b>สเกลน้ำมันเมื่อเปลี่ยนหัวฉีดหรือความจุ</b>
+          <div class="row end">
+            <label class="f">หัวฉีดเดิม cc/min<input id="cOldCc" placeholder="—" size="6"></label>
+            <label class="f">หัวฉีดใหม่ cc/min<input id="cNewCc" placeholder="—" size="6"></label>
+            <label class="f">ความจุเดิม cc<input id="cOldD" placeholder="—" size="6"></label>
+            <label class="f">ความจุใหม่ cc<input id="cNewD" placeholder="—" size="6"></label>
+            <div class="bignum"><span class="muted">คูณแมพน้ำมัน ×</span><b id="cScale">1.00</b></div>
+          </div>
+          <div class="muted">นำตัวคูณนี้ไปใช้กับตารางน้ำมันทั้งตาราง (ใน “แก้แมพ” เลือกทุกช่องแล้วกด ±%) เพื่อคงส่วนผสมเดิมเป็นจุดเริ่ม</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== DTC REF ===================== -->
+    <section class="page" id="p-dtcref">
+      <div class="ph"><div><div class="eyebrow">เครื่องมือช่าง</div><h1>คู่มือรหัส DTC</h1><p>รหัสไฟโชว์ของ Honda PGM-FI พร้อมสาเหตุและจุดที่ต้องเช็ก</p></div>
+        <input id="dtcQ" placeholder="ค้นหา เช่น 12, o2, ลิ้นเร่ง" style="min-width:220px"></div>
+      <div class="panel tw"><table class="list"><thead><tr><th>รหัส</th><th>ความหมาย</th><th>สาเหตุที่พบบ่อย</th><th>เช็กที่</th></tr></thead><tbody id="dtcRefBody"></tbody></table></div>
+      <p class="muted">อ้างอิงรหัสรวมของ PGM-FI รถเล็ก บางรุ่นอาจต่างกันเล็กน้อย ยึดคู่มือซ่อมของรุ่นนั้นเป็นหลัก</p>
+    </section>
+
+    <!-- ===================== REPORT ===================== -->
+    <section class="page" id="p-report">
+      <div class="ph"><div><div class="eyebrow">เครื่องมือช่าง</div><h1>ใบส่งรถลูกค้า</h1><p>สรุปงานจูนก่อน/หลัง ดึงค่าจาก Dyno และ DTC ที่วัดไว้ให้อัตโนมัติ</p></div></div>
+      <div class="stack" style="max-width:820px">
+        <div class="panel stack">
+          <div class="row end">
+            <label class="f">ชื่อลูกค้า<input id="rpCust" placeholder="(ไม่บังคับ)"></label>
+            <label class="f">รุ่นรถ / ทะเบียน<input id="rpBike" placeholder="เช่น Click125i"></label>
+            <label class="f">เลขไมล์<input id="rpKm" placeholder="กม." size="8"></label>
+          </div>
+          <label class="f">รายการที่ทำ / หมายเหตุ<textarea id="rpNote" rows="3" placeholder="เช่น ปรับน้ำมัน+ไฟ, ปลดความเร็ว, ล้างลิ้นเร่ง"></textarea></label>
+          <div class="row"><button class="btn o" id="rpGen">สร้างใบส่งรถ</button><button class="btn" id="rpSave" disabled>บันทึกลงคลัง (.html)</button></div>
+        </div>
+        <div class="panel" id="rpOut"><p class="muted" style="margin:0">กรอกข้อมูลแล้วกด “สร้างใบส่งรถ” · Dyno และ DTC จะดึงจากที่วัดไว้ในเครื่องนี้</p></div>
+      </div>
+    </section>
+
     <!-- ===================== TERMINAL ===================== -->
     <section class="page" id="p-term">
       <div class="ph"><div><div class="eyebrow">อื่น ๆ</div><h1>Terminal</h1><p>ส่งและดูไบต์ดิบบนสาย K-line ใช้ดักโปรโตคอลรุ่นใหม่</p></div></div>
@@ -644,6 +724,7 @@
 <script src="js/dyno.js"></script>
 <script src="js/xdf.js"></script>
 <script src="js/catalog.js"></script>
+<script src="js/tools.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

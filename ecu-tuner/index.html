@@ -103,6 +103,13 @@
   table.map td { cursor: cell; color: #111; font-weight: 500; }
   table.map td.sel { outline: 2px solid #fff; outline-offset: -2px; }
   table.map td.chg { box-shadow: inset 0 0 0 2px #000; text-decoration: underline; }
+  table.map td.cmpd { background-image: repeating-linear-gradient(45deg, #0000 0 5px, #ffffff66 5px 7px); }
+  table.map th.ax { color: #ffd08a; }
+  .pick { display: flex; flex-wrap: wrap; gap: 6px; }
+  .pick button { padding: 5px 10px; border-radius: 8px; border: 1px solid #3a3150; background: #1f1a2b; cursor: pointer; font-size: 13px; }
+  .pick button:hover, .pick button.on { border-color: var(--orange); }
+  .pick button b { color: var(--orange); font-weight: 500; }
+  .hex .c { color: #c4a5ff; background: #8b5cf633; }
   .hex { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; white-space: pre; overflow: auto; max-height: 50vh; background: #0e0c14; border: 1px solid var(--line); border-radius: 10px; padding: 10px; color: #c9c0dc; }
   .hex .d { color: var(--orange); }
 
@@ -228,12 +235,22 @@
     </div>
     <div class="card">
       <div class="row">
+        <button class="btn o" id="mfFind" disabled>🔍 ค้นหาตารางอัตโนมัติ</button>
+        <label class="btn" id="cmpLbl">📑 เทียบกับไฟล์อื่น<input type="file" id="cmpFile" accept=".bin,.rom,.ori" hidden></label>
+        <span class="muted" id="mfInfo">ไม่ต้องมี XDF — โปรแกรมหาตารางจากรูปแบบข้อมูลเอง (แม่นที่สุดกับกล่อง Honda Keihin)</span>
+      </div>
+      <div id="mfList" style="margin-top:8px"></div>
+      <div id="cmpList" style="margin-top:8px"></div>
+    </div>
+    <div class="card">
+      <div class="row">
         <label class="f">ตารางที่บันทึกไว้<select id="mapPick"><option value="">— ตั้งค่าเอง —</option></select></label>
         <label class="f">ชื่อตาราง<input id="mName" value="Fuel map" size="12"></label>
         <label class="f">Offset (hex)<input id="mOff" value="0" size="7"></label>
         <label class="f">แถว<input id="mRows" type="number" value="16" min="1" max="64" style="width:64px"></label>
         <label class="f">คอลัมน์<input id="mCols" type="number" value="16" min="1" max="64" style="width:64px"></label>
-        <label class="f">ชนิด<select id="mType"><option value="u8">8-bit</option><option value="u16be">16-bit BE</option><option value="u16le">16-bit LE</option></select></label>
+        <label class="f">ชนิด<select id="mType"><option value="u16le" selected>16-bit LE (Honda)</option><option value="u8">8-bit</option><option value="u16be">16-bit BE</option></select></label>
+        <label class="f">แกน (hex, ไม่บังคับ)<input id="mAxis" placeholder="—" size="7" title="ตำแหน่งแกนแถว ตามด้วยแกนคอลัมน์"></label>
         <label class="f">คูณ (scale)<input id="mScale" value="1" size="5"></label>
         <button class="btn" id="mShow">แสดง</button>
         <button class="btn" id="mKeep">⭐ จำตารางนี้</button>
@@ -251,7 +268,7 @@
       <div class="row">
         <b>Checksum</b>
         <label class="f">วิธีคำนวณ<select id="csType"><option value="sum0">ผลรวม 8-bit = 0 (Honda Keihin)</option><option value="none">ไม่แก้</option></select></label>
-        <label class="f">ตำแหน่งไบต์ checksum (hex)<input id="csOff" placeholder="เช่น 7FFF" size="8"></label>
+        <label class="f">ตำแหน่งไบต์ checksum (hex)<input id="csOff" placeholder="ต้องรู้ตำแหน่งของรุ่นนั้น" size="14"></label>
         <button class="btn" id="csFix">✔ ตรวจ/แก้ checksum</button>
         <span class="muted" id="csInfo"></span>
       </div>
@@ -353,6 +370,7 @@
 
 <script src="js/honda.js"></script>
 <script src="js/link.js"></script>
+<script src="js/mapfinder.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

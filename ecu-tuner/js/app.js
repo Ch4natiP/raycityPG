@@ -262,8 +262,8 @@ function loadBin(name, data) {
   bin = new Uint8Array(data); orig = new Uint8Array(data); binFileName = name;
   $('binName').textContent = `${name} (${bin.length.toLocaleString()} B)`;
   $('binInfo').textContent = `${bin.length.toLocaleString()} ไบต์`;
-  $('binSave').disabled = $('binDl').disabled = false;
-  if (!$('csOff').value) $('csOff').value = (bin.length - 1).toString(16).toUpperCase();
+  $('binSave').disabled = $('binDl').disabled = $('mfFind').disabled = false;
+  $('mfList').innerHTML = ''; renderCmp();
   showMap(); showHex(); checkSum();
 }
 $('binFile').onchange = async e => {
@@ -275,7 +275,7 @@ $('binFile').onchange = async e => {
 };
 function mapDef() {
   return { name: $('mName').value.trim() || 'map', off: parseInt($('mOff').value, 16) || 0, rows: Math.max(1, +$('mRows').value | 0), cols: Math.max(1, +$('mCols').value | 0),
-           type: $('mType').value, scale: parseFloat($('mScale').value) || 1 };
+           type: $('mType').value, scale: parseFloat($('mScale').value) || 1, axis: $('mAxis').value.trim() ? parseInt($('mAxis').value, 16) : null };
 }
 const width = t => t === 'u8' ? 1 : 2;
 function rd(buf, off, t) { return t === 'u8' ? buf[off] : t === 'u16be' ? (buf[off] << 8) | buf[off + 1] : buf[off] | (buf[off + 1] << 8); }
@@ -291,15 +291,21 @@ function showMap() {
   if (cellOff(m, m.rows - 1, m.cols - 1) + width(m.type) > bin.length) { $('mapWrap').innerHTML = '<p class="muted" style="padding:14px">ตารางเกินขนาดไฟล์ — เช็ก Offset / แถว / คอลัมน์</p>'; return; }
   let lo = Infinity, hi = -Infinity;
   for (let r = 0; r < m.rows; r++) for (let c = 0; c < m.cols; c++) { const v = rd(bin, cellOff(m, r, c), m.type); lo = Math.min(lo, v); hi = Math.max(hi, v); }
-  let h = '<table class="map"><thead><tr><th></th>' + Array.from({ length: m.cols }, (_, c) => `<th>${c}</th>`).join('') + '</tr></thead><tbody>';
+  // axis layout (Honda Keihin): [row axis: rows values][column axis: cols values], same element type as the table
+  const aw = width(m.type), axOk = m.axis != null && !isNaN(m.axis) && m.axis + (m.rows + m.cols) * aw <= bin.length;
+  const yAx = r => axOk ? rd(bin, m.axis + r * aw, m.type) : r, xAx = c => axOk ? rd(bin, m.axis + (m.rows + c) * aw, m.type) : c;
+  const thc = axOk ? ' class="ax"' : '';
+  let h = '<table class="map"><thead><tr><th>' + (axOk ? 'Y \\ X' : '') + '</th>' + Array.from({ length: m.cols }, (_, c) => `<th${thc}>${xAx(c)}</th>`).join('') + '</tr></thead><tbody>';
   for (let r = 0; r < m.rows; r++) {
-    h += `<tr><th>${r}</th>`;
+    h += `<tr><th${thc}>${yAx(r)}</th>`;
     for (let c = 0; c < m.cols; c++) {
       const o = cellOff(m, r, c), v = rd(bin, o, m.type), ov = rd(orig, o, m.type);
       const k = hi > lo ? (v - lo) / (hi - lo) : .5;
       const hue = 240 - k * 240;                                  // blue (low) → red (high)
       const key = `${r},${c}`;
-      h += `<td data-r="${r}" data-c="${c}" class="${sel.has(key) ? 'sel' : ''} ${v !== ov ? 'chg' : ''}" style="background:hsl(${hue} 85% 62%)" title="0x${o.toString(16)} เดิม ${+(ov * m.scale).toFixed(3)}">${+(v * m.scale).toFixed(3)}</td>`;
+      const cv = cmp && o + aw <= cmp.length ? rd(cmp, o, m.type) : null;
+      const cmpTxt = cv != null && cv !== v ? ` • ไฟล์เทียบ ${+(cv * m.scale).toFixed(3)} (${cv > v ? '+' : ''}${(v ? (cv - v) / v * 100 : 0).toFixed(1)}%)` : '';
+      h += `<td data-r="${r}" data-c="${c}" class="${sel.has(key) ? 'sel' : ''} ${v !== ov ? 'chg' : ''} ${cmpTxt ? 'cmpd' : ''}" style="background:hsl(${hue} 85% 62%)" title="0x${o.toString(16)} เดิม ${+(ov * m.scale).toFixed(3)}${cmpTxt}">${+(v * m.scale).toFixed(3)}</td>`;
     }
     h += '</tr>';
   }
@@ -333,7 +339,7 @@ $('mShow').onclick = () => { sel.clear(); showMap(); };
 function renderMapPick() { $('mapPick').innerHTML = '<option value="">— ตั้งค่าเอง —</option>' + savedMaps.map((m, i) => `<option value="${i}">${esc(m.name)} @0x${m.off.toString(16)}</option>`).join(''); }
 $('mapPick').onchange = () => {
   const m = savedMaps[+$('mapPick').value]; if (!m) return;
-  $('mName').value = m.name; $('mOff').value = m.off.toString(16).toUpperCase(); $('mRows').value = m.rows; $('mCols').value = m.cols; $('mType').value = m.type; $('mScale').value = m.scale;
+  $('mName').value = m.name; $('mOff').value = m.off.toString(16).toUpperCase(); $('mRows').value = m.rows; $('mCols').value = m.cols; $('mType').value = m.type; $('mScale').value = m.scale; $('mAxis').value = m.axis != null ? m.axis.toString(16).toUpperCase() : '';
   sel.clear(); showMap();
 };
 $('mKeep').onclick = () => { savedMaps.push(mapDef()); store.set('maps', savedMaps); renderMapPick(); toast('จำตารางแล้ว'); };
@@ -343,12 +349,15 @@ function checkSum() {
   if (!bin) return;
   if ($('csType').value === 'none') { $('csInfo').textContent = ''; return; }
   let s = 0; for (const b of bin) s = (s + b) & 0xFF;
-  $('csInfo').innerHTML = s === 0 ? '<span style="color:#3ddc84">✔ checksum ถูกต้อง</span>' : `<span style="color:#ff4d5e">✘ ผลรวม = 0x${s.toString(16).padStart(2, '0')} (ต้องเป็น 00)</span>`;
+  const touched = bin.some((b, i) => b !== orig[i]);
+  $('csInfo').innerHTML = s === 0 ? '<span style="color:#3ddc84">✔ checksum ถูกต้อง</span>'
+    : `<span style="color:#ff4d5e">✘ ผลรวม = 0x${s.toString(16).padStart(2, '0')} (ต้องเป็น 00)${touched ? '' : ' — ไฟล์นี้น่าจะถูกแก้มาก่อนโดยไม่ได้แก้ checksum ห้ามเอาไป Flash ตรงๆ'}</span>`;
 }
 $('csFix').onclick = () => {
   if (!bin) return;
   const at = parseInt($('csOff').value, 16);
-  if (isNaN(at) || at < 0 || at >= bin.length) return toast('ใส่ตำแหน่งไบต์ checksum ให้ถูก');
+  if (isNaN(at) || at < 0 || at >= bin.length) return toast('ใส่ตำแหน่งไบต์ checksum ก่อน (แต่ละรุ่นกล่องอยู่คนละที่ — ต้องรู้ตำแหน่งที่ถูกต้อง)', 5000);
+  if (!confirm(`แก้ไบต์ที่ 0x${at.toString(16).toUpperCase()} (ตอนนี้ = 0x${bin[at].toString(16).padStart(2, '0')}) ให้ผลรวมเป็น 0?\nถ้าตำแหน่งนี้ไม่ใช่ไบต์ checksum จริงของกล่องรุ่นนี้ ไฟล์จะเสีย`)) return;
   let s = 0; for (let i = 0; i < bin.length; i++) if (i !== at) s = (s + bin[i]) & 0xFF;
   bin[at] = (0x100 - s) & 0xFF; checkSum(); showHex(); toast(`ตั้งไบต์ 0x${at.toString(16)} = 0x${bin[at].toString(16).padStart(2, '0')}`);
 };
@@ -365,12 +374,62 @@ function showHex() {
   let out = '';
   for (let a = start; a < Math.min(bin.length, start + 512); a += 16) {
     out += a.toString(16).padStart(6, '0').toUpperCase() + '  ';
-    for (let i = 0; i < 16 && a + i < bin.length; i++) { const b = bin[a + i], h = b.toString(16).padStart(2, '0').toUpperCase(); out += b !== orig[a + i] ? `<span class="d">${h}</span> ` : h + ' '; }
+    for (let i = 0; i < 16 && a + i < bin.length; i++) { const b = bin[a + i], h = b.toString(16).padStart(2, '0').toUpperCase(); out += b !== orig[a + i] ? `<span class="d">${h}</span> ` : cmp && a + i < cmp.length && b !== cmp[a + i] ? `<span class="c">${h}</span> ` : h + ' '; }
     out += '\n';
   }
   $('hexView').innerHTML = out;
 }
 $('hexShow').onclick = showHex;
+
+// ---------------- Map Finder + compare ----------------
+let found = [], cmp = null, cmpName = '';
+const hx = n => '0x' + n.toString(16).toUpperCase();
+function useTable(t, name) {
+  $('mName').value = name; $('mOff').value = t.off.toString(16).toUpperCase(); $('mRows').value = t.rows; $('mCols').value = t.cols;
+  $('mType').value = t.type; $('mScale').value = 1; $('mAxis').value = t.axisOff != null ? t.axisOff.toString(16).toUpperCase() : '';
+  $('mapPick').value = ''; sel.clear(); showMap();
+  $('mapWrap').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+$('mfFind').onclick = async () => {
+  if (!bin) return;
+  $('mfInfo').textContent = 'กำลังค้นหา…'; await sleep(30);
+  const t0 = performance.now();
+  found = MapFinder.find(bin).filter(t => t.anchored || t.rows * t.cols >= 36);
+  const main = found.filter(t => t.anchored);
+  $('mfInfo').textContent = `เจอ ${found.length} ตาราง (${main.length} ตารางมีแกนชัดเจน ⭐) ใน ${Math.round(performance.now() - t0)} ms — กดเพื่อเปิด`;
+  $('mfList').innerHTML = '<div class="pick">' + found.map((t, i) => {
+    const big = t.anchored && t.rows * t.cols >= 200;
+    return `<button data-mf="${i}" title="${t.type}${t.xAxis ? ` แกน X ${t.xAxis[0]}…${t.xAxis.at(-1)}` : ''}${t.yAxis ? ` แกน Y ${t.yAxis[0]}…${t.yAxis.at(-1)}` : ''}">${t.anchored ? '⭐ ' : ''}${big ? '<b>' : ''}${hx(t.off)} · ${t.cols}×${t.rows}${t.twin ? ` (ชุด ${t.twin + 1})` : ''}${big ? '</b>' : ''}</button>`;
+  }).join('') + '</div>' + (main.some(t => t.rows * t.cols >= 200) ? '<p class="muted">ตารางใหญ่สีส้ม (เช่น 25×29, 29×29) มักเป็นแมพน้ำมันหลัก — ชุด 1/2 คือตารางคู่ที่ใช้แกนเดียวกัน ควรปรับไปพร้อมกัน ⚠ ชื่อ/หน่วยของตารางยังต้องยืนยันเอง (ไม่มี XDF)</p>' : '');
+  renderCmp();
+};
+$('mfList').onclick = e => {
+  const b = e.target.closest('[data-mf]'); if (!b) return;
+  const t = found[+b.dataset.mf];
+  document.querySelectorAll('#mfList [data-mf]').forEach(x => x.classList.toggle('on', x === b));
+  useTable(t, `ตาราง ${hx(t.off)}${t.twin ? ` ชุด ${t.twin + 1}` : ''}`);
+};
+$('cmpFile').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  cmp = new Uint8Array(await f.arrayBuffer()); cmpName = f.name; e.target.value = '';
+  renderCmp(); showMap(); showHex();
+};
+function renderCmp() {
+  if (!cmp || !bin) { $('cmpList').innerHTML = cmp ? `<p class="muted">โหลดไฟล์เทียบ ${esc(cmpName)} แล้ว — เปิดไฟล์หลักก่อน</p>` : ''; return; }
+  const ranges = MapFinder.diff(bin, cmp);
+  const inTable = ([s, e]) => found.find(t => s < t.off + t.bytes && e > t.off);
+  const bytes = ranges.reduce((n, [s, e]) => n + e - s, 0);
+  $('cmpList').innerHTML = `<p class="muted">เทียบกับ <b>${esc(cmpName)}</b>${cmp.length !== bin.length ? ` ⚠ ขนาดไม่เท่ากัน (${cmp.length.toLocaleString()} / ${bin.length.toLocaleString()} B)` : ''} — ต่างกัน ${ranges.length} ช่วง (${bytes.toLocaleString()} ไบต์) · ช่องในตารางที่ต่างจะมีลายขีด</p>`
+    + '<div class="pick">' + ranges.slice(0, 120).map(([s, e], i) => { const t = inTable([s, e]); return `<button data-rg="${s}" title="${e - s} ไบต์">${t ? '⭐ ' : ''}${hx(s)}–${hx(e - 1)}</button>`; }).join('')
+    + (ranges.length > 120 ? `<span class="muted">… อีก ${ranges.length - 120} ช่วง</span>` : '') + `<button id="cmpClear">✕ เลิกเทียบ</button></div>`;
+}
+$('cmpList').onclick = e => {
+  if (e.target.id === 'cmpClear') { cmp = null; renderCmp(); showMap(); showHex(); return; }
+  const b = e.target.closest('[data-rg]'); if (!b) return;
+  const s = +b.dataset.rg, t = found.find(t => s >= t.off && s < t.off + t.bytes);
+  if (t) useTable(t, `ตาราง ${hx(t.off)}`);
+  else { $('hexGo').value = s.toString(16); showHex(); document.querySelector('#p-tuner details').open = true; $('hexView').scrollIntoView({ behavior: 'smooth' }); }
+};
 
 // ---------------- PWA ----------------
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});

@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d0b12">
+<title>PG Performance ECU Tuner</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<link href="https://fonts.googleapis.com/css2?family=Kanit:ital,wght@0,400;0,500;0,700;1,800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0b0a10; --card: #17141f; --card2: #1e1a29; --line: #2d2740; --text: #efeaf7; --muted: #958ca8;
+    --purple: #8b5cf6; --purple2: #5b2fc4; --orange: #ff8a1f; --orange2: #ff5a00; --ok: #3ddc84; --bad: #ff4d5e; --warn: #ffc23d;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Kanit', system-ui, sans-serif; font-size: 15px; }
+  body { background: radial-gradient(1200px 600px at 80% -10%, #2a1650 0%, transparent 60%), repeating-linear-gradient(45deg, #0c0b11 0 6px, #0e0d14 6px 12px); min-height: 100vh; }
+  button { font: inherit; color: inherit; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 14px 16px 40px; }
+
+  /* header */
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: linear-gradient(180deg, #1a1624, #121019); border: 1px solid var(--line); border-radius: 14px; }
+  .logo { width: 46px; height: 46px; border-radius: 10px; display: grid; place-items: center; font-weight: 800; font-style: italic; font-size: 22px;
+    background: linear-gradient(135deg, #2a2338, #0f0d15); border: 1px solid #3a3150; box-shadow: inset 0 0 0 2px #0006; }
+  .logo span { background: linear-gradient(180deg, #fff, #bbb); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .brand b { display: block; font-style: italic; font-weight: 800; letter-spacing: .5px; font-size: 18px; }
+  .brand small { color: var(--muted); letter-spacing: 4px; font-size: 11px; }
+  header .sp { flex: 1; }
+  .hbtn { white-space: nowrap; background: #221d30; border: 1px solid #3a3150; border-radius: 10px; padding: 8px 14px; cursor: pointer; }
+  .hbtn:hover { border-color: var(--purple); }
+  .hbtn.primary { background: linear-gradient(180deg, var(--orange), var(--orange2)); border-color: #ffb36b; font-weight: 500; }
+
+  .status { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; margin-top: 10px; background: #121019; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .status > div { padding: 8px 14px; border-right: 1px solid var(--line); min-width: 0; }
+  .status > div:last-child { border-right: 0; }
+  .status small { color: var(--muted); font-size: 11.5px; display: block; }
+  .status b { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--bad); margin-right: 6px; vertical-align: middle; }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); } .dot.wait { background: var(--warn); }
+
+  .hero { margin-top: 14px; padding: 18px 20px; border-radius: 14px; border: 1px solid var(--line); background: linear-gradient(135deg, #1b1727, #100e16); position: relative; overflow: hidden; }
+  .hero::after { content: ''; position: absolute; right: -60px; top: -60px; width: 260px; height: 260px; background: radial-gradient(circle, #8b5cf633, transparent 70%); }
+  .hero .k { color: var(--muted); letter-spacing: 3px; font-size: 11.5px; }
+  .hero h1 { margin: 4px 0 0; font-style: italic; font-weight: 800; font-size: 34px; line-height: 1.1; }
+  .hero h2 { margin: 2px 0 0; font-weight: 500; font-size: 20px; }
+  .hero p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+
+  nav.tabs { display: flex; gap: 8px; margin-top: 12px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+  nav.tabs button { flex: none; display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 10px; border: 1px solid #3a3150; background: #17141f; cursor: pointer; font-size: 13.5px; }
+  nav.tabs button.on { border-color: var(--orange); background: linear-gradient(180deg, #2b1d14, #1a130e); box-shadow: 0 0 0 1px #ff8a1f55 inset; }
+  nav.tabs svg, .tile svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+  .page { display: none; margin-top: 14px; } .page.on { display: block; }
+  .sec { display: flex; align-items: baseline; gap: 10px; margin: 6px 0 12px; padding-left: 10px; border-left: 3px solid var(--purple); }
+  .sec h3 { margin: 0; font-size: 17px; font-weight: 500; } .sec small { color: var(--muted); }
+
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .tile { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 92px; padding: 14px;
+    border-radius: 12px; border: 1px solid #352d4a; background: linear-gradient(180deg, #221c31, #16131f); cursor: pointer; overflow: hidden; transition: transform .1s, border-color .2s; }
+  .tile::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: linear-gradient(90deg, var(--purple), var(--orange)); opacity: .85; }
+  .tile:hover { transform: translateY(-2px); border-color: var(--purple); }
+  .tile svg { width: 26px; height: 26px; }
+  .tile .lock { position: absolute; top: 8px; right: 10px; font-size: 11px; color: var(--warn); }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .btn { padding: 8px 14px; border-radius: 9px; border: 1px solid #4a3d6a; background: linear-gradient(180deg, #2d2442, #1f192e); cursor: pointer; }
+  .btn:hover { border-color: var(--purple); } .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn.o { background: linear-gradient(180deg, var(--orange), var(--orange2)); border-color: #ffb36b; font-weight: 500; }
+  .btn.r { background: linear-gradient(180deg, #c33545, #8c1d2a); border-color: #ff7b88; }
+  input, select, textarea { background: #0e0c14; color: var(--text); border: 1px solid #3a3150; border-radius: 8px; padding: 7px 10px; font: inherit; }
+  input:focus, select:focus, textarea:focus { outline: 1px solid var(--purple); }
+  label.f { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
+  .muted { color: var(--muted); font-size: 13px; line-height: 1.55; }
+  .warnbox { border: 1px solid #ffc23d66; background: #2a210c; color: #ffe2a0; border-radius: 10px; padding: 10px 12px; font-size: 13.5px; line-height: 1.55; }
+  .okbox { border: 1px solid #3ddc8466; background: #0e2418; color: #b9f5d0; border-radius: 10px; padding: 10px 12px; font-size: 13.5px; }
+
+  /* live data */
+  .live-top { display: grid; grid-template-columns: 300px 1fr; gap: 12px; }
+  .gauge { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .vals { display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 10px; }
+  .val { background: var(--card2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .val small { color: var(--muted); font-size: 12px; display: block; }
+  .val b { font-size: 24px; font-weight: 500; } .val i { font-style: normal; color: var(--muted); font-size: 13px; margin-left: 4px; }
+  .val .bar { height: 4px; background: #0b0a10; border-radius: 3px; margin-top: 6px; overflow: hidden; }
+  .val .bar div { height: 100%; background: linear-gradient(90deg, var(--purple), var(--orange)); width: 0; transition: width .2s; }
+  .val code { display: block; color: #6f6684; font-size: 11px; margin-top: 4px; }
+  canvas.chart { width: 100%; height: 180px; display: block; background: #0e0c14; border-radius: 10px; border: 1px solid var(--line); }
+
+  /* tables */
+  table.list { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.list th, table.list td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  table.list th { color: var(--muted); font-weight: 400; font-size: 12.5px; }
+  .code { display: inline-block; min-width: 54px; padding: 2px 8px; border-radius: 6px; background: #3a1820; color: #ff9aa5; font-weight: 500; text-align: center; }
+
+  /* map editor */
+  .mapwrap { overflow: auto; max-height: 60vh; border: 1px solid var(--line); border-radius: 10px; background: #0e0c14; }
+  table.map { border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; user-select: none; }
+  table.map td, table.map th { padding: 4px 7px; border: 1px solid #00000066; text-align: right; min-width: 46px; }
+  table.map th { position: sticky; background: #1c1828; color: var(--muted); font-weight: 400; }
+  table.map thead th { top: 0; z-index: 1; } table.map tbody th { left: 0; }
+  table.map td { cursor: cell; color: #111; font-weight: 500; }
+  table.map td.sel { outline: 2px solid #fff; outline-offset: -2px; }
+  table.map td.chg { box-shadow: inset 0 0 0 2px #000; text-decoration: underline; }
+  .hex { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; white-space: pre; overflow: auto; max-height: 50vh; background: #0e0c14; border: 1px solid var(--line); border-radius: 10px; padding: 10px; color: #c9c0dc; }
+  .hex .d { color: var(--orange); }
+
+  #term { height: 340px; }
+  .modal { position: fixed; inset: 0; background: #000a; display: none; align-items: center; justify-content: center; z-index: 10; padding: 16px; }
+  .modal.on { display: flex; }
+  .modal .box { background: #17141f; border: 1px solid #3a3150; border-radius: 14px; padding: 18px; width: min(460px, 100%); }
+  .choice { display: flex; gap: 12px; align-items: center; width: 100%; text-align: left; padding: 12px; margin-top: 10px; border-radius: 10px; border: 1px solid #3a3150; background: #1f1a2b; cursor: pointer; }
+  .choice:hover { border-color: var(--orange); }
+  .choice b { display: block; } .choice small { color: var(--muted); }
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: #241e33; border: 1px solid var(--purple); padding: 10px 18px; border-radius: 10px; display: none; z-index: 20; max-width: 90vw; }
+  footer { margin-top: 26px; text-align: center; color: #5d5570; letter-spacing: 4px; font-size: 11px; }
+
+  @media (max-width: 760px) {
+    .grid { grid-template-columns: repeat(2, 1fr); }
+    .status { grid-template-columns: 1fr; } .status > div { border-right: 0; border-bottom: 1px solid var(--line); }
+    .live-top { grid-template-columns: 1fr; }
+    .hero h1 { font-size: 28px; }
+    .brand small { letter-spacing: 2px; }
+    .brand b { font-size: 15px; } .hbtn { padding: 7px 10px; font-size: 13.5px; } header { gap: 8px; padding: 8px 10px; } .logo { width: 38px; height: 38px; font-size: 17px; }
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></symbol>
+  <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M2 12h4l3-7 4 14 3-7h6"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18h.01"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></symbol>
+  <symbol id="i-term" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
+</svg>
+
+<div class="wrap">
+  <header>
+    <div class="logo"><span id="logoTxt">PG</span></div>
+    <div class="brand"><b id="brandName">PG PERFORMANCE</b><small>ECU TUNER</small></div>
+    <div class="sp"></div>
+    <button class="hbtn primary" id="btnConn">🔌 เชื่อมต่อ</button>
+    <button class="hbtn" data-go="settings">☰ ตั้งค่า</button>
+  </header>
+
+  <div class="status">
+    <div><small>การเชื่อมต่อ</small><b><span class="dot" id="cDot"></span><span id="cName">ยังไม่ได้เชื่อมต่อ</span></b></div>
+    <div><small>ECU / Part Code</small><b id="ecuId">—</b></div>
+    <div><small>BIN สำหรับจูน</small><b id="binName">ยังไม่มีไฟล์</b></div>
+  </div>
+
+  <nav class="tabs" id="tabs">
+    <button data-go="home" class="on"><svg><use href="#i-home"/></svg>หน้าหลัก</button>
+    <button data-go="live"><svg><use href="#i-pulse"/></svg>Live Data</button>
+    <button data-go="dtc"><svg><use href="#i-warn"/></svg>วินิจฉัย DTC</button>
+    <button data-go="tuner"><svg><use href="#i-sliders"/></svg>TabTuner</button>
+    <button data-go="recovery"><svg><use href="#i-undo"/></svg>Recovery / สำรอง ECU</button>
+    <button data-go="flash"><svg><use href="#i-bolt"/></svg>Flash</button>
+    <button data-go="files"><svg><use href="#i-file"/></svg>คลังไฟล์</button>
+    <button data-go="term"><svg><use href="#i-term"/></svg>Terminal</button>
+  </nav>
+
+  <!-- ===================== HOME ===================== -->
+  <section class="page on" id="p-home">
+    <div class="hero">
+      <div class="k">MOTORCYCLE ECU</div>
+      <h1 id="heroName">PG PERFORMANCE</h1>
+      <h2>ศูนย์ควบคุม ECU</h2>
+      <p>เสียบสาย K-line เข้ารถ เปิดสวิตช์กุญแจ (ไม่ต้องติดเครื่อง) แล้วกด “เชื่อมต่อ”</p>
+    </div>
+    <div class="sec" style="margin-top:16px"><h3>เมนูหลัก</h3><small>เลือกการทำงาน</small></div>
+    <div class="grid">
+      <div class="tile" data-go="tuner"><svg><use href="#i-grid"/></svg>ปรับแต่ง ECU</div>
+      <div class="tile" data-go="tuner"><svg><use href="#i-sliders"/></svg>TabTuner</div>
+      <div class="tile" data-go="live"><svg><use href="#i-pulse"/></svg>Live Data</div>
+      <div class="tile" data-go="dtc"><svg><use href="#i-warn"/></svg>วินิจฉัย DTC</div>
+      <div class="tile" data-go="flash"><span class="lock">🔒 รอยืนยันรุ่น</span><svg><use href="#i-bolt"/></svg>Fast Flash</div>
+      <div class="tile" data-go="recovery"><svg><use href="#i-undo"/></svg>Recovery / สำรอง ECU</div>
+      <div class="tile" data-go="files"><svg><use href="#i-file"/></svg>คลังไฟล์</div>
+      <div class="tile" data-go="term"><svg><use href="#i-term"/></svg>Terminal (ดักโปรโตคอล)</div>
+      <div class="tile" data-go="settings"><svg><use href="#i-gear"/></svg>ตั้งค่า</div>
+    </div>
+  </section>
+
+  <!-- ===================== LIVE ===================== -->
+  <section class="page" id="p-live">
+    <div class="sec"><h3>Live Data</h3><small>ค่าเซนเซอร์แบบเรียลไทม์ (อ่านอย่างเดียว ปลอดภัย)</small></div>
+    <div class="card row">
+      <button class="btn o" id="liveStart">▶ เริ่มอ่าน</button>
+      <button class="btn" id="liveStop" disabled>■ หยุด</button>
+      <button class="btn" id="liveRec">⏺ บันทึก Log</button>
+      <span class="muted" id="liveInfo">—</span>
+    </div>
+    <div class="live-top">
+      <div class="card gauge"><canvas id="gauge" width="560" height="400" style="width:280px;height:200px"></canvas></div>
+      <div class="card"><canvas class="chart" id="chart" width="1600" height="360"></canvas>
+        <div class="muted" style="margin-top:6px"><span style="color:#ff8a1f">━ รอบ</span> &nbsp; <span style="color:#a78bfa">━ ลิ้นเร่ง %</span> &nbsp; <span style="color:#3ddc84">━ เวลาฉีด</span></div></div>
+    </div>
+    <div class="vals" id="vals"></div>
+    <p class="muted">ตัวเลขสีเทาใต้ค่า = ไบต์ดิบจาก ECU ใช้เทียบกับเครื่องสแกนตัวอื่นได้ ถ้าค่าไหนไม่ตรง แจ้งรุ่นรถมา จะปรับสูตรให้</p>
+  </section>
+
+  <!-- ===================== DTC ===================== -->
+  <section class="page" id="p-dtc">
+    <div class="sec"><h3>วินิจฉัย DTC</h3><small>อ่าน / ลบรหัสปัญหา</small></div>
+    <div class="card row">
+      <button class="btn o" id="dtcRead">🔍 อ่านรหัสปัญหา</button>
+      <button class="btn r" id="dtcClear">🧹 ลบรหัสปัญหา</button>
+    </div>
+    <div class="card"><table class="list"><thead><tr><th>รหัส</th><th>ความหมาย</th><th>สถานะ</th></tr></thead><tbody id="dtcBody"><tr><td colspan="3" class="muted">กด “อ่านรหัสปัญหา”</td></tr></tbody></table></div>
+    <p class="muted">รหัสแบบ “12-1” = ไฟ MIL กะพริบยาว 1 ครั้ง สั้น 2 ครั้ง … ลบแล้วถ้ายังกลับมา แปลว่ายังมีปัญหาจริง</p>
+  </section>
+
+  <!-- ===================== TUNER ===================== -->
+  <section class="page" id="p-tuner">
+    <div class="sec"><h3>TabTuner</h3><small>แก้ตารางในไฟล์ .bin (ทำงานกับไฟล์ ไม่ยุ่งกับกล่องจนกว่าจะ Flash)</small></div>
+    <div class="card row">
+      <label class="btn o">📂 เปิดไฟล์ .bin<input type="file" id="binFile" accept=".bin,.hex,.rom,.ori,application/octet-stream" hidden></label>
+      <button class="btn" id="binSave" disabled>💾 บันทึกเป็นไฟล์ใหม่</button>
+      <button class="btn" id="binDl" disabled>⬇ ดาวน์โหลด</button>
+      <span class="muted" id="binInfo"></span>
+    </div>
+    <div class="card">
+      <div class="row">
+        <label class="f">ตารางที่บันทึกไว้<select id="mapPick"><option value="">— ตั้งค่าเอง —</option></select></label>
+        <label class="f">ชื่อตาราง<input id="mName" value="Fuel map" size="12"></label>
+        <label class="f">Offset (hex)<input id="mOff" value="0" size="7"></label>
+        <label class="f">แถว<input id="mRows" type="number" value="16" min="1" max="64" style="width:64px"></label>
+        <label class="f">คอลัมน์<input id="mCols" type="number" value="16" min="1" max="64" style="width:64px"></label>
+        <label class="f">ชนิด<select id="mType"><option value="u8">8-bit</option><option value="u16be">16-bit BE</option><option value="u16le">16-bit LE</option></select></label>
+        <label class="f">คูณ (scale)<input id="mScale" value="1" size="5"></label>
+        <button class="btn" id="mShow">แสดง</button>
+        <button class="btn" id="mKeep">⭐ จำตารางนี้</button>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <span class="muted">เลือกช่องแล้ว:</span>
+        <button class="btn" data-adj="-5">-5%</button><button class="btn" data-adj="-1">-1%</button>
+        <button class="btn" data-adj="1">+1%</button><button class="btn" data-adj="5">+5%</button>
+        <input id="mSet" placeholder="ค่าใหม่" size="7"><button class="btn" id="mSetBtn">ตั้งค่า</button>
+        <button class="btn" id="mUndo">↶ คืนค่าเดิม (ช่องที่เลือก)</button>
+      </div>
+    </div>
+    <div class="mapwrap" id="mapWrap"><p class="muted" style="padding:14px">เปิดไฟล์ .bin ก่อน แล้วใส่ตำแหน่งตาราง (Offset) — ลากเมาส์เพื่อเลือกหลายช่อง</p></div>
+    <div class="card" style="margin-top:12px">
+      <div class="row">
+        <b>Checksum</b>
+        <label class="f">วิธีคำนวณ<select id="csType"><option value="sum0">ผลรวม 8-bit = 0 (Honda Keihin)</option><option value="none">ไม่แก้</option></select></label>
+        <label class="f">ตำแหน่งไบต์ checksum (hex)<input id="csOff" placeholder="เช่น 7FFF" size="8"></label>
+        <button class="btn" id="csFix">✔ ตรวจ/แก้ checksum</button>
+        <span class="muted" id="csInfo"></span>
+      </div>
+    </div>
+    <details class="card"><summary>Hex viewer (ไบต์ที่แก้แสดงสีส้ม)</summary>
+      <div class="row" style="margin:8px 0"><label class="f">ไปที่ (hex)<input id="hexGo" value="0" size="8"></label><button class="btn" id="hexShow">แสดง 512 ไบต์</button></div>
+      <div class="hex" id="hexView"></div>
+    </details>
+  </section>
+
+  <!-- ===================== RECOVERY ===================== -->
+  <section class="page" id="p-recovery">
+    <div class="sec"><h3>Recovery / สำรอง ECU</h3><small>เก็บข้อมูลจากกล่องเป็นไฟล์ก่อนแก้อะไรทุกครั้ง</small></div>
+    <div class="card">
+      <b>1) สำรองตารางข้อมูล ECU (ใช้ได้แล้ว)</b>
+      <p class="muted">อ่านทุกตารางวินิจฉัยที่กล่องยอมให้อ่าน (0x00–0xFF) พร้อมรหัส ECU เก็บเป็นไฟล์ในคลัง ใช้ระบุรุ่นกล่อง และเป็นข้อมูลสำหรับเพิ่มรองรับรุ่นใหม่</p>
+      <button class="btn o" id="recTables">📥 สำรองตารางทั้งหมด</button>
+      <span class="muted" id="recInfo"></span>
+    </div>
+    <div class="card">
+      <b>2) อ่านไฟล์แมพเต็มจากกล่อง (Full read) 🔒</b>
+      <p class="muted">การอ่าน/เขียนหน่วยความจำแฟลชใช้คำสั่ง bootloader ที่ต่างกันในแต่ละรุ่นกล่อง (Keihin / Shindengen / Denso / Continental) จะเปิดให้ใช้ทีละรุ่นหลังทดสอบกับกล่องจริงแล้ว</p>
+      <div class="warnbox">ส่งไฟล์จากข้อ 1 + รหัสบนกล่อง ECU (เช่น 38770-K0W-T01) มา เพื่อเพิ่มรุ่นนั้นเข้าโปรแกรม</div>
+    </div>
+  </section>
+
+  <!-- ===================== FLASH ===================== -->
+  <section class="page" id="p-flash">
+    <div class="sec"><h3>Fast Flash / Flash Remap</h3><small>เขียนแมพใหม่ลงกล่อง</small></div>
+    <div class="warnbox"><b>🔒 ยังล็อกไว้สำหรับทุกรุ่น</b><br>
+      ถ้าเขียนลงกล่องผิดวิธี กล่องจะ “ดับ” (brick) รถสตาร์ทไม่ติด โปรแกรมจะเปิด Flash ให้เฉพาะรุ่นกล่องที่ผ่านขั้นตอนนี้ครบ:</div>
+    <div class="card" style="margin-top:12px">
+      <table class="list"><tbody>
+        <tr><td id="fk1">⬜</td><td>เชื่อมต่อกล่องได้ และอ่านรหัส ECU ได้</td></tr>
+        <tr><td id="fk2">⬜</td><td>มีไฟล์สำรองต้นฉบับของกล่องนี้ (Full read) เก็บในคลัง</td></tr>
+        <tr><td>⬜</td><td>ยืนยันโปรโตคอล bootloader ของรุ่นกล่องนี้กับกล่องจริงแล้ว</td></tr>
+        <tr><td>⬜</td><td>ไฟล์ที่จะเขียนมาจากกล่องรุ่นเดียวกัน และ checksum ถูกต้อง</td></tr>
+        <tr><td>⬜</td><td>แบตเตอรี่ ≥ 12.4V (แนะนำต่อเครื่องชาร์จระหว่าง Flash)</td></tr>
+      </tbody></table>
+      <p class="muted">รุ่นที่ยืนยันแล้ว: <b>ยังไม่มี</b></p>
+    </div>
+  </section>
+
+  <!-- ===================== FILES ===================== -->
+  <section class="page" id="p-files">
+    <div class="sec"><h3>คลังไฟล์</h3><small>เก็บในเครื่องนี้ (ไม่อัปโหลดไปไหน)</small></div>
+    <div class="card row"><label class="btn o">➕ นำเข้าไฟล์<input type="file" id="fileImport" multiple hidden></label><span class="muted" id="filesInfo"></span></div>
+    <div class="card"><table class="list"><thead><tr><th>ชื่อ</th><th>ชนิด</th><th>ขนาด</th><th>วันที่</th><th></th></tr></thead><tbody id="filesBody"></tbody></table></div>
+  </section>
+
+  <!-- ===================== TERMINAL ===================== -->
+  <section class="page" id="p-term">
+    <div class="sec"><h3>Terminal</h3><small>ส่ง/ดูไบต์ดิบบนสาย K-line — ใช้ดักโปรโตคอลรุ่นใหม่</small></div>
+    <div class="card row">
+      <input id="termIn" placeholder="hex เช่น 72 05 71 11" style="flex:1;min-width:200px;font-family:ui-monospace,monospace">
+      <label class="row muted" style="gap:4px"><input type="checkbox" id="termCs" checked> เติม checksum Honda</label>
+      <button class="btn o" id="termSend">ส่ง</button>
+      <button class="btn" id="termWake">Wake-up</button>
+      <button class="btn" id="termClear">ล้าง</button>
+      <button class="btn" id="termSave">💾 เก็บ log</button>
+    </div>
+    <textarea id="term" readonly style="width:100%;font-family:ui-monospace,monospace;font-size:12.5px"></textarea>
+  </section>
+
+  <!-- ===================== SETTINGS ===================== -->
+  <section class="page" id="p-settings">
+    <div class="sec"><h3>ตั้งค่า</h3></div>
+    <div class="card">
+      <div class="row">
+        <label class="f">ชื่อแบรนด์<input id="sBrand" size="20"></label>
+        <label class="f">ตัวย่อโลโก้<input id="sLogo" size="4" maxlength="3"></label>
+        <label class="f">ยี่ห้อ / โปรโตคอล<select id="sProto">
+          <option value="honda">Honda PGM-FI (K-line 10400)</option>
+          <option value="yamaha" disabled>Yamaha (กำลังเพิ่ม — ใช้ Terminal ดักข้อมูลได้)</option>
+          <option value="kwp" disabled>KWP2000 / ISO 14230 (กำลังเพิ่ม)</option>
+        </select></label>
+        <label class="f">อ่าน Live ทุก (ms)<input id="sPoll" type="number" min="50" step="10" size="5"></label>
+      </div>
+      <button class="btn o" id="sSave" style="margin-top:12px">💾 บันทึก</button>
+    </div>
+    <div class="card muted">
+      <b style="color:var(--text)">ความต้องการ</b><br>
+      • ใช้ <b>Google Chrome</b> หรือ <b>Microsoft Edge</b> บนคอม (Windows / Mac / Linux) — รองรับ Web Serial<br>
+      • สาย USB K-line ที่ใช้ชิป FTDI FT232, CH340, CP210x หรือ PL2303 (ลงไดรเวอร์ให้เห็นเป็น COM port ก่อน)<br>
+      • กด “ติดตั้งแอป” ในแถบที่อยู่ของ Chrome เพื่อใช้แบบโปรแกรมบนเดสก์ท็อป ใช้งานได้แม้ไม่มีเน็ต
+    </div>
+  </section>
+
+  <footer id="foot">PG PERFORMANCE · ECU TUNER</footer>
+</div>
+
+<div class="modal" id="connModal"><div class="box">
+  <b style="font-size:18px">เชื่อมต่อ ECU</b>
+  <button class="choice" id="cSerial"><span style="font-size:26px">🔌</span><span><b>สาย USB / COM Port</b><small>เสียบสายเข้ารถ เปิดกุญแจ แล้วเลือกพอร์ตในหน้าต่างถัดไป</small></span></button>
+  <button class="choice" id="cSim"><span style="font-size:26px">🧪</span><span><b>ECU จำลอง</b><small>ลองใช้ทุกเมนูโดยไม่ต้องต่อรถ</small></span></button>
+  <div style="text-align:right;margin-top:12px"><button class="btn" id="cCancel">ยกเลิก</button></div>
+</div></div>
+<div id="toast"></div>
+
+<script src="js/honda.js"></script>
+<script src="js/link.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

@@ -1,14 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- SM Remap XDF for 30400-K60S-T71 (384KB). Built by analysing the owner's own BIN; not derived from any third-party XDF. -->
+<!-- SM Remap XDF for K59K. Built by analysing the shop's own BIN; not derived from any third-party XDF. Fuel maps only; ignition map not located. -->
 <XDFFORMAT version="1.70">
   <XDFHEADER>
-    <flags>0x1</flags>
-    <description>SM Remap - 30400-K60S-T71</description>
+    <flags>0x1</flags><description>SM Remap - K59K</description>
     <BASEOFFSET offset="0" subtract="0" />
     <DEFAULTS datasizeinbits="8" sigdigits="2" outputtype="1" signed="0" lsbfirst="0" float="0" />
-    <REGION type="0xFFFFFFFF" startaddress="0x0" size="0x60000" regioncolor="0x0" regionflags="0x0" name="Binary File" desc="K60S-T71 384KB" />
-    <CATEGORY index="0x0" name="Breakpoints" />
-    <CATEGORY index="0x1" name="Fuel Maps (injection ms)" />
+    <REGION type="0xFFFFFFFF" startaddress="0x0" size="0x60000" regioncolor="0x0" regionflags="0x0" name="Binary File" desc="K59K" />
+    <CATEGORY index="0x0" name="Breakpoints" /><CATEGORY index="0x1" name="Fuel Maps (injection ms)" />
   </XDFHEADER>
   <XDFTABLE uniqueid="0x0101" flags="0x30">
     <title>Load Breakpoints</title>
@@ -26,18 +24,18 @@
   </XDFTABLE>
   <XDFTABLE uniqueid="0x0001" flags="0x0">
     <title>Fuel Map A (injection ms)</title>
-    <description>25 load x 29 RPM, 16-bit little-endian, value/1000 = ms. Built from the shop's own BIN.</description>
+    <description>25 load x 29 RPM, 16-bit little-endian, value/1000 = ms. Located by analysing the shop's BIN.</description>
     <CATEGORYMEM index="0" category="1" />
     <XDFAXIS id="x" uniqueid="0x0"><EMBEDDEDDATA mmedelementsizebits="8" mmedmajorstridebits="-32" mmedminorstridebits="0" /><units>Load</units><indexcount>25</indexcount><embedinfo type="3" linkobjid="0x0101" /><datatype>0</datatype><unittype>0</unittype><DALINK index="0" /><MATH equation="X"><VAR id="X" /></MATH></XDFAXIS>
     <XDFAXIS id="y" uniqueid="0x0"><EMBEDDEDDATA mmedelementsizebits="8" mmedmajorstridebits="-32" mmedminorstridebits="0" /><units>RPM</units><indexcount>29</indexcount><embedinfo type="3" linkobjid="0x0102" /><datatype>0</datatype><unittype>0</unittype><DALINK index="0" /><MATH equation="X"><VAR id="X" /></MATH></XDFAXIS>
-    <XDFAXIS id="z"><EMBEDDEDDATA mmedtypeflags="0x02" mmedaddress="0x1920A" mmedelementsizebits="16" mmedrowcount="29" mmedcolcount="25" mmedmajorstridebits="0" mmedminorstridebits="0" /><units>ms</units><decimalpl>3</decimalpl><min>0</min><max>6</max><outputtype>1</outputtype><MATH equation="X/1000"><VAR id="X" /></MATH></XDFAXIS>
+    <XDFAXIS id="z"><EMBEDDEDDATA mmedtypeflags="0x02" mmedaddress="0x19208" mmedelementsizebits="16" mmedrowcount="29" mmedcolcount="25" mmedmajorstridebits="0" mmedminorstridebits="0" /><units>ms</units><decimalpl>3</decimalpl><min>0</min><max>6</max><outputtype>1</outputtype><MATH equation="X/1000"><VAR id="X" /></MATH></XDFAXIS>
   </XDFTABLE>
   <XDFTABLE uniqueid="0x0002" flags="0x0">
     <title>Fuel Map B (injection ms)</title>
-    <description>25 load x 29 RPM, 16-bit little-endian, value/1000 = ms. Built from the shop's own BIN.</description>
+    <description>25 load x 29 RPM, 16-bit little-endian, value/1000 = ms. Located by analysing the shop's BIN.</description>
     <CATEGORYMEM index="0" category="1" />
     <XDFAXIS id="x" uniqueid="0x0"><EMBEDDEDDATA mmedelementsizebits="8" mmedmajorstridebits="-32" mmedminorstridebits="0" /><units>Load</units><indexcount>25</indexcount><embedinfo type="3" linkobjid="0x0101" /><datatype>0</datatype><unittype>0</unittype><DALINK index="0" /><MATH equation="X"><VAR id="X" /></MATH></XDFAXIS>
     <XDFAXIS id="y" uniqueid="0x0"><EMBEDDEDDATA mmedelementsizebits="8" mmedmajorstridebits="-32" mmedminorstridebits="0" /><units>RPM</units><indexcount>29</indexcount><embedinfo type="3" linkobjid="0x0102" /><datatype>0</datatype><unittype>0</unittype><DALINK index="0" /><MATH equation="X"><VAR id="X" /></MATH></XDFAXIS>
-    <XDFAXIS id="z"><EMBEDDEDDATA mmedtypeflags="0x02" mmedaddress="0x197B4" mmedelementsizebits="16" mmedrowcount="29" mmedcolcount="25" mmedmajorstridebits="0" mmedminorstridebits="0" /><units>ms</units><decimalpl>3</decimalpl><min>0</min><max>6</max><outputtype>1</outputtype><MATH equation="X/1000"><VAR id="X" /></MATH></XDFAXIS>
+    <XDFAXIS id="z"><EMBEDDEDDATA mmedtypeflags="0x02" mmedaddress="0x197B2" mmedelementsizebits="16" mmedrowcount="29" mmedcolcount="25" mmedmajorstridebits="0" mmedminorstridebits="0" /><units>ms</units><decimalpl>3</decimalpl><min>0</min><max>6</max><outputtype>1</outputtype><MATH equation="X/1000"><VAR id="X" /></MATH></XDFAXIS>
   </XDFTABLE>
 </XDFFORMAT>

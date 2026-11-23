@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SM Remap XDF for K66G. Built by analysing the shop's own BIN; not derived from any third-party XDF. Fuel maps only; ignition map not located. -->
+<XDFFORMAT version="1.70">
+  <XDFHEADER>
+    <flags>0x1</flags><description>SM Remap - K66G</description>
+    <BASEOFFSET offset="0" subtract="0" />
+    <DEFAULTS datasizeinbits="8" sigdigits="2" outputtype="1" signed="0" lsbfirst="0" float="0" />
+    <REGION type="0xFFFFFFFF" startaddress="0x0" size="0x60000" regioncolor="0x0" regionflags="0x0" name="Binary File" desc="K66G" />
+    <CATEGORY index="0x0" name="Breakpoints" /><CATEGORY index="0x1" name="Fuel Maps (injection ms)" />
+  </XDFHEADER>
+  <XDFTABLE uniqueid="0x0101" flags="0x30">
+    <title>Load Breakpoints</title>
+    <CATEGORYMEM index="0" category="0" />
+    <XDFAXIS id="x" uniqueid="0x0"><EMBEDDEDDATA mmedelementsizebits="8" mmedmajorstridebits="-32" mmedminorstridebits="0" /><indexcount>1</indexcount><datatype>0</datatype><unittype>0</unittype><DALINK index="0" /><LABEL index="0" value="0.00" /><MATH equation="X"><VAR id="X" /></MATH></XDFAXIS>
+    <XDFAXIS id="y" uniqueid="0x0"><EMBEDDEDDATA mmedelementsizebits="8" mmedmajorstridebits="-32" mmedminorstridebits="0" /><indexcount>25</indexcount><datatype>0</datatype><unittype>0</unittype><DALINK index="0" /><MATH equation="X"><VAR id="X" /></MATH></XDFAXIS>
+    <XDFAXIS id="z"><EMBEDDEDDATA mmedtypeflags="0x02" mmedaddress="0x1A908" mmedelementsizebits="16" mmedrowcount="25" mmedcolcount="1" mmedmajorstridebits="0" mmedminorstridebits="0" /><units>Load</units><decimalpl>1</decimalpl><min>0</min><max>20000</max><outputtype>1</outputtype><MATH equation="X*0.1"><VAR id="X" /></MATH></XDFAXIS>
+  </XDFTABLE>
+  <XDFTABLE uniqueid="0x0102" flags="0x30">
+    <title>RPM Breakpoints</title>
+    <CATEGORYMEM index="0" category="0" />
+    <XDFAXIS id="x" uniqueid="0x0"><EMBEDDEDDATA mmedelementsizebits="8" mmedmajorstridebits="-32" mmedminorstridebits="0" /><indexcount>1</indexcount><datatype>0</datatype><unittype>0</unittype><DALINK index="0" /><LABEL index="0" value="0.00" /><MATH equation="X"><VAR id="X" /></MATH></XDFAXIS>
+    <XDFAXIS id="y" uniqueid="0x0"><EMBEDDEDDATA mmedelementsizebits="8" mmedmajorstridebits="-32" mmedminorstridebits="0" /><indexcount>29</indexcount><datatype>0</datatype><unittype>0</unittype><DALINK index="0" /><MATH equation="X"><VAR id="X" /></MATH></XDFAXIS>
+    <XDFAXIS id="z"><EMBEDDEDDATA mmedtypeflags="0x02" mmedaddress="0x1A93A" mmedelementsizebits="16" mmedrowcount="29" mmedcolcount="1" mmedmajorstridebits="0" mmedminorstridebits="0" /><units>RPM</units><decimalpl>0</decimalpl><min>0</min><max>20000</max><outputtype>1</outputtype><MATH equation="X"><VAR id="X" /></MATH></XDFAXIS>
+  </XDFTABLE>
+  <XDFTABLE uniqueid="0x0001" flags="0x0">
+    <title>Fuel Map A (injection ms)</title>
+    <description>25 load x 29 RPM, 16-bit little-endian, value/1000 = ms. Located by analysing the shop's BIN.</description>
+    <CATEGORYMEM index="0" category="1" />
+    <XDFAXIS id="x" uniqueid="0x0"><EMBEDDEDDATA mmedelementsizebits="8" mmedmajorstridebits="-32" mmedminorstridebits="0" /><units>Load</units><indexcount>25</indexcount><embedinfo type="3" linkobjid="0x0101" /><datatype>0</datatype><unittype>0</unittype><DALINK index="0" /><MATH equation="X"><VAR id="X" /></MATH></XDFAXIS>
+    <XDFAXIS id="y" uniqueid="0x0"><EMBEDDEDDATA mmedelementsizebits="8" mmedmajorstridebits="-32" mmedminorstridebits="0" /><units>RPM</units><indexcount>29</indexcount><embedinfo type="3" linkobjid="0x0102" /><datatype>0</datatype><unittype>0</unittype><DALINK index="0" /><MATH equation="X"><VAR id="X" /></MATH></XDFAXIS>
+    <XDFAXIS id="z"><EMBEDDEDDATA mmedtypeflags="0x02" mmedaddress="0x19464" mmedelementsizebits="16" mmedrowcount="29" mmedcolcount="25" mmedmajorstridebits="0" mmedminorstridebits="0" /><units>ms</units><decimalpl>3</decimalpl><min>0</min><max>6</max><outputtype>1</outputtype><MATH equation="X/1000"><VAR id="X" /></MATH></XDFAXIS>
+  </XDFTABLE>
+  <XDFTABLE uniqueid="0x0002" flags="0x0">
+    <title>Fuel Map B (injection ms)</title>
+    <description>25 load x 29 RPM, 16-bit little-endian, value/1000 = ms. Located by analysing the shop's BIN.</description>
+    <CATEGORYMEM index="0" category="1" />
+    <XDFAXIS id="x" uniqueid="0x0"><EMBEDDEDDATA mmedelementsizebits="8" mmedmajorstridebits="-32" mmedminorstridebits="0" /><units>Load</units><indexcount>25</indexcount><embedinfo type="3" linkobjid="0x0101" /><datatype>0</datatype><unittype>0</unittype><DALINK index="0" /><MATH equation="X"><VAR id="X" /></MATH></XDFAXIS>
+    <XDFAXIS id="y" uniqueid="0x0"><EMBEDDEDDATA mmedelementsizebits="8" mmedmajorstridebits="-32" mmedminorstridebits="0" /><units>RPM</units><indexcount>29</indexcount><embedinfo type="3" linkobjid="0x0102" /><datatype>0</datatype><unittype>0</unittype><DALINK index="0" /><MATH equation="X"><VAR id="X" /></MATH></XDFAXIS>
+    <XDFAXIS id="z"><EMBEDDEDDATA mmedtypeflags="0x02" mmedaddress="0x19A0E" mmedelementsizebits="16" mmedrowcount="29" mmedcolcount="25" mmedmajorstridebits="0" mmedminorstridebits="0" /><units>ms</units><decimalpl>3</decimalpl><min>0</min><max>6</max><outputtype>1</outputtype><MATH equation="X/1000"><VAR id="X" /></MATH></XDFAXIS>
+  </XDFTABLE>
+</XDFFORMAT>

@@ -164,7 +164,8 @@ async function watchdog() {
     while (link && !userDisconnect) {
       await sleep(1300);
       if (!link || userDisconnect) break;
-      const fresh = Date.now() - (link.lastOk || 0) < 2200;   // live loop is already getting replies
+      if (livePolling) continue;   // the live loop handles its own key-off/on recovery
+      const fresh = Date.now() - (link.lastOk || 0) < 2200;
       let alive = fresh;
       if (!fresh) {
         if (!ecuAlive && link.wakeup) { try { await link.wakeup(); } catch {} await link.transact(Honda.CMD.ping(), 150); }  // re-wake after key-on
@@ -188,14 +189,23 @@ function needLink() { if (!link) { $('connModal').classList.add('on'); return fa
 // ---------------- live data ----------------
 let livePolling = false, recording = null;
 const hist = [];
+let liveFail = 0, liveDown = false;
+async function reinitSession() {   // re-establish the K-line session after key-off/on
+  try { if (link && link.wakeup) await link.wakeup(); } catch {}
+  try { await link.transact(Honda.CMD.ping(), 150); } catch {}
+  try { const r = await link.transact(Honda.CMD.init(), 500); return !!(r && r[0] === 0x02); } catch { return false; }
+}
 async function liveLoop() {
   let n = 0; const t0 = performance.now();
   while (livePolling && link) {
     const t = performance.now();
-    const r11 = Honda.decodeTableReply(await link.transact(Honda.CMD.readTable(0x11), 300));
-    const r20 = (n % 2 === 0) ? Honda.decodeTableReply(await link.transact(Honda.CMD.readTable(0x20), 300)) : null;
+    let r11 = null, r20 = null;
+    try {
+      r11 = Honda.decodeTableReply(await link.transact(Honda.CMD.readTable(0x11), 300));
+      r20 = (n % 2 === 0) ? Honda.decodeTableReply(await link.transact(Honda.CMD.readTable(0x20), 300)) : null;
+    } catch {}
     if (r11 && r11.values.length > 2) {   // real table 0x11 (empty on K60S → fall through to the 0x17 path)
-      n++;
+      n++; liveFail = 0; if (liveDown) { liveDown = false; ecuAlive = true; setConn('ok', link.name); }
       const vals = [...r11.values, ...(r20 ? r20.values : (liveLoop.last20 || []))];
       if (r20) liveLoop.last20 = r20.values;
       const get = k => vals.find(v => v.key === k)?.value ?? 0;
@@ -220,11 +230,15 @@ async function liveLoop() {
       // K60S / newer ECUs: no table 0x11. Live data lives in table 0x17 (+0x20).
       // Decoded from a real K60S scan: bytes 0-1 big-endian = RPM (idle read ~1400-1650).
       n++;
-      const r17raw = await link.transact(Honda.CMD.readTable(0x17), 250);
-      const b17 = r17raw && r17raw[0] === 0x02 && r17raw[2] === 0x71 && r17raw.length > 6 ? Array.from(r17raw.slice(4, -1)) : null;
-      const r20raw = await link.transact(Honda.CMD.readTable(0x20), 250);
-      const b20 = r20raw && r20raw.length > 6 ? Array.from(r20raw.slice(4, -1)) : null;
+      let b17 = null, b20 = null;
+      try {
+        const r17raw = await link.transact(Honda.CMD.readTable(0x17), 250);
+        b17 = r17raw && r17raw[0] === 0x02 && r17raw[2] === 0x71 && r17raw.length > 6 ? Array.from(r17raw.slice(4, -1)) : null;
+        const r20raw = await link.transact(Honda.CMD.readTable(0x20), 250);
+        b20 = r20raw && r20raw.length > 6 ? Array.from(r20raw.slice(4, -1)) : null;
+      } catch {}
       if (b17) {
+        liveFail = 0; if (liveDown) { liveDown = false; ecuAlive = true; setConn('ok', link.name); toast('เปิดกุญแจ — อ่านค่าต่อแล้ว'); }
         const rpm = (b17[0] << 8) | b17[1];
         renderK60S(rpm, b17, b20);
         renderDash({ rpm, tps: null, wtemp: null, afr: null, batt: null, inj: null, map: null, iat: null, speed: null, lambda: null, hz: n / ((performance.now() - t0) / 1000) });
@@ -233,9 +247,16 @@ async function liveLoop() {
         onDynoSample({ v: 0, rpm });
         if (recording) { recording.push([Date.now(), rpm, ...(b17 || []), ...(b20 || [])]); recording.cols ||= ['rpm', ...b17.map((_, i) => `17[${i}]`), ...(b20 || []).map((_, i) => `20[${i}]`)]; }
         $('liveInfo').textContent = `K60S · รอบ ${rpm} rpm · ${(n / ((performance.now() - t0) / 1000)).toFixed(1)} ครั้ง/วิ · ไบต์ที่ขยับเป็นสีส้ม — บอกผมว่าตัวไหน = อุณหภูมิ/ลิ้นเร่ง`;
-      } else { renderRawLive(b20 ? [{ tbl: 0x20, bytes: b20 }] : []); $('liveInfo').textContent = 'กล่องไม่ตอบตาราง 0x17 — เช็กกุญแจ/สาย'; }
+      } else {
+        // no answer from 0x11 or 0x17 → key likely off. Mark down, show dashes, and keep trying to re-establish.
+        liveFail++;
+        if (!liveDown && liveFail >= 3) { liveDown = true; ecuAlive = false; setConn('wait', `${link.name} — รอเปิดกุญแจ…`); }
+        if (liveDown) { renderDash({ rpm: null, tps: null, wtemp: null, afr: null, batt: null, inj: null, map: null, iat: null, speed: null, lambda: null, hz: null }); $('vals').innerHTML = ''; }
+        $('liveInfo').textContent = liveDown ? `${link.name} — รอเปิดกุญแจ (อ่านค่าต่อเองเมื่อเปิดกุญแจ)` : 'กล่องไม่ตอบ — กำลังลองใหม่…';
+        if (liveFail % 4 === 0) { await reinitSession(); }   // re-wake + init the session periodically
+      }
     }
-    await sleep(Math.max(0, settings.poll - (performance.now() - t)));
+    await sleep(Math.max(50, settings.poll - (performance.now() - t)));
   }
 }
 let k60sPrev = {};

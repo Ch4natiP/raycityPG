@@ -27,7 +27,7 @@
     }
     async _transact(req, timeout, hdr = 1) {
       this.rx = [];
-      await this.write(req);
+      try { await this.write(req); } catch { return null; }   // port hiccup (key-off): caller treats null as no reply
       this.emit('tx', req);
       const until = Date.now() + timeout;
       let echoStripped = false;

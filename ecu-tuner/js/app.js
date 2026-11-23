@@ -178,6 +178,7 @@ async function watchdog() {
         if (idB) { ecu.id = hex(idB); ecu.model = Catalog.matchId(idB); $('ecuId').textContent = ecu.model ? `${ecu.model.part} · ${ecu.model.model}` : `Honda PGM-FI · ${ecu.id}`; }
         setConn('ok', link.name); toast('เปิดกุญแจ — เชื่อมต่อใหม่อัตโนมัติ');
         flashGate();
+        autoDumpIfSupported();
       } else if (!alive && ecuAlive) {                          // key turned OFF
         ecuAlive = false; setConn('wait', `${link.name} — รอเปิดกุญแจ…`);
       }
@@ -749,6 +750,19 @@ let rdStop = false;
 $('rdModel').innerHTML = '<option value="">กำหนดเอง</option>' + Catalog.ROWS.filter(r => r.kb <= 96).map((r, i) => `<option value="${Catalog.ROWS.indexOf(r)}">${r.part} · ${r.model} · ${r.kb}KB</option>`).join('');
 $('rdModel').onchange = () => { const r = Catalog.ROWS[+$('rdModel').value]; if (r) { $('rdStart').value = r.start.toString(16).toUpperCase(); $('rdKb').value = r.kb; } };
 $('rdStop').onclick = () => { rdStop = true; };
+// Auto dump: once per ECU ID per session, only for models the Keihin read protocol supports (≤128KB with a known start).
+const autoDumped = new Set();
+function autoDumpIfSupported() {
+  const m = ecu.model;
+  if (!m || !$('rdAuto').checked || !ecu.id || autoDumped.has(ecu.id)) return;
+  if (!m.start && m.start !== 0) return;
+  if ((m.kb || 0) > 128) return;
+  autoDumped.add(ecu.id);
+  $('rdStart').value = m.start.toString(16).toUpperCase();
+  $('rdKb').value = m.kb;
+  toast(`ดูดอัตโนมัติ: ${m.part}`);
+  setTimeout(() => { if (!$('rdGo').disabled) $('rdGo').click(); }, 1500);
+}
 $('rdGo').onclick = async () => {
   if (!needLink()) return;
   if (livePolling) stopLive();

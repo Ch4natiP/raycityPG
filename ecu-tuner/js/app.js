@@ -1082,21 +1082,27 @@ function applyCatalog(name) {
 // ---------------- XDF definitions ----------------
 let xdf = null, xdfSel = null, xdfCells = new Set(), xdfDrag = null;
 const xdfItems = () => xdf ? [...(xdf.bytefns || []), ...xdf.tables, ...xdf.constants, ...xdf.flags] : [];
-$('xdfFile').onchange = async e => {
-  const f = e.target.files[0]; if (!f) return; e.target.value = '';
-  const buf = new Uint8Array(await f.arrayBuffer());
-  if (Xdf.isEncrypted(buf)) return toast('XDF ไฟล์นี้ถูกเข้ารหัส (เปิดได้เฉพาะใน TunerPro) ใช้ “ค้นหาแมพอัตโนมัติ” แทน', 7000);
-  try { xdf = Xdf.parse(new TextDecoder('windows-874').decode(buf)); }
+function openXdfText(name, text) {
+  try { xdf = Xdf.parse(text); }
   catch (err) { return toast('อ่าน XDF ไม่ได้: ' + err.message, 6000); }
-  xdf.name = f.name; xdfSel = null;
-  $('xdfPanel').hidden = false; $('xdfTitle').textContent = f.name;
+  xdf.name = name; xdfSel = null;
+  $('xdfPanel').hidden = false; $('xdfTitle').textContent = name;
   $('xdfMeta').textContent = `${xdf.tables.length} ตาราง · ${xdf.constants.length} ค่า · ${xdf.flags.length} สวิตช์${xdf.size ? ` · ไฟล์ ${Math.round(xdf.size / 1024)}KB` : ''}`;
   if (bin && xdf.size && xdf.size !== bin.length) toast(`ขนาด BIN (${Math.round(bin.length / 1024)}KB) ไม่ตรงกับ XDF (${Math.round(xdf.size / 1024)}KB) — อาจเป็นคนละรุ่น`, 7000);
   renderXdfList(); fillRtMaps();
   const first = xdf.tables.find(t => /fuel|น้ำมัน/i.test(t.title) && t.z.rows > 2) || xdf.tables[0];
   if (first) selectXdf(first.id); else if (xdf.flags.length) selectXdf('__svc');
   refreshQuickTune();
+}
+$('xdfFile').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return; e.target.value = '';
+  const buf = new Uint8Array(await f.arrayBuffer());
+  if (Xdf.isEncrypted(buf)) return toast('XDF ไฟล์นี้ถูกเข้ารหัส (เปิดได้เฉพาะใน TunerPro) ใช้ “ค้นหาแมพอัตโนมัติ” แทน', 7000);
+  openXdfText(f.name, new TextDecoder('windows-874').decode(buf));
 };
+// Shop-built XDFs bundled with the app (made from the shop's own BIN files)
+for (const k of Object.keys(window.SHOP_XDF || {})) { const o = document.createElement('option'); o.value = k; o.textContent = k; $('xdfShop').appendChild(o); }
+$('xdfShop').onchange = () => { const k = $('xdfShop').value; if (k && window.SHOP_XDF[k]) openXdfText(k + '.xdf', window.SHOP_XDF[k]); $('xdfShop').value = ''; };
 $('xdfClose').onclick = () => { xdf = null; $('xdfPanel').hidden = true; fillRtMaps(); };
 $('xdfSearch').oninput = () => renderXdfList();
 function renderXdfList() {

@@ -683,8 +683,16 @@
 
     <!-- ===================== TERMINAL ===================== -->
     <section class="page" id="p-term">
-      <div class="ph"><div><div class="eyebrow">อื่น ๆ</div><h1>Terminal</h1><p>ส่งและดูไบต์ดิบบนสาย K-line ใช้ดักโปรโตคอลรุ่นใหม่</p></div></div>
+      <div class="ph"><div><div class="eyebrow">อื่น ๆ</div><h1>Terminal · ดักสัญญาณ</h1><p>ส่ง/ดูไบต์ดิบ และดักฟังตอนโปรแกรมอื่นคุยกับกล่อง เพื่อหาคำสั่งดูด/เขียนของรุ่นใหม่</p></div></div>
       <div class="stack">
+        <div class="panel stack">
+          <div class="row" style="justify-content:space-between">
+            <b>🎧 ดักสัญญาณ (ฟังอย่างเดียว)</b>
+            <div class="row"><button class="btn o" id="sniffStart">เริ่มดักสัญญาณ</button><button class="btn" id="sniffStop" disabled>หยุด</button><button class="btn" id="sniffSave" disabled>เก็บ log</button></div>
+          </div>
+          <div class="muted" id="sniffInfo">ต่อสาย USB-Serial เส้นที่สองแบบฟังอย่างเดียว (ขา RX จั๊มเข้าสาย K-line, GND ร่วม) แล้วให้โปรแกรมอื่นดูดไฟล์ · โปรแกรมนี้จะอ่านไบต์ทั้งหมดบนสายโดยไม่ส่งอะไรออกไป · พอร์ตเดียวเปิดสองโปรแกรมพร้อมกันไม่ได้ จึงต้องใช้สายคนละเส้น</div>
+          <label class="row muted" style="gap:6px">บอดเรต <select id="sniffBaud"><option>10400</option><option>9600</option><option>15625</option><option>19200</option><option>38400</option><option>115200</option></select> (Honda K-line = 10400)</label>
+        </div>
         <div class="panel row">
           <input id="termIn" class="mono" placeholder="hex เช่น 72 05 71 11" style="flex:1;min-width:200px">
           <label class="row muted" style="gap:6px"><input type="checkbox" id="termCs" checked> เติม checksum Honda</label>

@@ -613,6 +613,68 @@ $('rdGo').onclick = async () => {
 };
 
 // ---------------- Terminal ----------------
+// ---------------- Sniffer (passive K-line listen) ----------------
+let sniffer = null, sniffLog = [], sniffBuf = [];
+$('sniffStart').onclick = async () => {
+  if (!SerialLink.supported()) return toast('ต้องใช้ Chrome หรือ Edge บนคอม (Web Serial)', 5000);
+  try {
+    const port = await navigator.serial.requestPort();
+    await port.open({ baudRate: +$('sniffBaud').value || 10400, dataBits: 8, stopBits: 1, parity: 'none', bufferSize: 8192 });
+    sniffer = { port, reading: true }; sniffLog = []; sniffBuf = [];
+    $('sniffStart').disabled = true; $('sniffStop').disabled = false; $('sniffSave').disabled = false;
+    $('sniffInfo').textContent = 'กำลังดักสัญญาณ… ให้โปรแกรมอื่นเริ่มดูดไฟล์ได้เลย';
+    sniffLoop();
+  } catch (e) { if (e?.name !== 'NotFoundError') toast('เปิดพอร์ตดักไม่ได้: ' + (e.message || e), 5000); }
+};
+async function sniffLoop() {
+  const dec = [];
+  let lastT = 0;
+  while (sniffer?.reading && sniffer.port.readable) {
+    const reader = sniffer.port.readable.getReader(); sniffer.reader = reader;
+    try {
+      for (;;) {
+        const { value, done } = await reader.read(); if (done) break;
+        if (!value || !value.length) continue;
+        const now = performance.now();
+        // a gap on the wire = end of one direction's burst: flush what we have
+        if (sniffBuf.length && now - lastT > 12) flushSniff();
+        lastT = now;
+        for (const b of value) sniffBuf.push(b);
+        // flush complete Honda frames as they arrive (hdr 1 and 3 both tried)
+        let fr = Honda.parseStream(sniffBuf, 1);
+        if (!fr.frames.length) fr = Honda.parseStream(sniffBuf, 3);
+        if (fr.frames.length) { for (const f of fr.frames) sniffLine(Array.from(f)); sniffBuf = fr.rest; }
+        if (sniffBuf.length > 64) flushSniff();
+      }
+    } catch (e) {} finally { try { reader.releaseLock(); } catch {} }
+  }
+}
+function flushSniff() { if (sniffBuf.length) { sniffLine(sniffBuf.slice()); sniffBuf = []; } }
+function sniffLine(bytes) {
+  const t = new Date().toLocaleTimeString('th-TH', { hour12: false }) + '.' + String(Date.now() % 1000).padStart(3, '0');
+  let note = '';
+  const ok = bytes.length > 2 && Honda.checksum(bytes.slice(0, -1)) === bytes[bytes.length - 1];
+  if (bytes[0] === 0x82 && bytes[1] === 0x82) { const a = (bytes[4] << 16) | (bytes[6] << 8) | bytes[5]; note = `  ← คำสั่งอ่านแฟลช? addr 0x${a.toString(16)} len ${bytes[7]}`; }
+  else if (bytes[0] === 0x72 && bytes[2] === 0x71) note = `  อ่านตาราง 0x${(bytes[3] || 0).toString(16)}`;
+  else if (bytes[0] === 0x27 || bytes[0] === 0x2F || bytes[1] === 0x27) note = '  (อาจเป็น SecurityAccess/seed-key)';
+  const line = `${t}  ${hex(bytes)}${ok ? '' : ' [cs?]'}${note}`;
+  sniffLog.push(line);
+  const ta = $('term'); ta.value = sniffLog.slice(-500).join('\n'); ta.scrollTop = ta.scrollHeight;
+}
+$('sniffStop').onclick = async () => {
+  flushSniff();
+  if (sniffer) { sniffer.reading = false; try { await sniffer.reader?.cancel(); } catch {} try { await sniffer.port.close(); } catch {} sniffer = null; }
+  $('sniffStart').disabled = false; $('sniffStop').disabled = true;
+  $('sniffInfo').textContent = `หยุดแล้ว · ดักได้ ${sniffLog.length} บรรทัด · กด “เก็บ log” แล้วส่งมาให้ผม`;
+};
+$('sniffSave').onclick = async () => {
+  if (!sniffLog.length) return toast('ยังไม่มีข้อมูล');
+  const txt = `# K-line sniff ${new Date().toISOString()} · baud ${$('sniffBaud').value}\n` + sniffLog.join('\n');
+  const name = `sniff_${Date.now()}.txt`;
+  await db.add({ name, kind: 'term', data: new TextEncoder().encode(txt).buffer });
+  download(name, txt, 'text/plain'); toast('เก็บ log ดักสัญญาณแล้ว');
+};
+
 $('termSend').onclick = async () => {
   if (!needLink()) return;
   const bytes = ($('termIn').value.match(/[0-9a-f]{2}/gi) || []).map(h => parseInt(h, 16));

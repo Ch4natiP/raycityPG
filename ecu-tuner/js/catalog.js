@@ -31,6 +31,20 @@
     K('30400-K2TA-T02', 'Lead 125 4V (2022)', 256, 0, null, 'files'), K('30400-K3MF-T01', 'Giorno 125', 256, 0, null, 'files'),
     K('30400-K2F-T01', 'Scoopy-i', 256, 0, null, 'files'),
   ];
+  // internal ECU id (first 5 bytes of diagnostic table 0x00) → part number. From Zar file names and a real K60S read.
+  const ID = {
+    '0101D00D01': '30400-K60F-T01', '01030A0D01': '30400-K60S-T71', '0103070D01': '30400-K59K-T11',
+    '01037C0D01': '30400-K0WF-T01', '0103D00D01': '30400-K1ZF-T01', '0103CF0D01': '30400-K1ZF-T11',
+    '0101FF0D01': '30400-K20J-T21', '0101990D01': '30400-K36F-T01', '0102180D01': '30400-K36S-T31',
+    '0104780D01': '30400-K2TA-T02',
+  };
+  /** identify a model from the ECU id bytes read on connect (array or hex string) */
+  function matchId(bytes) {
+    const hex = Array.isArray(bytes) ? bytes.map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('') : String(bytes).replace(/[^0-9a-f]/gi, '').toUpperCase();
+    const key = hex.slice(0, 10);
+    const part = ID[key]; if (!part) return null;
+    return ROWS.find(r => r.part === part) || null;
+  }
   const norm = s => String(s).toUpperCase().replace(/[^A-Z0-9]/g, '');
   /** best catalogue row for a file name or ECU id text (matches "K73-T32", "38770K73T32", …) */
   function match(text) {
@@ -51,5 +65,5 @@
     const z = String(name).match(/\b(9FFE|7FEF|DFEF)\b/i);
     return z ? parseInt(z[1], 16) : null;
   }
-  return { ROWS, match, nameChecksum };
+  return { ROWS, ID, match, matchId, nameChecksum };
 });

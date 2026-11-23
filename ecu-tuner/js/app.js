@@ -137,8 +137,11 @@ async function connect(l) {
     }
     if (!ok) { setConn('wait', `${name} — เปิดพอร์ตแล้ว แต่ ECU ไม่ตอบ`); toast('ECU ไม่ตอบ: เช็กว่าเปิดกุญแจแล้ว, สายเสียบแน่น, เลือกพอร์ตถูก', 6000); $('ecuId').textContent = '—'; return; }
     const id = await l.transact(Honda.CMD.readTable(0x00), 400);
-    ecu.id = id ? hex(id.slice(4, -1)) : 'อ่านไม่ได้';
-    $('ecuId').textContent = `Honda PGM-FI · ${ecu.id}`;
+    const idBytes = id ? Array.from(id.slice(4, -1)) : null;
+    ecu.id = idBytes ? hex(idBytes) : 'อ่านไม่ได้';
+    ecu.model = idBytes ? Catalog.matchId(idBytes) : null;
+    $('ecuId').textContent = ecu.model ? `${ecu.model.part} · ${ecu.model.model}` : `Honda PGM-FI · ${ecu.id}`;
+    if (ecu.model) log(`ระบุรุ่นจาก ECU ID: ${ecu.model.part} (${ecu.model.model})`);
     setConn('ok', name);
     toast('เชื่อมต่อ ECU สำเร็จ');
   } catch (e) {

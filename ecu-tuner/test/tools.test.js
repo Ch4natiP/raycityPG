@@ -19,3 +19,10 @@ assert.strictEqual(T.dtcInfo('99-9').name, 'ไม่ทราบความห
 assert.ok(T.dtcSearch('o2').some(d => d.code === '21-1'));
 assert.ok(T.dtcSearch('ลิ้นเร่ง').some(d => d.code.startsWith('8')));
 console.log('all tools tests passed (injector ' + need + ' cc/min for 15 hp)');
+
+// ECU-id identification (verified against a real K60S read: id 01 03 0A 0D 01)
+const C = require('../js/catalog.js');
+assert.strictEqual(C.matchId([0x01,0x03,0x0A,0x0D,0x01,0xEE,0,0,0,0]).part, '30400-K60S-T71');
+assert.strictEqual(C.matchId('01030A0D01EE00000000').model, 'Click 125i (2016-2017)');
+assert.strictEqual(C.matchId([0x99,0,0,0,0]), null);
+console.log('ecu-id match ok');

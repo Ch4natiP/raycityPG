@@ -40,7 +40,7 @@
         if (echoStripped) {
           const { frames } = Honda.parseStream(this.rx, hdr);
           const reply = frames.find(f => f[0] !== req[0] || f.length !== req.length || !f.every((b, i) => b === req[i]));
-          if (reply) return reply;
+          if (reply) { this.lastOk = Date.now(); return reply; }
         }
         await new Promise(r => { this.waiter = r; setTimeout(r, 20); });
         this.waiter = null;

@@ -142,6 +142,17 @@
   .val code { display: block; font: 11px var(--font-mono); color: var(--muted); margin-top: 4px; }
   .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); }
   .legend i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 6px; }
+  .gaugegrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .dgauge { width: 100%; height: auto; display: block; }
+  .telegrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .tele { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px; position: relative; overflow: hidden; }
+  .tele::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent); }
+  .tele.off::before { background: var(--line); }
+  .tele .tlab { font: 500 11px/1.2 var(--font-mono); letter-spacing: .5px; text-transform: uppercase; color: var(--muted); display: block; }
+  .tele b { font: 600 30px/1.1 var(--font-mono); font-variant-numeric: tabular-nums; }
+  .tele.off b { color: var(--muted); }
+  .tele .tunit { color: var(--muted); font-size: 12px; margin-left: 2px; }
+  @media (max-width: 860px) { .gaugegrid { grid-template-columns: repeat(2, 1fr); } .telegrid { grid-template-columns: repeat(2, 1fr); } }
   .rawrow { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
   .rawb { font: 13px var(--font-mono); padding: 3px 6px; border-radius: 4px; background: var(--surface-2); border: 1px solid var(--line); min-width: 26px; text-align: center; }
   .rawb.chg { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
@@ -363,21 +374,37 @@
 
       <!-- view 1: dashboard -->
       <div class="stack" id="lv1">
-        <div class="tach">
-          <div class="panel"><canvas class="cv" id="gauge" width="640" height="300"></canvas></div>
-          <div class="panel afr">
-            <div class="row" style="justify-content:space-between">
-              <span class="k">AF · อากาศ : น้ำมัน</span>
-              <select id="afrSrc" aria-label="แหล่งค่า AF"><option value="nb">O2 เดิมของรถ (ค่าประมาณ)</option><option value="wb">Wideband (สาย USB ตัวที่ 2)</option></select>
-            </div>
-            <div class="afr-big"><b id="afrVal">—</b><span id="afrState" class="pill">ยังไม่มีข้อมูล</span></div>
-            <canvas class="cv" id="afrBar" width="900" height="120"></canvas>
-            <div class="row" style="justify-content:space-between">
-              <span class="muted" id="afrNote">O2 เดิมเป็นแบบแคบ บอกได้แค่หนา/บางรอบ ๆ 14.7 ถ้าจะจูนจริงควรใช้ Wideband</span>
-              <button class="btn" id="wbConn">เชื่อมต่อ Wideband</button>
-            </div>
+        <div class="panel">
+          <div class="gaugegrid">
+            <canvas class="dgauge" data-g="rpm" width="420" height="380"></canvas>
+            <canvas class="dgauge" data-g="tps" width="420" height="380"></canvas>
+            <canvas class="dgauge" data-g="wtemp" width="420" height="380"></canvas>
+            <canvas class="dgauge" data-g="afr" width="420" height="380"></canvas>
           </div>
         </div>
+        <div class="telegrid">
+          <div class="tele" data-t="batt"><span class="tlab">แบตเตอรี่</span><b>—</b><span class="tunit">V</span></div>
+          <div class="tele" data-t="inj"><span class="tlab">เวลาฉีด (Injector)</span><b>—</b><span class="tunit">ms</span></div>
+          <div class="tele" data-t="peak"><span class="tlab">รอบสูงสุด</span><b>—</b><span class="tunit">rpm</span></div>
+          <div class="tele" data-t="hz"><span class="tlab">ECU Link</span><b>—</b><span class="tunit">ครั้ง/วิ</span></div>
+          <div class="tele" data-t="map"><span class="tlab">MAP แรงดันท่อไอดี</span><b>—</b><span class="tunit">kPa</span></div>
+          <div class="tele" data-t="iat"><span class="tlab">อุณหภูมิอากาศ</span><b>—</b><span class="tunit">°C</span></div>
+          <div class="tele" data-t="speed"><span class="tlab">ความเร็ว</span><b>—</b><span class="tunit">km/h</span></div>
+          <div class="tele" data-t="lambda"><span class="tlab">Lambda</span><b>—</b><span class="tunit">λ</span></div>
+        </div>
+        <div class="panel afr">
+          <div class="row" style="justify-content:space-between">
+            <span class="k">AF · อากาศ : น้ำมัน</span>
+            <select id="afrSrc" aria-label="แหล่งค่า AF"><option value="nb">O2 เดิมของรถ (ค่าประมาณ)</option><option value="wb">Wideband (สาย USB ตัวที่ 2)</option></select>
+          </div>
+          <div class="afr-big"><b id="afrVal">—</b><span id="afrState" class="pill">ยังไม่มีข้อมูล</span></div>
+          <canvas class="cv" id="afrBar" width="900" height="120"></canvas>
+          <div class="row" style="justify-content:space-between">
+            <span class="muted" id="afrNote">O2 เดิมเป็นแบบแคบ บอกได้แค่หนา/บางรอบ ๆ 14.7 ถ้าจะจูนจริงควรใช้ Wideband</span>
+            <button class="btn" id="wbConn">เชื่อมต่อ Wideband</button>
+          </div>
+        </div>
+        <canvas class="cv" id="gauge" width="640" height="300" hidden></canvas>
         <div class="panel stack"><canvas class="cv" id="chart" width="1600" height="380"></canvas>
           <div class="legend"><span><i style="background:var(--amber)"></i>รอบ</span><span><i style="background:var(--accent)"></i>ลิ้นเร่ง %</span><span><i style="background:var(--ok)"></i>เวลาฉีด</span><span><i style="background:var(--bad)"></i>AF (10–18)</span></div></div>
         <div class="vals" id="vals"></div>

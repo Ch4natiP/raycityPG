@@ -146,6 +146,7 @@ async function connect(l) {
     if (ecu.model) term(`ระบุรุ่นจาก ECU ID: ${ecu.model.part} (${ecu.model.model})`);
     setConn('ok', name);
     toast('เชื่อมต่อ ECU สำเร็จ');
+    ecuAlive = true; l.lastOk = Date.now(); watchdog();   // keep the port open and auto-reconnect on key off/on
   } catch (e) {
     console.error(e);
     try { await l.close(); } catch {}
@@ -153,7 +154,35 @@ async function connect(l) {
     if (e && e.name !== 'NotFoundError') toast('เปิดพอร์ตไม่ได้: ' + (e.message || e) + ' — ถอดสายเสียบใหม่ หรือรีเฟรชหน้า (Ctrl+Shift+R)', 7000);
   }
 }
-async function disconnect() { stopLive(); const l = link; link = null; ecu.id = null; await l?.close(); setConn('', 'ยังไม่ได้เชื่อมต่อ'); $('ecuId').textContent = '—'; }
+async function disconnect() { userDisconnect = true; stopLive(); const l = link; link = null; ecu.id = null; await l?.close(); setConn('', 'ยังไม่ได้เชื่อมต่อ'); $('ecuId').textContent = '—'; }
+
+// Keep the serial port open across key-off and re-detect the ECU when the key comes back on.
+let ecuAlive = false, watchdogOn = false, userDisconnect = false;
+async function watchdog() {
+  if (watchdogOn || !SerialLink.supported()) return; watchdogOn = true; userDisconnect = false;
+  try {
+    while (link && !userDisconnect) {
+      await sleep(1300);
+      if (!link || userDisconnect) break;
+      const fresh = Date.now() - (link.lastOk || 0) < 2200;   // live loop is already getting replies
+      let alive = fresh;
+      if (!fresh) {
+        if (!ecuAlive && link.wakeup) { try { await link.wakeup(); } catch {} await link.transact(Honda.CMD.ping(), 150); }  // re-wake after key-on
+        const r = await link.transact(Honda.CMD.init(), 400); alive = !!(r && r[0] === 0x02);
+      }
+      if (alive && !ecuAlive) {                                 // key turned back ON
+        ecuAlive = true;
+        const id = await link.transact(Honda.CMD.readTable(0x00), 400);
+        const idB = id ? Array.from(id.slice(4, -1)) : null;
+        if (idB) { ecu.id = hex(idB); ecu.model = Catalog.matchId(idB); $('ecuId').textContent = ecu.model ? `${ecu.model.part} · ${ecu.model.model}` : `Honda PGM-FI · ${ecu.id}`; }
+        setConn('ok', link.name); toast('เปิดกุญแจ — เชื่อมต่อใหม่อัตโนมัติ');
+        flashGate();
+      } else if (!alive && ecuAlive) {                          // key turned OFF
+        ecuAlive = false; setConn('wait', `${link.name} — รอเปิดกุญแจ…`);
+      }
+    }
+  } finally { watchdogOn = false; }
+}
 function needLink() { if (!link) { $('connModal').classList.add('on'); return false; } return true; }
 
 // ---------------- live data ----------------
@@ -176,12 +205,17 @@ async function liveLoop() {
                                  { key: 'lambda', name: 'Lambda', unit: 'λ', value: +(afr / 14.7).toFixed(3), raw: [], max: 1.3 });
       vals.push({ key: 'duty', name: 'Injector duty', unit: '%', value: +(get('inj') * get('rpm') / 1200).toFixed(1), raw: [], max: 100 });
       renderVals(vals);
+      const has = k => vals.some(v => v.key === k);
+      const hz = n / ((performance.now() - t0) / 1000);
+      renderDash({ rpm: get('rpm'), tps: has('tps') ? get('tps') : null, wtemp: has('ect') ? get('ect') : null, afr,
+        batt: has('batt') ? get('batt') : null, inj: has('inj') ? get('inj') : null, map: has('map') ? get('map') : null,
+        iat: has('iat') ? get('iat') : null, speed: has('speed') ? get('speed') : null, lambda: afr != null ? +(afr / 14.7).toFixed(3) : null, hz });
       hist.push({ rpm: get('rpm'), tps: get('tps'), inj: get('inj'), afr, afr10: afr == null ? 0 : Math.max(0, afr - 10) }); if (hist.length > 300) hist.shift();
-      drawGauge(get('rpm')); drawChart(); drawAfr(afr);
+      drawChart(); drawAfr(afr);
       onLiveSample({ rpm: get('rpm'), tps: get('tps'), map: get('map'), ect: get('ect'), afr });
       onDynoSample({ v: get('speed'), rpm: get('rpm') });
       if (recording) recording.push([Date.now(), ...vals.map(v => v.value)]), recording.cols ||= vals.map(v => `${v.name} (${v.unit})`);
-      $('liveInfo').textContent = `${(n / ((performance.now() - t0) / 1000)).toFixed(1)} ครั้ง/วิ${recording ? ` • กำลังบันทึก ${recording.length} แถว` : ''}`;
+      $('liveInfo').textContent = `${hz.toFixed(1)} ครั้ง/วิ${recording ? ` • กำลังบันทึก ${recording.length} แถว` : ''}`;
     } else {
       // K60S / newer ECUs: no table 0x11. Live data lives in table 0x17 (+0x20).
       // Decoded from a real K60S scan: bytes 0-1 big-endian = RPM (idle read ~1400-1650).
@@ -193,8 +227,9 @@ async function liveLoop() {
       if (b17) {
         const rpm = (b17[0] << 8) | b17[1];
         renderK60S(rpm, b17, b20);
+        renderDash({ rpm, tps: null, wtemp: null, afr: null, batt: null, inj: null, map: null, iat: null, speed: null, lambda: null, hz: n / ((performance.now() - t0) / 1000) });
         hist.push({ rpm, tps: b20 ? b20[0] / 2.55 : 0, inj: 0, afr: null, afr10: 0 }); if (hist.length > 300) hist.shift();
-        drawGauge(rpm); drawChart(); drawAfr(null);
+        drawChart(); drawAfr(null);
         onDynoSample({ v: 0, rpm });
         if (recording) { recording.push([Date.now(), rpm, ...(b17 || []), ...(b20 || [])]); recording.cols ||= ['rpm', ...b17.map((_, i) => `17[${i}]`), ...(b20 || []).map((_, i) => `20[${i}]`)]; }
         $('liveInfo').textContent = `K60S · รอบ ${rpm} rpm · ${(n / ((performance.now() - t0) / 1000)).toFixed(1)} ครั้ง/วิ · ไบต์ที่ขยับเป็นสีส้ม — บอกผมว่าตัวไหน = อุณหภูมิ/ลิ้นเร่ง`;
@@ -236,6 +271,57 @@ function renderVals(vals) {
     el.querySelector('.bar div').style.width = v.max ? Math.max(0, Math.min(100, v.value / v.max * 100)) + '%' : '0';
     el.querySelector('code').textContent = hex(v.raw);
   });
+}
+const GAUGES = {
+  rpm:   { label: 'RPM', sub: 'REV/MIN', unit: '', min: 0, max: 12000, scale: 1 / 1000, red: 9500, dec: 0 },
+  tps:   { label: 'TPS', sub: 'THROTTLE %', unit: '', min: 0, max: 100, red: 999, dec: 0 },
+  wtemp: { label: 'W.TEMP', sub: '°C', unit: '', min: 40, max: 140, red: 115, dec: 0 },
+  afr:   { label: 'AFR', sub: 'AIR / FUEL', unit: '', min: 10, max: 20, red: 999, dec: 1 },
+};
+let peakRpm = 0;
+function drawArcGauge(cv, cfg, value) {
+  const g = cv.getContext('2d'), W = cv.width, H = cv.height, cx = W / 2, cy = H * 0.52, r = W * 0.36;
+  g.clearRect(0, 0, W, H);
+  const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25, span = a1 - a0, segs = 44;
+  const off = value == null;
+  const frac = off ? 0 : Math.max(0, Math.min(1, (value - cfg.min) / (cfg.max - cfg.min)));
+  const acc = css('--accent'), purple = '#8b5cf6', muted = css('--muted'), ink = css('--ink'), bad = css('--bad'), offc = css('--surface-2');
+  // segment ring
+  for (let i = 0; i < segs; i++) {
+    const t = i / (segs - 1), sa = a0 + span * t, lit = !off && t <= frac + 1e-6;
+    const v = cfg.min + (cfg.max - cfg.min) * t;
+    g.strokeStyle = lit ? (v >= cfg.red ? bad : (t > 0.72 ? mix(purple, bad, (t - 0.72) / 0.28) : purple)) : offc;
+    g.lineWidth = i % 4 === 0 ? W * 0.055 : W * 0.035;
+    g.beginPath(); g.arc(cx, cy, r, sa - 0.012, sa + 0.012); g.stroke();
+  }
+  // scale numbers
+  g.fillStyle = muted; g.font = `600 ${Math.round(W * 0.052)}px ${css('--font-mono')}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+  const steps = 6;
+  for (let k = 0; k <= steps; k++) {
+    const t = k / steps, sa = a0 + span * t, val = cfg.min + (cfg.max - cfg.min) * t;
+    const n = cfg.scale ? val * cfg.scale : val;
+    g.fillStyle = val >= cfg.red ? bad : muted;
+    g.fillText(Math.round(n), cx + Math.cos(sa) * r * 1.18, cy + Math.sin(sa) * r * 1.18);
+  }
+  // value
+  g.fillStyle = off ? muted : ink; g.font = `700 ${Math.round(W * 0.145)}px ${css('--font-display')}`;
+  g.fillText(off ? '----' : value.toFixed(cfg.dec), cx, cy + r * 0.05);
+  g.fillStyle = '#c56bff'; g.font = `700 ${Math.round(W * 0.07)}px ${css('--font-display')}`;
+  g.fillText(cfg.label, cx, cy - r * 0.42);
+  g.fillStyle = muted; g.font = `${Math.round(W * 0.042)}px ${css('--font-mono')}`;
+  g.fillText(cfg.sub, cx, cy + r * 0.42);
+}
+function mix(a, b, t) { const pa = hx2rgb(a), pb = hx2rgb(b); return `rgb(${pa.map((v, i) => Math.round(v + (pb[i] - v) * t)).join(',')})`; }
+function hx2rgb(h) { if (h[0] !== '#') { const m = h.match(/\d+/g); return m ? m.slice(0, 3).map(Number) : [140, 92, 246]; } const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+let dashG = null;
+function dashGauges() { return dashG || (dashG = [...document.querySelectorAll('.dgauge')]); }
+function renderDash(d) {
+  // d: {rpm,tps,wtemp,afr,batt,inj,map,iat,speed,lambda,hz} — null = not available
+  for (const cv of dashGauges()) { const key = cv.dataset.g; drawArcGauge(cv, GAUGES[key], d[key] ?? null); }
+  if (d.rpm) peakRpm = Math.max(peakRpm, d.rpm);
+  const card = (t, v, dec) => { const el = document.querySelector(`.tele[data-t="${t}"]`); if (!el) return; const b = el.querySelector('b'); el.classList.toggle('off', v == null); b.textContent = v == null ? '—' : (dec != null ? (+v).toFixed(dec) : v); };
+  card('batt', d.batt, 1); card('inj', d.inj, 2); card('peak', peakRpm || null, 0); card('hz', d.hz, 1);
+  card('map', d.map, 0); card('iat', d.iat, 0); card('speed', d.speed, 0); card('lambda', d.lambda, 3);
 }
 function drawGauge(rpm) {
   // segmented rev strip + digital readout, like a dyno tach
@@ -304,7 +390,7 @@ $('liveScan').onclick = async () => {
   const txt = `# live table scan ${new Date().toISOString()}\n# ecu ${ecu.id}${ecu.model ? ' ' + ecu.model.part : ''}\n` + res.map(r => `${r.t.toString(16).padStart(2, '0')}: changed ${r.changed}/${r.len}\n` + r.passes.map((p, i) => `  ${i + 1}: ${hex(p)}`).join('\n')).join('\n');
   $('liveScanSave').onclick = async () => { const name = `live_scan_${(ecu.id || 'ecu').replace(/\s/g, '')}_${Date.now()}.txt`; await db.add({ name, kind: 'term', data: new TextEncoder().encode(txt).buffer }); download(name, txt, 'text/plain'); toast('บันทึกผลสแกนแล้ว'); };
 };
-$('liveStart').onclick = () => { if (!needLink()) return; livePolling = true; $('liveStart').disabled = true; $('liveStop').disabled = false; liveLoop(); };
+$('liveStart').onclick = () => { if (!needLink()) return; peakRpm = 0; livePolling = true; $('liveStart').disabled = true; $('liveStop').disabled = false; liveLoop(); };
 $('liveStop').onclick = stopLive;
 $('liveRec').onclick = async () => {
   if (!recording) { recording = []; $('liveRec').textContent = '⏹ หยุดบันทึก'; return; }
@@ -315,9 +401,10 @@ $('liveRec').onclick = async () => {
   await db.add({ name, kind: 'log', data: new TextEncoder().encode('﻿' + csv).buffer });
   download(name, '﻿' + csv, 'text/csv'); toast('เก็บ log ในคลังไฟล์แล้ว');
 };
-drawGauge(0); drawChart();
-document.fonts?.ready.then(() => { drawGauge(hist.length ? hist[hist.length - 1].rpm : 0); drawChart(); });
-matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => { drawGauge(hist.length ? hist[hist.length - 1].rpm : 0); drawChart(); });
+const emptyDash = () => renderDash({ rpm: null, tps: null, wtemp: null, afr: null, batt: null, inj: null, map: null, iat: null, speed: null, lambda: null, hz: null });
+drawGauge(0); drawChart(); emptyDash();
+document.fonts?.ready.then(() => { drawChart(); if (!livePolling) emptyDash(); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => { drawChart(); if (!livePolling) emptyDash(); });
 
 // ---------------- AFR source ----------------
 let wideband = null;

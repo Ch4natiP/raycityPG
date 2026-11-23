@@ -26,9 +26,18 @@ if (settings.brand === 'PG PERFORMANCE') Object.assign(settings, { brand: 'SM Re
 function applyBrand() {
   $('brandName').textContent = settings.brand; $('heroName').textContent = settings.brand;
   $('logoTxt').textContent = settings.logo; $('foot').textContent = `${settings.brand} · K-line 10400 baud`;
+  const mark = $('logoMark'); mark.querySelectorAll('img').forEach(n => n.remove());
+  if (settings.logoImg) { const im = new Image(); im.src = settings.logoImg; mark.prepend(im); mark.querySelector('b').style.display = 'none'; mark.querySelector('svg').style.display = 'none'; }
+  else { mark.querySelector('b').style.display = ''; mark.querySelector('svg').style.display = ''; }
   document.title = settings.brand;
   $('sBrand').value = settings.brand; $('sLogo').value = settings.logo; $('sProto').value = settings.proto; $('sPoll').value = settings.poll;
 }
+$('sLogoImg').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return; e.target.value = '';
+  if (f.size > 400000) return toast('รูปใหญ่เกินไป ใช้รูปเล็กกว่า 400KB', 5000);
+  const rd = new FileReader(); rd.onload = () => { settings.logoImg = rd.result; store.set('settings', settings); applyBrand(); toast('ตั้งโลโก้แล้ว'); }; rd.readAsDataURL(f);
+};
+$('sLogoClear').onclick = () => { delete settings.logoImg; store.set('settings', settings); applyBrand(); };
 $('sSave').onclick = () => {
   Object.assign(settings, { brand: $('sBrand').value.trim() || 'SM Remap', logo: $('sLogo').value.trim() || 'SM', proto: $('sProto').value, poll: Math.max(50, +$('sPoll').value || 120) });
   store.set('settings', settings); applyBrand(); toast('บันทึกแล้ว');
@@ -744,6 +753,7 @@ $('xdfFile').onchange = async e => {
   renderXdfList(); fillRtMaps();
   const first = xdf.tables.find(t => /fuel|น้ำมัน/i.test(t.title) && t.z.rows > 2) || xdf.tables[0];
   if (first) selectXdf(first.id); else if (xdf.flags.length) selectXdf('__svc');
+  refreshQuickTune();
 };
 $('xdfClose').onclick = () => { xdf = null; $('xdfPanel').hidden = true; fillRtMaps(); };
 $('xdfSearch').oninput = () => renderXdfList();
@@ -759,7 +769,7 @@ function renderXdfList() {
   $('xdfList').innerHTML = svcBtn + ([...groups].map(([g, items]) => `<div class="cat">${esc(g)}</div>` + items.map(it => `<button data-xi="${it.id}" class="${xdfSel?.id === it.id ? 'on' : ''}"><span>${esc(it.title)}</span><small>${it.kind === 'table' ? `${it.z.cols}×${it.z.rows}` : it.kind === 'flag' ? 'สวิตช์' : it.kind === 'bytes' ? 'ID' : 'ค่า'}</small></button>`).join('')).join('') || '<p class="muted" style="padding:10px">ไม่พบ</p>');
 }
 $('xdfList').onclick = e => { const b = e.target.closest('[data-xi]'); if (b) selectXdf(b.dataset.xi); };
-function selectXdf(id) { xdfSel = id === '__svc' ? '__svc' : xdfItems().find(i => i.id === id); xdfCells.clear(); renderXdfList(); renderXdfItem(); }
+function selectXdf(id) { xdfSel = id === '__svc' ? '__svc' : xdfItems().find(i => i.id === id); xdfCells.clear(); renderXdfList(); renderXdfItem(); if ($('xdf3d').checked) draw3d(); }
 const fmt = (v, d) => v == null ? '—' : typeof v === 'number' ? +v.toFixed(d ?? 2) : v;
 function renderXdfItem() {
   const it = xdfSel; if (!it) return;
@@ -787,6 +797,7 @@ function renderXdfItem() {
       h += '</tr>';
     }
     $('xdfGrid').innerHTML = h + '</tbody></table>';
+    if ($('xdf3d').checked) draw3d();
   } else {
     $('xdfUnits').textContent = it.units ? `· ${it.units}` : ''; $('xdfAddr').textContent = `0x${it.addr.toString(16).toUpperCase()}`;
     if (!bin) { $('xdfGrid').innerHTML = '<p class="muted" style="padding:14px;margin:0">เปิดไฟล์ .bin ก่อน</p>'; return; }
@@ -828,6 +839,57 @@ function renderService() {
   xdf.flags.forEach((f, i) => { const cb = $('xdfGrid').querySelector(`[data-sflag="${i}"]`); cb.onchange = () => { Xdf.setFlag(bin, f, cb.checked); $('xdfGrid').querySelector(`[data-slab="${i}"]`).textContent = cb.checked ? 'เปิด' : 'ปิด'; checkSum(); showHex(); showMap(); }; });
 }
 function afterXdfEdit() { renderXdfItem(); checkSum(); showHex(); showMap(); }
+
+// ---------------- Quick Tune ----------------
+let qtCls = { fuel: [], ignition: [], rev: [] };
+function refreshQuickTune() {
+  qtCls = QuickTune.classify(xdf);
+  const show = bin && (qtCls.fuel.length || qtCls.ignition.length || qtCls.rev.length);
+  $('qtPanel').hidden = !show; if (!show) return;
+  $('qtFuelN').textContent = qtCls.fuel.length ? `(${qtCls.fuel.map(t => t.title).join(', ')})` : 'ไม่พบตารางน้ำมันใน XDF นี้';
+  $('qtIgnN').textContent = qtCls.ignition.length ? `(${qtCls.ignition.map(t => t.title).join(', ')})` : 'ไม่พบตารางไฟ';
+  const rev = qtCls.rev.length ? QuickTune.readRev(Xdf, bin, qtCls.rev) : null;
+  $('qtRev').textContent = rev != null ? `ปัจจุบัน ${Math.round(rev)} rpm` : 'ไม่พบรอบตัด';
+}
+document.querySelectorAll('[data-qf]').forEach(b => b.onclick = () => {
+  if (!qtCls.fuel.length) return toast('ไม่พบตารางน้ำมันใน XDF นี้'); 
+  const n = QuickTune.applyFuelPct(Xdf, bin, qtCls.fuel, +b.dataset.qf);
+  afterXdfEdit(); refreshQuickTune(); toast(`ปรับน้ำมัน ${b.dataset.qf > 0 ? '+' : ''}${b.dataset.qf}% (${n} ช่อง)`);
+});
+document.querySelectorAll('[data-qi]').forEach(b => b.onclick = async () => {
+  if (!qtCls.ignition.length) return toast('ไม่พบตารางไฟใน XDF นี้');
+  const deg = +b.dataset.qi, cap = Math.max(0.5, +$('qtIgnCap').value || 3);
+  if (deg > 0 && !await ask(`เพิ่มองศาไฟ +${deg}° (เพดาน +${cap}°)
+รถเล็กไม่มีเซนเซอร์น็อก ใส่ไฟมากเกินเครื่องพังได้
+เพิ่มน้ำมันให้พอก่อน แล้ววิ่งเทสต์ฟังเสียงเครื่อง`, 'เพิ่มไฟ')) return;
+  const r = QuickTune.applyIgnition(Xdf, bin, orig, qtCls.ignition, deg, cap);
+  afterXdfEdit(); toast(`ปรับไฟ ${deg > 0 ? '+' : ''}${deg}° · แก้ ${r.changed} ช่อง${r.capped ? ` · ชนเพดาน ${r.capped} ช่อง` : ''}`, 5000);
+});
+$('qtRevBtn').onclick = async () => {
+  if (!qtCls.rev.length) return toast('ไม่พบรอบตัดใน XDF นี้');
+  const rpm = parseInt($('qtRevSet').value, 10); if (!rpm) return toast('ใส่รอบใหม่ก่อน');
+  if (!await ask(`ตั้งรอบตัดเป็น ${QuickTune.capRev(rpm)} rpm?
+ตั้งสูงเกินกำลังเครื่อง/วาล์วลอยทำเครื่องพังได้`, 'ตั้งรอบตัด')) return;
+  const v = QuickTune.setRevLimit(Xdf, bin, qtCls.rev, rpm);
+  afterXdfEdit(); refreshQuickTune(); toast(`ตั้งรอบตัด ${v} rpm`);
+};
+// 3D surface view
+$('xdf3d').onchange = () => { const on = $('xdf3d').checked; $('xdf3dCanvas').hidden = !on; $('xdfGrid').style.display = on ? 'none' : ''; if (on) draw3d(); };
+function draw3d() {
+  const it = xdfSel; const cv = $('xdf3dCanvas'); if (!bin || !it || it === '__svc' || it.kind !== 'table') { $('xdf3d').checked = false; $('xdf3dCanvas').hidden = true; $('xdfGrid').style.display = ''; return; }
+  const g = cv.getContext('2d'), W = cv.width, H = cv.height, { rows, cols } = it.z;
+  g.clearRect(0, 0, W, H);
+  let lo = Infinity, hi = -Infinity; const v = [];
+  for (let r = 0; r < rows; r++) { v.push([]); for (let c = 0; c < cols; c++) { const x = Xdf.tableValue(bin, it, r, c); v[r].push(x); lo = Math.min(lo, x); hi = Math.max(hi, x); } }
+  const ox = W * 0.12, oy = H * 0.72, sx = (W * 0.76) / cols, sy = -(H * 0.42) / Math.max(1, hi - lo), dz = (H * 0.30) / rows, dx2 = (W * 0.10) / rows;
+  const px = (r, c, val) => [ox + c * sx + r * dx2, oy - r * dz + (val - lo) * sy];
+  for (let r = rows - 1; r >= 0; r--) for (let c = 0; c < cols - 1; c++) {
+    const p0 = px(r, c, v[r][c]), p1 = px(r, c + 1, v[r][c + 1]);
+    const p2 = r + 1 < rows ? px(r + 1, c + 1, v[r + 1][c + 1]) : null, p3 = r + 1 < rows ? px(r + 1, c, v[r + 1][c]) : null;
+    if (p2 && p3) { const k = (v[r][c] - lo) / (hi - lo || 1); g.beginPath(); g.moveTo(...p0); g.lineTo(...p1); g.lineTo(...p2); g.lineTo(...p3); g.closePath(); g.fillStyle = `hsl(${190 - k * 190} 70% 60%)`; g.fill(); g.strokeStyle = 'rgba(0,0,0,.25)'; g.stroke(); }
+  }
+  g.fillStyle = css('--muted'); g.font = `20px ${css('--font-mono')}`; g.fillText(`${it.title} · ${it.z.units || ''}  (${fmt(lo, 1)}–${fmt(hi, 1)})`, 14, 28);
+}
 $('xdfGrid').addEventListener('mousedown', e => {
   const td = e.target.closest('td[data-r]'); if (!td) return;
   xdfDrag = [+td.dataset.r, +td.dataset.c]; if (!e.shiftKey && !e.ctrlKey) xdfCells.clear();
@@ -942,7 +1004,8 @@ $('rpGen').onclick = () => {
   if (A && B) dyno = `<table><tr><th>แรงม้าที่ล้อ</th><td>ก่อน <b class="big">${B.maxHp}</b> → หลัง <b class="big">${A.maxHp}</b> HP (${A.maxHp - B.maxHp >= 0 ? '+' : ''}${(A.maxHp - B.maxHp).toFixed(1)} HP)</td></tr>`
     + (A.time != null && B.time != null ? `<tr><th>${B.from}–${B.to} km/h</th><td>ก่อน ${B.time} → หลัง ${A.time} วิ</td></tr>` : '') + `<tr><th>ความเร็วสูงสุด</th><td>ก่อน ${B.vmax} → หลัง ${A.vmax} km/h</td></tr></table>`;
   else if (A || B) { const r = A || B; dyno = `<table><tr><th>แรงม้าที่ล้อ</th><td class="big">${r.maxHp} HP</td></tr><tr><th>ความเร็วสูงสุด</th><td>${r.vmax} km/h</td></tr></table>`; }
-  const html = `<div class="sheet"><div class="hd"><div><h2>${esc2(settings.brand)}</h2><small>ใบส่งงานปรับแต่ง ECU</small></div><div class="muted">${new Date().toLocaleDateString('th-TH')}</div></div>`
+  const logo = settings.logoImg ? `<img src="${settings.logoImg}" style="height:46px;border-radius:6px">` : '';
+  const html = `<div class="sheet"><div class="hd"><div style="display:flex;align-items:center;gap:10px">${logo}<div><h2>${esc2(settings.brand)}</h2><small>ใบส่งงานปรับแต่ง ECU</small></div></div><div class="muted">${new Date().toLocaleDateString('th-TH')}</div></div>`
     + `<table>${rows.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('')}</table>`
     + (dyno ? `<b>ผลทดสอบ Dyno</b>${dyno}` : '')
     + ($('rpNote').value ? `<b>รายการที่ทำ</b><p>${esc2($('rpNote').value).replace(/\n/g, '<br>')}</p>` : '')
@@ -950,7 +1013,7 @@ $('rpGen').onclick = () => {
     + `<p class="muted">เอกสารนี้สรุปจากข้อมูลที่วัดในเครื่องมือ SM Remap · แรงม้าเป็นค่าประมาณที่ล้อ</p></div>`;
   $('rpOut').innerHTML = html; $('rpSave').disabled = false;
   lastReport = `<!doctype html><html lang="th"><head><meta charset="utf-8"><title>ใบส่งรถ ${esc2($('rpBike').value || '')}</title>`
-    + `<style>body{font-family:system-ui,'Segoe UI',sans-serif;max-width:700px;margin:24px auto;padding:0 16px;color:#13222b}h2{margin:0 0 2px}.hd{display:flex;justify-content:space-between;border-bottom:2px solid #0a8f86;padding-bottom:8px;margin-bottom:10px}table{width:100%;border-collapse:collapse;margin:6px 0}td,th{border:1px solid #ccc;padding:6px 9px;text-align:left}th{background:#f3f6f7;width:38%}.big{font-size:20px;color:#0a8f86;font-weight:700}.muted{color:#5a6b73}</style></head><body>${html}</body></html>`;
+    + `<style>body{font-family:system-ui,'Segoe UI',sans-serif;max-width:700px;margin:24px auto;padding:0 16px;color:#13222b}h2{margin:0 0 2px}.hd{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #0a8f86;padding-bottom:8px;margin-bottom:10px}.hd img{height:46px;border-radius:6px;margin-right:10px;vertical-align:middle}table{width:100%;border-collapse:collapse;margin:6px 0}td,th{border:1px solid #ccc;padding:6px 9px;text-align:left}th{background:#f3f6f7;width:38%}.big{font-size:20px;color:#0a8f86;font-weight:700}.muted{color:#5a6b73}</style></head><body>${html}</body></html>`;
 };
 $('rpSave').onclick = async () => {
   if (!lastReport) return;

@@ -186,6 +186,11 @@
   .sheet td, .sheet th { border: 1px solid var(--line); padding: 6px 9px; text-align: left; }
   .sheet th { background: var(--surface-2); font-weight: 600; width: 38%; }
   .sheet .big { font: 600 22px var(--font-mono); color: var(--accent); }
+  .qt { display: grid; gap: 10px; padding: 10px 0; }
+  .qt-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .qt-row > b { width: 70px; }
+  ol.help { line-height: 1.8; padding-left: 20px; } ol.help li { margin: 4px 0; }
+  #logoMark img { width: 100%; height: 100%; object-fit: cover; }
   /* tables */
   .tw { overflow-x: auto; }
   table.list { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -276,7 +281,7 @@
 <div class="app">
   <aside class="rail">
     <div class="brand">
-      <div class="mark"><b id="logoTxt">SM</b><svg viewBox="0 0 40 12" preserveAspectRatio="none"><path d="M0 9h8l3-6 4 8 3-5 2 3h20"/></svg></div>
+      <div class="mark" id="logoMark"><b id="logoTxt">SM</b><svg viewBox="0 0 40 12" preserveAspectRatio="none"><path d="M0 9h8l3-6 4 8 3-5 2 3h20"/></svg></div>
       <div><div class="brand-name" id="brandName">SM Remap</div><div class="brand-sub">ECU Remap Studio</div></div>
     </div>
 
@@ -500,6 +505,20 @@
                 <button class="btn" data-xa="pct" data-v="1">+1%</button><button class="btn" data-xa="pct" data-v="5">+5%</button>
                 <button class="btn" data-xa="smooth">เกลี่ย</button><button class="btn" data-xa="undo">คืนค่าเดิม</button>
               </div>
+              <details class="panel" id="qtPanel" hidden><summary>⚡ จูนด่วน (ปรับทั้งตารางที่ XDF ระบุ · มีเพดานปลอดภัย)</summary>
+                <div class="qt">
+                  <div class="qt-row"><b>น้ำมัน</b><span class="muted" id="qtFuelN"></span>
+                    <button class="btn" data-qf="-5">−5%</button><button class="btn" data-qf="-2">−2%</button><button class="btn" data-qf="2">+2%</button><button class="btn" data-qf="5">+5%</button><button class="btn" data-qf="10">+10%</button></div>
+                  <div class="qt-row"><b>องศาไฟ</b><span class="muted" id="qtIgnN"></span>
+                    <label class="f" style="flex-direction:row;align-items:center;gap:6px">เพดาน ±<input id="qtIgnCap" value="3" size="3">°</label>
+                    <button class="btn" data-qi="-2">−2°</button><button class="btn" data-qi="-1">−1°</button><button class="btn" data-qi="1">+1°</button><button class="btn" data-qi="2">+2°</button></div>
+                  <div class="qt-row"><b>รอบตัด</b><span class="muted" id="qtRev"></span>
+                    <input id="qtRevSet" placeholder="rpm ใหม่" size="7"><button class="btn o" id="qtRevBtn">ตั้งรอบตัด</button></div>
+                  <div class="note">เพิ่มน้ำมันก่อนเพิ่มไฟเสมอ · องศาไฟจำกัดไม่เกินเดิม ±เพดาน และไม่เกิน 45° · รอบตัดไม่เกิน 14000 · รถเล็กไม่มีเซนเซอร์น็อก ใส่ไฟมากเครื่องพังได้ ปรับทีละนิดแล้ววิ่งเทสต์</div>
+                </div>
+              </details>
+              <div class="row"><label class="row muted" style="gap:6px"><input type="checkbox" id="xdf3d"> มุมมอง 3 มิติ</label></div>
+              <canvas class="cv" id="xdf3dCanvas" width="1400" height="560" hidden style="border:1px solid var(--line);border-radius:var(--r);background:var(--surface)"></canvas>
               <div class="mapwrap" id="xdfGrid"><p class="muted" style="padding:14px;margin:0">เปิดไฟล์ .bin ของรุ่นเดียวกับ XDF แล้วเลือกตาราง · ลากเมาส์เลือกหลายช่อง · แก้เป็นหน่วยจริง (ms, องศา, rpm)</p></div>
             </div>
           </div>
@@ -693,7 +712,23 @@
             <label class="f">อ่าน Live ทุก (ms)<input id="sPoll" type="number" min="50" step="10" style="width:90px"></label>
             <button class="btn o" id="sSave">บันทึก</button>
           </div>
+          <div class="row" style="margin-top:8px">
+            <label class="btn">โลโก้ร้าน (รูป)<input type="file" id="sLogoImg" accept="image/*" hidden></label>
+            <button class="btn" id="sLogoClear">ลบโลโก้</button>
+            <span class="muted">โลโก้ขึ้นมุมซ้ายบนและบนใบส่งรถ</span>
+          </div>
         </div>
+        <details class="panel"><summary><b>คู่มือเริ่มต้นใช้งาน</b></summary>
+          <ol class="help">
+            <li><b>เปิดใช้แบบต่อรถ:</b> ใช้ Chrome หรือ Edge บนคอม · ถ้าเปิดผ่านลิงก์แล้วต่อสายไม่ได้ ให้รันในเครื่องด้วย start-windows.bat</li>
+            <li><b>เชื่อมต่อ:</b> เสียบสาย เปิดกุญแจ (ไม่ต้องติดเครื่อง) กดเชื่อมต่อ → สาย USB/COM แล้วเลือกพอร์ต · ลองก่อนได้ด้วย ECU จำลอง</li>
+            <li><b>ตรวจรถ:</b> Live Data ดูค่าสด · รหัสปัญหา DTC อ่าน/ลบ · สำรองกล่องก่อนแก้ทุกครั้ง</li>
+            <li><b>จูน:</b> เปิดไฟล์ .bin → ค้นหาแมพอัตโนมัติ หรือเปิด XDF ของรุ่นนั้น → แก้ตาราง หรือใช้ “จูนด่วน” → ตรวจ/แก้ checksum → Flash (ยังล็อก)</li>
+            <li><b>จูนด้วย AF:</b> Live หน้า 2 เลือกแมพ กดเริ่มเก็บข้อมูล ขี่ให้ครบช่วง แล้วกดนำค่าแนะนำไปใช้</li>
+            <li><b>Dyno:</b> Live หน้า 3 กดพร้อมวัดแล้วเร่งสุด เทียบก่อน/หลังจูน</li>
+            <li><b>ส่งรถ:</b> หน้าใบส่งรถ กรอกข้อมูลแล้วสร้าง ระบบดึง Dyno/DTC มาให้</li>
+          </ol>
+        </details>
         <div class="panel muted">
           <b style="color:var(--ink)">สิ่งที่ต้องมี</b><br>
           Google Chrome หรือ Microsoft Edge บนคอม (Windows / Mac / Linux) ที่รองรับ Web Serial<br>
@@ -725,6 +760,7 @@
 <script src="js/xdf.js"></script>
 <script src="js/catalog.js"></script>
 <script src="js/tools.js"></script>
+<script src="js/quicktune.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

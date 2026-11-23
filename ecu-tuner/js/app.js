@@ -239,16 +239,24 @@ async function liveLoop() {
       if (b17) {
         liveFail = 0; if (liveDown) { liveDown = false; ecuAlive = true; setConn('ok', link.name); toast('เปิดกุญแจ — อ่านค่าต่อแล้ว'); }
         const rpm = (b17[0] << 8) | b17[1];
-        // 0x20[0] is the O2 sensor (swings rich/lean at idle) → narrowband AFR, or wideband if selected
+        // Decoded from a real K60S warm-idle+blip log (2026-11-23):
+        //  0x17[2] = TPS sensor raw (idle ~23 ≈ 0.45V closed, rises with throttle) → % via closed/WOT calibration
+        //  0x17[9] = engine coolant temp, rose monotonically 106→109 during warmup → °C = raw - 40 (OBD/Honda std)
+        //  0x20[0] = O2 sensor (swings rich/lean at idle) → narrowband AFR, or wideband if selected
+        const tpsRaw = b17[2];
+        const tpsV = +(tpsRaw / 255 * 5).toFixed(2);
+        const tps = Math.max(0, Math.min(100, Math.round((tpsRaw - K60S_TPS.closed) / (K60S_TPS.wot - K60S_TPS.closed) * 100)));
+        const wtemp = b17[9] - 40;
         const o2V = b20 ? +(b20[0] / 256 * 1.25).toFixed(3) : null;
         const afr = afrSource() === 'wb' ? (link.afr ? link.afr() : wideband?.afr() ?? null) : (o2V != null ? AutoTune.narrowbandAfr(o2V) : null);
         renderK60S(rpm, b17, b20);
-        renderDash({ rpm, tps: null, wtemp: null, afr, batt: null, inj: null, map: null, iat: null, speed: null, lambda: afr != null ? +(afr / 14.7).toFixed(3) : null, hz: n / ((performance.now() - t0) / 1000) });
-        hist.push({ rpm, tps: 0, inj: 0, afr, afr10: afr == null ? 0 : Math.max(0, afr - 10) }); if (hist.length > 300) hist.shift();
+        renderDash({ rpm, tps, wtemp, afr, batt: null, inj: null, map: null, iat: null, speed: null, lambda: afr != null ? +(afr / 14.7).toFixed(3) : null, hz: n / ((performance.now() - t0) / 1000) });
+        hist.push({ rpm, tps, inj: 0, afr, afr10: afr == null ? 0 : Math.max(0, afr - 10) }); if (hist.length > 300) hist.shift();
         drawChart(); drawAfr(afr);
+        onLiveSample({ rpm, tps, map: 0, ect: wtemp, afr });
         onDynoSample({ v: 0, rpm });
         if (recording) { recording.push([Date.now(), rpm, ...(b17 || []), ...(b20 || [])]); recording.cols ||= ['rpm', ...b17.map((_, i) => `17[${i}]`), ...(b20 || []).map((_, i) => `20[${i}]`)]; }
-        $('liveInfo').textContent = `K60S · รอบ ${rpm} rpm · ${(n / ((performance.now() - t0) / 1000)).toFixed(1)} ครั้ง/วิ · ไบต์ที่ขยับเป็นสีส้ม — บอกผมว่าตัวไหน = อุณหภูมิ/ลิ้นเร่ง`;
+        $('liveInfo').textContent = `K60S · รอบ ${rpm} · ลิ้นเร่ง ${tps}% · อุณหภูมิ ${wtemp}°C · AFR ${afr != null ? afr.toFixed(1) : '—'} · ${(n / ((performance.now() - t0) / 1000)).toFixed(1)} ครั้ง/วิ`;
       } else {
         // no answer from 0x11 or 0x17 → key likely off. Mark down, show dashes, and keep trying to re-establish.
         liveFail++;
@@ -262,6 +270,9 @@ async function liveLoop() {
   }
 }
 let k60sPrev = {};
+// K60S throttle calibration: closed = idle raw (≈0.45V), wot = raw at full throttle (≈4.1V).
+// Tune these to the bike if TPS% doesn't reach ~100 at wide-open.
+const K60S_TPS = { closed: 23, wot: 210 };
 function renderK60S(rpm, b17, b20) {
   const row = (tbl, bytes) => {
     const prev = k60sPrev[tbl] || [];

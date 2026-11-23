@@ -183,17 +183,29 @@ async function liveLoop() {
       if (recording) recording.push([Date.now(), ...vals.map(v => v.value)]), recording.cols ||= vals.map(v => `${v.name} (${v.unit})`);
       $('liveInfo').textContent = `${(n / ((performance.now() - t0) / 1000)).toFixed(1)} ครั้ง/วิ${recording ? ` • กำลังบันทึก ${recording.length} แถว` : ''}`;
     } else {
-      // K60S / newer ECUs: no table 0x11. Show raw live bytes from the tables that do carry data.
+      // K60S / newer ECUs: no table 0x11. Live data lives in table 0x17 (+0x20).
+      // Decoded from a real K60S scan: bytes 0-1 big-endian = RPM (idle read ~1400-1650).
       n++;
-      const raw = [];
-      for (const tbl of [0x17, 0x20, 0x67, 0x70]) {
-        const rr = await link.transact(Honda.CMD.readTable(tbl), 250);
-        if (rr && rr[0] === 0x02 && rr[2] === 0x71 && rr.length > 6) raw.push({ tbl, bytes: Array.from(rr.slice(4, -1)) });
-      }
-      renderRawLive(raw);
-      $('liveInfo').textContent = raw.length
-        ? `ค่าดิบสด (${raw.map(r => '0x' + r.tbl.toString(16)).join(', ')}) · รุ่นนี้ไม่มีตาราง 0x11 — ส่งผล “หาตาราง Live” มา จะ map เป็นหน่วยให้`
-        : 'กล่องไม่ตอบ — เช็กกุญแจ/สาย';
+      const r17raw = await link.transact(Honda.CMD.readTable(0x17), 250);
+      const b17 = r17raw && r17raw[0] === 0x02 && r17raw[2] === 0x71 && r17raw.length > 6 ? Array.from(r17raw.slice(4, -1)) : null;
+      const r20raw = await link.transact(Honda.CMD.readTable(0x20), 250);
+      const b20 = r20raw && r20raw.length > 6 ? Array.from(r20raw.slice(4, -1)) : null;
+      if (b17) {
+        const rpm = (b17[0] << 8) | b17[1];
+        const vals = [
+          { key: 'rpm', name: 'รอบเครื่อง', unit: 'rpm', value: rpm, raw: b17.slice(0, 2), max: 12000 },
+          { key: 'ectRaw', name: 'อุณหภูมิ (ดิบ · รอยืนยัน)', unit: '', value: b17[8], raw: [b17[8]], max: 255 },
+          { key: 'b17_10', name: '0x17[10] (ดิบ)', unit: '', value: b17[10], raw: [b17[10]], max: 255 },
+        ];
+        if (b20) vals.push({ key: 'loadRaw', name: 'ลิ้นเร่ง/โหลด (ดิบ · รอยืนยัน)', unit: '', value: b20[0], raw: [b20[0]], max: 255 },
+                           { key: 'b20_1', name: '0x20[1] (ดิบ)', unit: '', value: b20[1], raw: [b20[1]], max: 255 });
+        renderVals(vals);
+        hist.push({ rpm, tps: b20 ? b20[0] / 2.55 : 0, inj: 0, afr: null, afr10: 0 }); if (hist.length > 300) hist.shift();
+        drawGauge(rpm); drawChart(); drawAfr(null);
+        onDynoSample({ v: 0, rpm });
+        if (recording) recording.push([Date.now(), ...vals.map(v => v.value)]), recording.cols ||= vals.map(v => v.name);
+        $('liveInfo').textContent = `K60S · รอบ ${rpm} rpm · ${(n / ((performance.now() - t0) / 1000)).toFixed(1)} ครั้ง/วิ · (อุณหภูมิ/ลิ้นเร่งยังเป็นค่าดิบ รอยืนยัน)`;
+      } else { renderRawLive(b20 ? [{ tbl: 0x20, bytes: b20 }] : []); $('liveInfo').textContent = 'กล่องไม่ตอบตาราง 0x17 — เช็กกุญแจ/สาย'; }
     }
     await sleep(Math.max(0, settings.poll - (performance.now() - t)));
   }

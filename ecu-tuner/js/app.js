@@ -165,7 +165,7 @@ async function liveLoop() {
     const t = performance.now();
     const r11 = Honda.decodeTableReply(await link.transact(Honda.CMD.readTable(0x11), 300));
     const r20 = (n % 2 === 0) ? Honda.decodeTableReply(await link.transact(Honda.CMD.readTable(0x20), 300)) : null;
-    if (r11) {
+    if (r11 && r11.values.length > 2) {   // real table 0x11 (empty on K60S → fall through to the 0x17 path)
       n++;
       const vals = [...r11.values, ...(r20 ? r20.values : (liveLoop.last20 || []))];
       if (r20) liveLoop.last20 = r20.values;
@@ -192,23 +192,27 @@ async function liveLoop() {
       const b20 = r20raw && r20raw.length > 6 ? Array.from(r20raw.slice(4, -1)) : null;
       if (b17) {
         const rpm = (b17[0] << 8) | b17[1];
-        const vals = [
-          { key: 'rpm', name: 'รอบเครื่อง', unit: 'rpm', value: rpm, raw: b17.slice(0, 2), max: 12000 },
-          { key: 'ectRaw', name: 'อุณหภูมิ (ดิบ · รอยืนยัน)', unit: '', value: b17[8], raw: [b17[8]], max: 255 },
-          { key: 'b17_10', name: '0x17[10] (ดิบ)', unit: '', value: b17[10], raw: [b17[10]], max: 255 },
-        ];
-        if (b20) vals.push({ key: 'loadRaw', name: 'ลิ้นเร่ง/โหลด (ดิบ · รอยืนยัน)', unit: '', value: b20[0], raw: [b20[0]], max: 255 },
-                           { key: 'b20_1', name: '0x20[1] (ดิบ)', unit: '', value: b20[1], raw: [b20[1]], max: 255 });
-        renderVals(vals);
+        renderK60S(rpm, b17, b20);
         hist.push({ rpm, tps: b20 ? b20[0] / 2.55 : 0, inj: 0, afr: null, afr10: 0 }); if (hist.length > 300) hist.shift();
         drawGauge(rpm); drawChart(); drawAfr(null);
         onDynoSample({ v: 0, rpm });
-        if (recording) recording.push([Date.now(), ...vals.map(v => v.value)]), recording.cols ||= vals.map(v => v.name);
-        $('liveInfo').textContent = `K60S · รอบ ${rpm} rpm · ${(n / ((performance.now() - t0) / 1000)).toFixed(1)} ครั้ง/วิ · (อุณหภูมิ/ลิ้นเร่งยังเป็นค่าดิบ รอยืนยัน)`;
+        if (recording) { recording.push([Date.now(), rpm, ...(b17 || []), ...(b20 || [])]); recording.cols ||= ['rpm', ...b17.map((_, i) => `17[${i}]`), ...(b20 || []).map((_, i) => `20[${i}]`)]; }
+        $('liveInfo').textContent = `K60S · รอบ ${rpm} rpm · ${(n / ((performance.now() - t0) / 1000)).toFixed(1)} ครั้ง/วิ · ไบต์ที่ขยับเป็นสีส้ม — บอกผมว่าตัวไหน = อุณหภูมิ/ลิ้นเร่ง`;
       } else { renderRawLive(b20 ? [{ tbl: 0x20, bytes: b20 }] : []); $('liveInfo').textContent = 'กล่องไม่ตอบตาราง 0x17 — เช็กกุญแจ/สาย'; }
     }
     await sleep(Math.max(0, settings.poll - (performance.now() - t)));
   }
+}
+let k60sPrev = {};
+function renderK60S(rpm, b17, b20) {
+  const row = (tbl, bytes) => {
+    const prev = k60sPrev[tbl] || [];
+    const cells = bytes.map((b, i) => `<span class="rawb${prev[i] != null && prev[i] !== b ? ' chg' : ''}" title="ไบต์ ${i}"><em>${i}</em>${b.toString(16).padStart(2, '0').toUpperCase()}</span>`).join('');
+    k60sPrev[tbl] = bytes.slice();
+    return `<div class="val" style="grid-column:1/-1"><small>ตาราง 0x${tbl.toString(16).toUpperCase()} · ตัวเลขเล็ก = ตำแหน่งไบต์</small><div class="rawrow">${cells}</div></div>`;
+  };
+  $('vals').innerHTML = `<div class="val"><small>รอบเครื่อง (0x17 ไบต์ 0-1)</small><b>${rpm.toLocaleString()}</b><i>rpm</i><div class="bar"><div style="width:${Math.min(100, rpm / 12000 * 100)}%"></div></div></div>`
+    + row(0x17, b17) + (b20 ? row(0x20, b20) : '');
 }
 let rawPrev = {};
 function renderRawLive(raw) {

@@ -190,8 +190,7 @@ function needLink() { if (!link) { $('connModal').classList.add('on'); return fa
 let livePolling = false, recording = null;
 const hist = [];
 let liveFail = 0, liveDown = false;
-async function reinitSession() {   // re-establish the K-line session after key-off/on
-  try { if (link && link.wakeup) await link.wakeup(); } catch {}
+async function reinitSession() {   // re-establish the K-line session after key-off/on (no port reopen)
   try { await link.transact(Honda.CMD.ping(), 150); } catch {}
   try { const r = await link.transact(Honda.CMD.init(), 500); return !!(r && r[0] === 0x02); } catch { return false; }
 }

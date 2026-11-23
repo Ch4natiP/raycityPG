@@ -54,14 +54,14 @@
     static supported() { return typeof navigator !== 'undefined' && 'serial' in navigator; }
     async open({ baud = Honda.BAUD, port = null } = {}) {
       this.port = port || await navigator.serial.requestPort();
+      const opts = { baudRate: baud, dataBits: 8, stopBits: 1, parity: 'none', bufferSize: 4096 };
       try {
-        await this.port.open({ baudRate: baud, dataBits: 8, stopBits: 1, parity: 'none', bufferSize: 4096 });
+        await this.port.open(opts);
       } catch (e) {
-        if (/already open/i.test(e && e.message || '')) {           // left open by a previous attempt — close and reopen
-          try { await this.port.close(); } catch {}
-          await sleep(150);
-          await this.port.open({ baudRate: baud, dataBits: 8, stopBits: 1, parity: 'none', bufferSize: 4096 });
-        } else throw e;
+        // already-open, or the FTDI not yet released after an unplug/key-off — close and retry once
+        try { await this.port.close(); } catch {}
+        await sleep(400);
+        await this.port.open(opts);
       }
       this.writer = this.port.writable.getWriter();
       this.reading = true;
@@ -94,10 +94,7 @@
         await this.port.setSignals({ break: true });
         await sleep(70);
         await this.port.setSignals({ break: false });
-      } catch (e) {
-        // Some adapters/drivers do not support BREAK — fall back to a 0x00 byte at low baud (≈ 50 ms low)
-        await this.reopen(200); await this.write(Uint8Array.of(0)); await sleep(60); await this.reopen(Honda.BAUD);
-      }
+      } catch (e) { /* adapter doesn't support BREAK — the init command alone re-establishes the session; never close/reopen the port here (it can jam the FTDI during key-off) */ }
       await sleep(130);
     }
     async reopen(baud) {

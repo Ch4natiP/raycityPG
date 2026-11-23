@@ -599,15 +599,24 @@
 
     <!-- ===================== FLASH ===================== -->
     <section class="page" id="p-flash">
-      <div class="ph"><div><div class="eyebrow">จูน</div><h1>Flash แมพลงกล่อง</h1><p>ถ้าเขียนลงกล่องผิดวิธี กล่องจะดับ (brick) และรถสตาร์ทไม่ติด จึงเปิดให้เฉพาะรุ่นที่ผ่านทุกข้อด้านล่าง</p></div></div>
+      <div class="ph"><div><div class="eyebrow">จูน</div><h1>Flash แมพลงกล่อง (Keihin)</h1><p>เขียนไฟล์ลงกล่องด้วยโปรโตคอล Keihin K-line ใช้ได้เฉพาะกล่อง Keihin รุ่นเก่า (Wave, Click110i, MSX, Dream, Scoopy K16 ฯลฯ) · ไม่รองรับ Click125i/PCX รุ่นใหม่ (Renesas 384KB)</p></div></div>
       <div class="stack">
-        <div class="note"><b>ยังล็อกไว้ทุกรุ่น</b> · รุ่นที่ยืนยันแล้ว: ยังไม่มี</div>
+        <div class="note"><b>⚠ ยังไม่ได้ทดสอบกับกล่องจริง</b> — โค้ดทำตามโปรโตคอล HondaECU (GPL) ตรวจกับตัวจำลองผ่านแล้ว แต่ยังไม่เคยเขียนกล่องจริง · <b>ลองกับกล่องสำรองก่อน ไม่ใช่กล่องในรถที่ใช้งาน</b> · ถ้าเขียนพลาดกล่องดับ ใช้ปุ่มกู้กล่องด้านล่าง</div>
         <div class="panel checks">
           <div><span id="fk1">[ ]</span><span>เชื่อมต่อกล่องได้ และอ่านรหัส ECU ได้</span></div>
-          <div><span id="fk2">[ ]</span><span>มีไฟล์สำรองต้นฉบับของกล่องนี้ (อ่านแฟลชเต็ม) เก็บในคลัง</span></div>
-          <div><span>[ ]</span><span>ยืนยันโปรโตคอล bootloader ของรุ่นกล่องนี้กับกล่องจริงแล้ว</span></div>
-          <div><span>[ ]</span><span>ไฟล์ที่จะเขียนมาจากกล่องรุ่นเดียวกัน และ checksum ถูกต้อง</span></div>
-          <div><span>[ ]</span><span>แบตเตอรี่ 12.4V ขึ้นไป (แนะนำต่อเครื่องชาร์จระหว่าง Flash)</span></div>
+          <div><span id="fk2">[ ]</span><span>สำรองไฟล์ต้นฉบับของกล่องนี้ไว้ในคลังแล้ว (ดูด bin ก่อน)</span></div>
+          <div><span id="fk3">[ ]</span><span>เปิดไฟล์ที่จะเขียน (ใน “แก้แมพ”) · ขนาด ≤ 128KB · checksum ถูกต้อง</span></div>
+        </div>
+        <div class="panel stack">
+          <div class="row end">
+            <label class="f">Start (hex)<input id="wrStart" value="0" size="7"></label>
+            <button class="btn r" id="wrGo" disabled>⚡ เขียนลงกล่อง</button>
+            <button class="btn" id="wrStop" disabled>หยุด</button>
+            <button class="btn" id="wrRecover">กู้กล่องที่ดับ (Recover)</button>
+            <span class="muted" id="wrState">เปิดไฟล์ใน “แก้แมพ” และเชื่อมต่อกล่องก่อน</span>
+          </div>
+          <div class="rdbar"><div id="wrFill"></div></div>
+          <div class="muted mono" id="wrInfo">—</div>
         </div>
       </div>
     </section>

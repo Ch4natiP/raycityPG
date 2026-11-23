@@ -133,8 +133,22 @@
       if (type === 0x82 && req[1] === 0x82 && this.awake) {        // flash read: 82 82 00 09 A2 A0 A1 N cs
         const addr = (req[4] << 16) | (req[6] << 8) | req[5], n = req[7], data = [];
         for (let k = 0; k < n; k++) data.push(this.memory[(addr + k) % this.memory.length]);
-        const body = [0x82, 0x82, 0x00, data.length + 5, ...data];
+        const body = [0x92, 0x92, 0x00, data.length + 5, ...data];   // real ECU ORs the mtype with 0x10
         return Uint8Array.from([...body, Honda.checksum(body)]);
+      }
+      // ---- Keihin flash write protocol (so read/write round-trips can be tested) ----
+      if (type === 0x7D && this.awake) { this.writeMode = true; return Honda.frame(0x0D, [req[2] ?? 1, req[3] ?? 1]); }
+      if (type === 0x7B && this.awake) { return Honda.frame(0x0B, [req[2] ?? 0, req[3] ?? 0]); }
+      if (type === 0x7E && this.awake) {
+        const sub = req[3];
+        if (sub === 0x05) return Honda.frame(0x0E, [1, 0]);               // erase status → done
+        if (sub === 0x06) {                                              // write one 128-byte page
+          const base = ((req[4] << 8) | req[5]) * 16, data = Array.from(req.slice(6, 6 + 128));
+          for (let k = 0; k < data.length; k++) this.memory[(base + k) % this.memory.length] = data[k];
+          return Honda.frame(0x0E, [1, 6]);                              // ack (len 5)
+        }
+        if (sub === 0x0D) return Honda.frame(0x0E, [1, 0x0F]);           // post-write → success
+        return Honda.frame(0x0E, [1, sub ?? 1, 0]);                      // generic ack
       }
       if (type === 0xFE) return null;                                    // ping: Honda ECUs stay silent
       if (type !== 0x72 || !this.awake) return null;

@@ -30,6 +30,14 @@
     return (0x100 - s) & 0xFF;
   }
 
+  // checksum8bitHonda (== `checksum` above) and checksum8bit are the two sums the Keihin K-line
+  // flash protocol uses. Both verified against the open-source HondaECU project (eculib/honda.py, GPLv3).
+  function checksum8bit(data) {
+    let s = 0; for (const b of data) s = (s + b) & 0xFFFFFFFF;
+    return (0xFF - (((s - 1) >> 8) & 0xFF)) & 0xFF;
+  }
+  const STR = s => Array.from(s, c => c.charCodeAt(0));
+
   function frame(type, data) {
     const body = [type, data.length + 3, ...data];
     return Uint8Array.from([...body, checksum(body)]);
@@ -42,9 +50,30 @@
     dtcCurrent: page => frame(0x72, [0x74, page & 0xFF]),
     dtcPast: page => frame(0x72, [0x73, page & 0xFF]),
     clearDtc: () => frame(0x72, [0x60, 0x03]),
-    /** flash read (HondaECU "do_read_flash"): type 82 82 00, address bytes [A23..16, A7..0, A15..8], length */
-    readFlash: (addr, n) => { const body = [0x82, 0x82, 0x00, 9, (addr >> 16) & 255, addr & 255, (addr >> 8) & 255, n & 255]; return Uint8Array.from([...body, checksum(body)]); },
+    // ---- Keihin flash (HondaECU protocol). READ is safe; the rest erase/write the ECU. ----
+    /** flash read: mtype 82 82 00, data = [A23..16, A7..0, A15..8, len] (format_read), 3-byte header reply */
+    readFlash: (addr, n) => frame3([0x82, 0x82, 0x00], [(addr >> 16) & 255, addr & 255, (addr >> 8) & 255, n & 255]),
+    /** enter write mode (sends "PGM-FI") */
+    initWrite: () => [[1, 1, 1], [1, 1, 2], [1, 1, 3], [1, 2, ...STR('PGM')], [1, 3, ...STR('-FI')]].map(d => frame(0x7D, d)),
+    /** recover a half-written (bricked) ECU */
+    initRecover: () => [[0, 1, 1], [0, 1, 2], [0, 1, 3], [0, 2, 0x76, 0x03, 0x17], [0, 3, 0x75, 0x05, 0x13]].map(d => frame(0x7B, d)),
+    /** erase flash */
+    erase: () => [[1, 2], [1, 3, 0, 0], [1, 0x0B, 0, 0, 0, 0xFF, 0xFF, 0xFF], [1, 0x0E, 1, 0x90], [1, 1, 1], [1, 4, 0xFF]].map(d => frame(0x7E, d)),
+    eraseStatus: () => frame(0x7E, [1, 5]),
+    eraseDone: () => frame(0x7E, [1, 1, 0]),
+    /** write one 128-byte page. offWords/nextWords are 16-byte-word offsets (byteOffset/16). */
+    writePage: (offWords, data, nextWords) => {
+      const x = [(offWords >> 8) & 255, offWords & 255, ...data, (nextWords >> 8) & 255, nextWords & 255];
+      return frame(0x7E, [1, 6, ...x, checksum8bit(x), checksum(x)]);
+    },
+    /** finalize + verify write; ECU replies 0x0F to the last when ok */
+    postWrite: () => [[1, 9], [1, 0x0A], [1, 0x0C], [1, 0x0D]].map(d => frame(0x7E, d)),
   };
+  /** 3-byte-mtype frame (the flash-read command) */
+  function frame3(mtype, data) {
+    const body = [...mtype, mtype.length + 2 + data.length, ...data];
+    return Uint8Array.from([...body, checksum(body)]);
+  }
 
   /** Pulls complete, checksum-valid frames out of a byte buffer.
    *  Returns { frames: Uint8Array[], rest: number[] }. Bytes that cannot start a frame are dropped. */
@@ -127,5 +156,5 @@
     '54-2': 'Bank angle sensor แรงดันสูง', '86-1': 'วงจรสัญญาณไฟ MIL', '91-1': 'Ignition coil',
   };
 
-  return { BAUD, checksum, frame, CMD, parseStream, decodeTableReply, decodeDtcReply, TABLES, DTC_TEXT };
+  return { BAUD, checksum, checksum8bit, frame, frame3, STR, CMD, parseStream, decodeTableReply, decodeDtcReply, TABLES, DTC_TEXT };
 });

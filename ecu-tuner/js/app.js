@@ -52,6 +52,7 @@ function go(page) {
   if (page === 'calc') calc();
   if (page === 'dtcref') renderDtcRef();
   if (page === 'report' && !$('rpBike').value) $('rpBike').value = catBike();
+  if (page === 'flash') flashGate();
   if (page !== 'live') stopLive();
   scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -612,7 +613,71 @@ $('rdGo').onclick = async () => {
   } finally { $('rdGo').disabled = false; $('rdStop').disabled = true; }
 };
 
-// ---------------- Terminal ----------------
+// ---------------- Flash write (Keihin, HondaECU protocol) ----------------
+let wrStop = false;
+function flashGate() {
+  const connected = !!link && !!ecu.id, keihin = bin && bin.length <= 128 * 1024;
+  let cs = 0; if (bin) for (const b of bin) cs = (cs + b) & 255;
+  const csOk = bin && cs === 0;
+  $('fk3') && ($('fk3').textContent = bin ? (keihin && csOk ? '[✓]' : '[ ]') : '[ ]');
+  const ready = connected && keihin && csOk;
+  if ($('wrGo')) $('wrGo').disabled = !ready;
+  if ($('wrState')) $('wrState').textContent = !link ? 'เชื่อมต่อกล่องก่อน'
+    : !bin ? 'เปิดไฟล์ที่จะเขียนใน “แก้แมพ”'
+    : !keihin ? `ไฟล์ ${Math.round(bin.length / 1024)}KB ใหญ่เกิน — โปรโตคอลนี้รองรับ ≤128KB (Keihin)`
+    : !csOk ? 'checksum ไม่ถูกต้อง — แก้ใน “แก้แมพ” ก่อน'
+    : `พร้อมเขียน ${Math.round(bin.length / 1024)}KB`;
+}
+async function seq(frames, delay = 120) { for (const f of frames) { const r = await link.transact(f, 800); await sleep(delay); if (wrStop) return false; } return true; }
+$('wrGo').onclick = async () => {
+  if (!needLink() || !bin) return;
+  let cs = 0; for (const b of bin) cs = (cs + b) & 255;
+  if (cs !== 0) return toast('checksum ไฟล์ไม่เป็น 0 — แก้ก่อน', 5000);
+  if (!await ask(`เขียน ${Math.round(bin.length / 1024)}KB ลงกล่อง ${ecu.model ? ecu.model.part : ecu.id}?\n\n⚠ ถ้าไฟล์ผิดรุ่นหรือไฟหลุดระหว่างเขียน กล่องจะดับ\nมีไฟล์สำรองต้นฉบับแล้วใช่ไหม?`, 'เขียนลงกล่อง', true)) return;
+  const start = parseInt($('wrStart').value, 16) || 0;
+  wrStop = false; $('wrGo').disabled = true; $('wrStop').disabled = false;
+  const set = (p, t) => { $('wrFill').style.width = (p * 100).toFixed(1) + '%'; $('wrInfo').textContent = t; };
+  try {
+    set(0, 'เข้าโหมดเขียน…'); if (!await seq(Honda.CMD.initWrite(), 500)) throw 0;
+    set(0, 'กำลังลบแฟลช (erase)…'); if (!await seq(Honda.CMD.erase(), 500)) throw 0;
+    for (let g = 0; g < 40; g++) { const r = await link.transact(Honda.CMD.eraseStatus(), 800); if (r && r.length >= 5 && r[r.length - 2] === 0x00) break; await sleep(300); if (wrStop) throw 0; }
+    await link.transact(Honda.CMD.eraseDone(), 800);
+    // write 128-byte pages; offsets are in 16-byte words
+    const page = 128, wpp = page / 16, total = bin.length, t0 = performance.now();
+    for (let off = 0; off < total; off += page) {
+      if (wrStop) throw 0;
+      const data = Array.from(bin.slice(off, off + page)); while (data.length < page) data.push(0xFF);
+      const offW = (start + off) / 16, nextW = (off + page >= total) ? 0 : (start + off + page) / 16;
+      const r = await link.transact(Honda.CMD.writePage(offW, data, nextW), 1200);
+      if (!r) throw new Error(`กล่องไม่ตอบที่ ${(off / 1024).toFixed(1)}KB — หยุดเพื่อไม่ให้กล่องเสียเพิ่ม`);
+      const rate = (off + page) / ((performance.now() - t0) / 1000);
+      set((off + page) / total, `${((off + page) / 1024).toFixed(1)}/${(total / 1024).toFixed(0)}KB · ${rate.toFixed(0)} B/s`);
+    }
+    set(1, 'จบการเขียน (finalize)…'); await seq(Honda.CMD.postWrite(), 400);
+    // verify by reading back
+    set(1, 'อ่านกลับมาตรวจ…');
+    let bad = 0; const step = 12;
+    for (let off = 0; off < total; off += 256) {   // spot-check every 256 bytes
+      const r = await link.transact(Honda.CMD.readFlash(start + off, step), 600, 3);
+      const d = r && r.length >= 5 ? Array.from(r.slice(4, -1)) : null;
+      if (d) for (let k = 0; k < d.length && off + k < total; k++) if (d[k] !== bin[off + k]) bad++;
+    }
+    $('wrInfo').textContent = bad === 0 ? '✅ เขียนและตรวจกลับผ่าน — ปิด/เปิดกุญแจแล้วสตาร์ทได้' : `⚠ เขียนเสร็จ แต่ตรวจกลับไม่ตรง ${bad} จุด — อย่าเพิ่งสตาร์ท ลองเขียนซ้ำหรือกู้กล่อง`;
+    toast(bad === 0 ? 'เขียนสำเร็จ' : 'เขียนเสร็จแต่ตรวจไม่ผ่าน', 6000);
+  } catch (e) {
+    $('wrInfo').textContent = (e && e.message) ? e.message : 'หยุด/ผิดพลาด — กล่องอาจเขียนไม่ครบ ใช้ “กู้กล่อง” แล้วเขียนไฟล์ต้นฉบับกลับ';
+  } finally { $('wrGo').disabled = false; $('wrStop').disabled = true; flashGate(); }
+};
+$('wrStop').onclick = () => { wrStop = true; };
+$('wrRecover').onclick = async () => {
+  if (!needLink()) return;
+  if (!await ask('เข้าโหมดกู้กล่อง (recover)? ใช้เมื่อกล่องดับจากการเขียนพลาด แล้วค่อยเขียนไฟล์ต้นฉบับกลับ', 'กู้กล่อง')) return;
+  await seq(Honda.CMD.initRecover(), 500);
+  $('wrInfo').textContent = 'เข้าโหมดกู้แล้ว — เปิดไฟล์ต้นฉบับใน “แก้แมพ” แล้วกด “เขียนลงกล่อง”';
+  toast('เข้าโหมดกู้กล่องแล้ว');
+};
+
+// ---------------- Terminal ----------------// ---------------- Terminal ----------------
 // ---------------- Sniffer (passive K-line listen) ----------------
 let sniffer = null, sniffLog = [], sniffBuf = [];
 $('sniffStart').onclick = async () => {
@@ -701,6 +766,7 @@ function loadBin(name, data) {
   applyCatalog(name);
   showMap(); showHex(); checkSum();
   if (xdf) renderXdfItem();
+  flashGate();
 }
 $('binFile').onchange = async e => {
   const f = e.target.files[0]; if (!f) return;

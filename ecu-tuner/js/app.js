@@ -239,10 +239,13 @@ async function liveLoop() {
       if (b17) {
         liveFail = 0; if (liveDown) { liveDown = false; ecuAlive = true; setConn('ok', link.name); toast('เปิดกุญแจ — อ่านค่าต่อแล้ว'); }
         const rpm = (b17[0] << 8) | b17[1];
+        // 0x20[0] is the O2 sensor (swings rich/lean at idle) → narrowband AFR, or wideband if selected
+        const o2V = b20 ? +(b20[0] / 256 * 1.25).toFixed(3) : null;
+        const afr = afrSource() === 'wb' ? (link.afr ? link.afr() : wideband?.afr() ?? null) : (o2V != null ? AutoTune.narrowbandAfr(o2V) : null);
         renderK60S(rpm, b17, b20);
-        renderDash({ rpm, tps: null, wtemp: null, afr: null, batt: null, inj: null, map: null, iat: null, speed: null, lambda: null, hz: n / ((performance.now() - t0) / 1000) });
-        hist.push({ rpm, tps: b20 ? b20[0] / 2.55 : 0, inj: 0, afr: null, afr10: 0 }); if (hist.length > 300) hist.shift();
-        drawChart(); drawAfr(null);
+        renderDash({ rpm, tps: null, wtemp: null, afr, batt: null, inj: null, map: null, iat: null, speed: null, lambda: afr != null ? +(afr / 14.7).toFixed(3) : null, hz: n / ((performance.now() - t0) / 1000) });
+        hist.push({ rpm, tps: 0, inj: 0, afr, afr10: afr == null ? 0 : Math.max(0, afr - 10) }); if (hist.length > 300) hist.shift();
+        drawChart(); drawAfr(afr);
         onDynoSample({ v: 0, rpm });
         if (recording) { recording.push([Date.now(), rpm, ...(b17 || []), ...(b20 || [])]); recording.cols ||= ['rpm', ...b17.map((_, i) => `17[${i}]`), ...(b20 || []).map((_, i) => `20[${i}]`)]; }
         $('liveInfo').textContent = `K60S · รอบ ${rpm} rpm · ${(n / ((performance.now() - t0) / 1000)).toFixed(1)} ครั้ง/วิ · ไบต์ที่ขยับเป็นสีส้ม — บอกผมว่าตัวไหน = อุณหภูมิ/ลิ้นเร่ง`;

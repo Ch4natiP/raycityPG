@@ -182,9 +182,34 @@ async function liveLoop() {
       onDynoSample({ v: get('speed'), rpm: get('rpm') });
       if (recording) recording.push([Date.now(), ...vals.map(v => v.value)]), recording.cols ||= vals.map(v => `${v.name} (${v.unit})`);
       $('liveInfo').textContent = `${(n / ((performance.now() - t0) / 1000)).toFixed(1)} ครั้ง/วิ${recording ? ` • กำลังบันทึก ${recording.length} แถว` : ''}`;
-    } else $('liveInfo').textContent = 'ECU ไม่ตอบตาราง 0x11 — รุ่นนี้อาจใช้ตารางอื่น (ดูใน Terminal / สำรองตาราง)';
+    } else {
+      // K60S / newer ECUs: no table 0x11. Show raw live bytes from the tables that do carry data.
+      n++;
+      const raw = [];
+      for (const tbl of [0x17, 0x20, 0x67, 0x70]) {
+        const rr = await link.transact(Honda.CMD.readTable(tbl), 250);
+        if (rr && rr[0] === 0x02 && rr[2] === 0x71 && rr.length > 6) raw.push({ tbl, bytes: Array.from(rr.slice(4, -1)) });
+      }
+      renderRawLive(raw);
+      $('liveInfo').textContent = raw.length
+        ? `ค่าดิบสด (${raw.map(r => '0x' + r.tbl.toString(16)).join(', ')}) · รุ่นนี้ไม่มีตาราง 0x11 — ส่งผล “หาตาราง Live” มา จะ map เป็นหน่วยให้`
+        : 'กล่องไม่ตอบ — เช็กกุญแจ/สาย';
+    }
     await sleep(Math.max(0, settings.poll - (performance.now() - t)));
   }
+}
+let rawPrev = {};
+function renderRawLive(raw) {
+  const box = $('vals');
+  box.innerHTML = raw.map(r => {
+    const prev = rawPrev[r.tbl] || [];
+    const cells = r.bytes.map((b, i) => {
+      const changed = prev[i] != null && prev[i] !== b;
+      return `<span class="rawb${changed ? ' chg' : ''}" title="ไบต์ ${i}">${b.toString(16).padStart(2, '0').toUpperCase()}</span>`;
+    }).join('');
+    rawPrev[r.tbl] = r.bytes.slice();
+    return `<div class="val" style="grid-column:1/-1"><small>ตาราง 0x${r.tbl.toString(16).toUpperCase()} · ค่าดิบ (ไบต์ที่ขยับเป็นสีส้ม)</small><div class="rawrow">${cells}</div></div>`;
+  }).join('');
 }
 function renderVals(vals) {
   const box = $('vals');

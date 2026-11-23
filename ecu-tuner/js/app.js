@@ -227,6 +227,37 @@ function drawChart() {
   g.save(); g.setLineDash([8, 6]); line('afr10', 8, css('--bad')); g.restore();
 }
 function stopLive() { livePolling = false; $('liveStart').disabled = false; $('liveStop').disabled = true; }
+$('liveScan').onclick = async () => {
+  if (!needLink()) return;
+  if (livePolling) stopLive();
+  const out = $('liveScanOut'); out.innerHTML = '<div class="muted">กำลังสแกน… ให้เครื่องติด (เดินเบา) เพื่อให้ค่าขยับ</div>';
+  // pass 1: find which diagnostic tables carry data
+  const have = [];
+  for (let t = 0x10; t <= 0x40; t++) {
+    const r = await link.transact(Honda.CMD.readTable(t), 150);
+    if (r && r[0] === 0x02 && r[2] === 0x71 && r.length > 6) have.push({ t, a: Array.from(r.slice(4, -1)) });
+    out.querySelector('.muted').textContent = `กำลังสแกน… 0x${t.toString(16)} (พบ ${have.length})`;
+  }
+  if (!have.length) { out.innerHTML = '<div class="note">ไม่พบตารางที่มีข้อมูลในช่วง 0x10–0x40 · ลองตอนเครื่องติด หรือส่ง log มาให้ดู</div>'; return; }
+  await sleep(700);
+  // pass 2: read again, mark tables whose bytes changed = live sensor data
+  const res = [];
+  for (const h of have) {
+    const r = await link.transact(Honda.CMD.readTable(h.t), 150);
+    const b = r && r.length > 6 ? Array.from(r.slice(4, -1)) : [];
+    const changed = b.reduce((n, v, i) => n + (v !== h.a[i] ? 1 : 0), 0);
+    res.push({ t: h.t, len: h.a.length, changed, a: h.a, b });
+  }
+  res.sort((x, y) => y.changed - x.changed);
+  const live = res.filter(r => r.changed);
+  out.innerHTML = `<div class="panel stack"><b>ผลสแกนตาราง Live</b>`
+    + (live.length ? `<div class="okbox">ตารางที่ค่าขยับ (น่าจะเป็นค่าสด): ${live.map(r => '0x' + r.t.toString(16).toUpperCase() + ` (${r.changed}/${r.len} ไบต์)`).join(', ')}</div>` : '<div class="note">ยังไม่มีตารางไหนค่าขยับ — เร่งเครื่องเบา ๆ แล้วสแกนใหม่</div>')
+    + '<table class="list"><thead><tr><th>ตาราง</th><th>ยาว</th><th>เปลี่ยน</th><th>ไบต์ (ครั้งที่ 1 → 2)</th></tr></thead><tbody>'
+    + res.map(r => `<tr><td><span class="code">0x${r.t.toString(16).toUpperCase()}</span></td><td>${r.len}</td><td>${r.changed || '—'}</td><td class="mono" style="font-size:11px">${hex(r.a)}<br>${r.changed ? hex(r.b) : ''}</td></tr>`).join('')
+    + '</tbody></table><div class="row"><button class="btn o" id="liveScanSave">บันทึกผลลงคลัง</button><span class="muted">ส่งไฟล์นี้มาให้ผม จะปรับให้ Live Data อ่าน K60S ได้ถูกต้อง</span></div></div>';
+  const txt = `# live table scan ${new Date().toISOString()}\n# ecu ${ecu.id}${ecu.model ? ' ' + ecu.model.part : ''}\n` + res.map(r => `${r.t.toString(16).padStart(2, '0')}: changed ${r.changed}/${r.len}\n  1: ${hex(r.a)}\n  2: ${hex(r.b)}`).join('\n');
+  $('liveScanSave').onclick = async () => { const name = `live_scan_${(ecu.id || 'ecu').replace(/\s/g, '')}_${Date.now()}.txt`; await db.add({ name, kind: 'term', data: new TextEncoder().encode(txt).buffer }); download(name, txt, 'text/plain'); toast('บันทึกผลสแกนแล้ว'); };
+};
 $('liveStart').onclick = () => { if (!needLink()) return; livePolling = true; $('liveStart').disabled = true; $('liveStop').disabled = false; liveLoop(); };
 $('liveStop').onclick = stopLive;
 $('liveRec').onclick = async () => {

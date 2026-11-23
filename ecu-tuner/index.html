@@ -348,13 +348,14 @@
     <!-- ===================== LIVE ===================== -->
     <section class="page" id="p-live">
       <div class="ph"><div><div class="eyebrow">อ่านจากรถ</div><h1>Live Data</h1><p>ค่าเซนเซอร์แบบเรียลไทม์ อ่านอย่างเดียว ไม่เขียนอะไรลงกล่อง</p></div>
-        <div class="row"><button class="btn o" id="liveStart">เริ่มอ่าน</button><button class="btn" id="liveStop" disabled>หยุด</button><button class="btn" id="liveRec">บันทึก Log</button></div></div>
+        <div class="row"><button class="btn o" id="liveStart">เริ่มอ่าน</button><button class="btn" id="liveStop" disabled>หยุด</button><button class="btn" id="liveRec">บันทึก Log</button><button class="btn" id="liveScan">🔎 หาตาราง Live</button></div></div>
       <div class="seg" role="tablist" aria-label="มุมมอง Live">
         <button id="lvTab1" class="on" data-lv="1" role="tab">หน้า 1 · หน้าปัด</button>
         <button id="lvTab2" data-lv="2" role="tab">หน้า 2 · ตารางเรียลไทม์ + จูนอัตโนมัติ</button>
         <button id="lvTab3" data-lv="3" role="tab">หน้า 3 · Dyno ก่อน/หลังจูน</button>
       </div>
       <div class="muted mono" id="liveInfo" style="margin:10px 0 12px">ยังไม่ได้อ่าน · กด “เริ่มอ่าน” หลังเชื่อมต่อ</div>
+      <div id="liveScanOut" style="margin:0 0 12px"></div>
 
       <!-- view 1: dashboard -->
       <div class="stack" id="lv1">

@@ -233,24 +233,26 @@ function stopLive() { livePolling = false; $('liveStart').disabled = false; $('l
 $('liveScan').onclick = async () => {
   if (!needLink()) return;
   if (livePolling) stopLive();
-  const out = $('liveScanOut'); out.innerHTML = '<div class="muted">กำลังสแกน… ให้เครื่องติด (เดินเบา) เพื่อให้ค่าขยับ</div>';
-  // pass 1: find which diagnostic tables carry data
+  const out = $('liveScanOut'); out.innerHTML = '<div class="muted">กำลังสแกน… ติดเครื่องเดินเบาไว้ เพื่อให้ค่าเซนเซอร์ขยับ</div>';
+  // pass 1: scan every table 0x01-0xFF, keep the ones that carry data (skip id 0x00)
   const have = [];
-  for (let t = 0x10; t <= 0x40; t++) {
-    const r = await link.transact(Honda.CMD.readTable(t), 150);
-    if (r && r[0] === 0x02 && r[2] === 0x71 && r.length > 6) have.push({ t, a: Array.from(r.slice(4, -1)) });
+  for (let t = 0x01; t <= 0xFF; t++) {
+    const r = await link.transact(Honda.CMD.readTable(t), 120);
+    if (r && r[0] === 0x02 && r[2] === 0x71 && r.length > 6) have.push({ t, passes: [Array.from(r.slice(4, -1))] });
     out.querySelector('.muted').textContent = `กำลังสแกน… 0x${t.toString(16)} (พบ ${have.length})`;
   }
-  if (!have.length) { out.innerHTML = '<div class="note">ไม่พบตารางที่มีข้อมูลในช่วง 0x10–0x40 · ลองตอนเครื่องติด หรือส่ง log มาให้ดู</div>'; return; }
-  await sleep(700);
-  // pass 2: read again, mark tables whose bytes changed = live sensor data
-  const res = [];
-  for (const h of have) {
-    const r = await link.transact(Honda.CMD.readTable(h.t), 150);
-    const b = r && r.length > 6 ? Array.from(r.slice(4, -1)) : [];
-    const changed = b.reduce((n, v, i) => n + (v !== h.a[i] ? 1 : 0), 0);
-    res.push({ t: h.t, len: h.a.length, changed, a: h.a, b });
+  if (!have.length) { out.innerHTML = '<div class="note">ไม่พบตารางที่มีข้อมูลเลย · ลองตอนเครื่องติด หรือส่ง log มาให้ดู</div>'; return; }
+  // passes 2-4: read the data-bearing tables again a few times to catch changing (live) bytes
+  for (let pass = 0; pass < 3; pass++) {
+    await sleep(500);
+    out.querySelector('.muted').textContent = `อ่านซ้ำรอบที่ ${pass + 2}…`;
+    for (const h of have) { const r = await link.transact(Honda.CMD.readTable(h.t), 120); h.passes.push(r && r.length > 6 ? Array.from(r.slice(4, -1)) : h.passes[0].slice()); }
   }
+  const res = have.map(h => {
+    const a = h.passes[0], len = a.length;
+    let changed = 0; for (let i = 0; i < len; i++) if (h.passes.some(p => p[i] !== a[i])) changed++;
+    return { t: h.t, len, changed, a, b: h.passes[h.passes.length - 1], passes: h.passes };
+  });
   res.sort((x, y) => y.changed - x.changed);
   const live = res.filter(r => r.changed);
   out.innerHTML = `<div class="panel stack"><b>ผลสแกนตาราง Live</b>`
@@ -258,7 +260,7 @@ $('liveScan').onclick = async () => {
     + '<table class="list"><thead><tr><th>ตาราง</th><th>ยาว</th><th>เปลี่ยน</th><th>ไบต์ (ครั้งที่ 1 → 2)</th></tr></thead><tbody>'
     + res.map(r => `<tr><td><span class="code">0x${r.t.toString(16).toUpperCase()}</span></td><td>${r.len}</td><td>${r.changed || '—'}</td><td class="mono" style="font-size:11px">${hex(r.a)}<br>${r.changed ? hex(r.b) : ''}</td></tr>`).join('')
     + '</tbody></table><div class="row"><button class="btn o" id="liveScanSave">บันทึกผลลงคลัง</button><span class="muted">ส่งไฟล์นี้มาให้ผม จะปรับให้ Live Data อ่าน K60S ได้ถูกต้อง</span></div></div>';
-  const txt = `# live table scan ${new Date().toISOString()}\n# ecu ${ecu.id}${ecu.model ? ' ' + ecu.model.part : ''}\n` + res.map(r => `${r.t.toString(16).padStart(2, '0')}: changed ${r.changed}/${r.len}\n  1: ${hex(r.a)}\n  2: ${hex(r.b)}`).join('\n');
+  const txt = `# live table scan ${new Date().toISOString()}\n# ecu ${ecu.id}${ecu.model ? ' ' + ecu.model.part : ''}\n` + res.map(r => `${r.t.toString(16).padStart(2, '0')}: changed ${r.changed}/${r.len}\n` + r.passes.map((p, i) => `  ${i + 1}: ${hex(p)}`).join('\n')).join('\n');
   $('liveScanSave').onclick = async () => { const name = `live_scan_${(ecu.id || 'ecu').replace(/\s/g, '')}_${Date.now()}.txt`; await db.add({ name, kind: 'term', data: new TextEncoder().encode(txt).buffer }); download(name, txt, 'text/plain'); toast('บันทึกผลสแกนแล้ว'); };
 };
 $('liveStart').onclick = () => { if (!needLink()) return; livePolling = true; $('liveStart').disabled = true; $('liveStop').disabled = false; liveLoop(); };

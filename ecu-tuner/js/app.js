@@ -143,7 +143,7 @@ async function connect(l) {
     ecu.id = idBytes ? hex(idBytes) : 'อ่านไม่ได้';
     ecu.model = idBytes ? Catalog.matchId(idBytes) : null;
     $('ecuId').textContent = ecu.model ? `${ecu.model.part} · ${ecu.model.model}` : `Honda PGM-FI · ${ecu.id}`;
-    if (ecu.model) log(`ระบุรุ่นจาก ECU ID: ${ecu.model.part} (${ecu.model.model})`);
+    if (ecu.model) term(`ระบุรุ่นจาก ECU ID: ${ecu.model.part} (${ecu.model.model})`);
     setConn('ok', name);
     toast('เชื่อมต่อ ECU สำเร็จ');
   } catch (e) {

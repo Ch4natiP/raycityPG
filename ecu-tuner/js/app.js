@@ -122,6 +122,7 @@ $('cSerial').onclick = () => {
 $('cSim').onclick = () => { $('connModal').classList.remove('on'); connect(new SimLink()); };
 
 async function connect(l) {
+  if (link) { try { await disconnect(); } catch {} }   // never open a second link while one is live
   try {
     setConn('wait', 'กำลังเปิดพอร์ต…');
     const name = await l.open({});
@@ -136,7 +137,7 @@ async function connect(l) {
       ok = !!(r && r[0] === 0x02);
       if (!ok) { setConn('wait', `${name} — ECU ไม่ตอบ ลองครั้งที่ ${attempt + 1}…`); await sleep(400); }
     }
-    if (!ok) { setConn('wait', `${name} — เปิดพอร์ตแล้ว แต่ ECU ไม่ตอบ`); toast('ECU ไม่ตอบ: เช็กว่าเปิดกุญแจแล้ว, สายเสียบแน่น, เลือกพอร์ตถูก', 6000); $('ecuId').textContent = '—'; return; }
+    if (!ok) { try { await l.close(); } catch {} link = null; setConn('', `${name} — ECU ไม่ตอบ`); toast('ECU ไม่ตอบ: เช็กว่าเปิดกุญแจแล้ว, สายเสียบแน่น, เลือกพอร์ตถูก แล้วกดเชื่อมต่อใหม่', 7000); $('ecuId').textContent = '—'; return; }
     const id = await l.transact(Honda.CMD.readTable(0x00), 400);
     const idBytes = id ? Array.from(id.slice(4, -1)) : null;
     ecu.id = idBytes ? hex(idBytes) : 'อ่านไม่ได้';
@@ -147,8 +148,9 @@ async function connect(l) {
     toast('เชื่อมต่อ ECU สำเร็จ');
   } catch (e) {
     console.error(e);
+    try { await l.close(); } catch {}
     link = null; setConn('', 'ยังไม่ได้เชื่อมต่อ');
-    if (e && e.name !== 'NotFoundError') toast('เปิดพอร์ตไม่ได้: ' + (e.message || e), 5000);
+    if (e && e.name !== 'NotFoundError') toast('เปิดพอร์ตไม่ได้: ' + (e.message || e) + ' — ถอดสายเสียบใหม่ หรือรีเฟรชหน้า (Ctrl+Shift+R)', 7000);
   }
 }
 async function disconnect() { stopLive(); const l = link; link = null; ecu.id = null; await l?.close(); setConn('', 'ยังไม่ได้เชื่อมต่อ'); $('ecuId').textContent = '—'; }

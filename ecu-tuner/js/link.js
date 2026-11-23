@@ -54,7 +54,15 @@
     static supported() { return typeof navigator !== 'undefined' && 'serial' in navigator; }
     async open({ baud = Honda.BAUD, port = null } = {}) {
       this.port = port || await navigator.serial.requestPort();
-      await this.port.open({ baudRate: baud, dataBits: 8, stopBits: 1, parity: 'none', bufferSize: 4096 });
+      try {
+        await this.port.open({ baudRate: baud, dataBits: 8, stopBits: 1, parity: 'none', bufferSize: 4096 });
+      } catch (e) {
+        if (/already open/i.test(e && e.message || '')) {           // left open by a previous attempt — close and reopen
+          try { await this.port.close(); } catch {}
+          await sleep(150);
+          await this.port.open({ baudRate: baud, dataBits: 8, stopBits: 1, parity: 'none', bufferSize: 4096 });
+        } else throw e;
+      }
       this.writer = this.port.writable.getWriter();
       this.reading = true;
       this.readLoop();

@@ -1260,6 +1260,75 @@ function smoothSlots(tris, labels, K, rounds = 8) {
 }
 
 // keep: nothing reduced here (writeCar shares a file's overflow out over the other files)
+// Thin gaps at part edges (a door's lower seam, the bonnet's vent slits) come out of the source model as open
+// outlines only a few cm wide. They are closed with the part's own paint so no dark interior shows through.
+// Glass and lamp parts are left alone. Fan from the outline's centre: a thin outline lies inside the gap.
+const SLIT_MAX_WIDTH = 0.06;
+function closeSlits(part) {
+  if (/glass|light|lamp/i.test(part.name || '')) return part;
+  const P = part.positions, N = part.normals, I = part.indices;
+  const nv = P.length / 3;
+  const wid = new Int32Array(nv);
+  const ids = new Map(); const coord = []; const wN = [];
+  for (let v = 0; v < nv; v++) {
+    const k = `${Math.round(P[v * 3] * 2e3)},${Math.round(P[v * 3 + 1] * 2e3)},${Math.round(P[v * 3 + 2] * 2e3)}`;
+    let w = ids.get(k);
+    if (w === undefined) { w = coord.length; ids.set(k, w); coord.push([P[v * 3], P[v * 3 + 1], P[v * 3 + 2]]); wN.push([N[v * 3], N[v * 3 + 1], N[v * 3 + 2]]); }
+    wid[v] = w;
+  }
+  const dir = new Set();
+  for (let t = 0; t < I.length; t += 3) for (let k = 0; k < 3; k++) {
+    const a = wid[I[t + k]], b = wid[I[t + (k + 1) % 3]];
+    if (a !== b) dir.add(a + ',' + b);
+  }
+  const bnd = [];
+  for (const e of dir) { const [a, b] = e.split(',').map(Number); if (!dir.has(b + ',' + a)) bnd.push([a, b]); }
+  if (!bnd.length) return part;
+  const adj = new Map();
+  for (const [a, b] of bnd) { if (!adj.has(a)) adj.set(a, []); if (!adj.has(b)) adj.set(b, []); adj.get(a).push(b); adj.get(b).push(a); }
+  const seen = new Set(); const added = [];
+  for (const st of adj.keys()) {
+    if (seen.has(st)) continue;
+    const q = [st]; seen.add(st); const verts = [];
+    while (q.length) { const x = q.pop(); verts.push(x); for (const y of adj.get(x)) if (!seen.has(y)) { seen.add(y); q.push(y); } }
+    const vs = new Set(verts);
+    const mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9], c = [0, 0, 0];
+    for (const x of verts) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], coord[x][k]); mx[k] = Math.max(mx[k], coord[x][k]); c[k] += coord[x][k] / verts.length; }
+    if (Math.min(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]) >= SLIT_MAX_WIDTH) continue;
+    const edges = bnd.filter(([a]) => vs.has(a));
+    // triangles as [centre, b, a] (the cap runs the outline the other way round), flipped as a whole if they face inward
+    const pt = (id) => (id < 0 ? c : coord[id]);
+    let tris = edges.map(([a, b]) => [-1, b, a]);
+    let score = 0;
+    for (const [p0, p1, p2] of tris) {
+      const A = pt(p0), B = pt(p1), C = pt(p2);
+      const u = [B[0] - A[0], B[1] - A[1], B[2] - A[2]], w = [C[0] - A[0], C[1] - A[1], C[2] - A[2]];
+      const n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
+      const rn = [0, 1, 2].map((k) => (p1 < 0 ? 0 : wN[p1][k]) + (p2 < 0 ? 0 : wN[p2][k]));
+      score += n[0] * rn[0] + n[1] * rn[1] + n[2] * rn[2];
+    }
+    if (score < 0) tris = tris.map(([p0, p1, p2]) => [p0, p2, p1]);
+    for (const t of tris) added.push(t.map(pt));
+  }
+  if (!added.length) return part;
+  const u0 = part.uvs ? part.uvs[0] : 0, v0 = part.uvs ? part.uvs[1] : 0;
+  const oldV = nv, oldI = I.length;
+  const pos = new Float32Array((oldV + added.length * 3) * 3), nrm = new Float32Array((oldV + added.length * 3) * 3), uvs = new Float32Array((oldV + added.length * 3) * 2);
+  pos.set(P); nrm.set(N); uvs.set(part.uvs || new Float32Array(oldV * 2));
+  const idx = new Uint32Array(oldI + added.length * 3); idx.set(I);
+  added.forEach((t, ti) => {
+    const A = t[0], B = t[1], C = t[2];
+    const u = [B[0] - A[0], B[1] - A[1], B[2] - A[2]], w = [C[0] - A[0], C[1] - A[1], C[2] - A[2]];
+    const n = norm([u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]]);
+    for (let j = 0; j < 3; j++) {
+      const vi = oldV + ti * 3 + j, p = t[j];
+      pos.set(p, vi * 3); nrm.set(n, vi * 3); uvs[vi * 2] = u0; uvs[vi * 2 + 1] = v0;
+      idx[oldI + ti * 3 + j] = vi;
+    }
+  });
+  return { ...part, positions: pos, normals: nrm, uvs, indices: idx };
+}
+
 async function fitRaw(tris, m, cap, log, keep = false) {
   const slotOfTri = tris.map((t) => m.slotOf(t.c0, t.n, t.mat));
   const slotNames = [...new Set(slotOfTri)];
@@ -1321,6 +1390,7 @@ async function fitRaw(tris, m, cap, log, keep = false) {
     log(fit.verts < before ? `${slot}: ${before.toLocaleString()} → ${fit.verts.toLocaleString()} จุด (ลดเท่าที่ต้องให้ไม่เกินเพดาน)` : `${slot}: ${before.toLocaleString()} จุด (ไม่ได้ลด)`);
     await tick();
   }
+  for (const slot of Object.keys(out)) out[slot] = out[slot].map(closeSlits);
   return out;
 }
 

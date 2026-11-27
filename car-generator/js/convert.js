@@ -840,7 +840,7 @@ function shellMaterials(P, idx, ref) {
 // Panel boundaries: each vertex carries a share of every material (from the triangles around it), spread a few
 // steps along the mesh; each triangle then takes the material strongest over its three corners. The cut between
 // two panels runs as one smooth curve instead of the stairs of single triangles.
-function smoothMaterials(P, idx, mats, steps = 12) {
+function smoothMaterials(P, idx, mats, steps = 30) {
   const cats = [...new Set(mats)]; const C = cats.length;
   if (C < 2) return mats;
   const ci = new Map(cats.map((c, i) => [c, i]));
@@ -919,7 +919,8 @@ async function fitShell(hull, ref, m, cap, log) {
   const hullTris = hull.idx.length / 3;
   let T = Math.min(hullTris, cap * 10);
   for (let round = 0; round < 8; round++) {
-    const mid = dedupe(T >= hullTris ? hull.idx : MeshoptSimplifier.simplify(hull.idx, hull.pos, 3, Math.round(T) * 3, 1, [])[0]);
+    const rawS = T >= hullTris ? hull.idx : MeshoptSimplifier.simplify(hull.idx, hull.pos, 3, Math.round(T) * 3, 1, [])[0];
+    const mid = rawS; // keep every triangle: dedupe was opening the closed shell
     const { mats, info } = shellMaterials(hull.pos, mid, ref);
     const slots = new Map();
     for (let t = 0; t < mats.length; t++) {
@@ -936,7 +937,7 @@ async function fitShell(hull, ref, m, cap, log) {
       const over = () => v > cap || idx.length / 3 > MAX_FILE_TRIS;
       let target = (idx.length / 3) * Math.min(1, (cap / v) * 0.95, MAX_FILE_TRIS / (idx.length / 3));
       for (let k = 0; over() && k < 10; k++) {
-        const s = dedupe(MeshoptSimplifier.simplify(Uint32Array.from(list), hull.pos, 3, Math.max(3, Math.round(target) * 3), 1, ['LockBorder'])[0]);
+        const s = MeshoptSimplifier.simplify(Uint32Array.from(list), hull.pos, 3, Math.max(3, Math.round(target) * 3), 1, ['LockBorder'])[0];
         const p2 = slotParts(hull.pos, s, shellMaterials(hull.pos, s, ref).mats);
         const v2 = vertsOf(p2);
         if (s.length >= idx.length && k > 0) break; // locked edges: can't go lower

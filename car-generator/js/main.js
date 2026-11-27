@@ -1545,7 +1545,7 @@ function buildModelPanel() {
   hideRow.className = 'row row-check';
   hideRow.innerHTML = '<input type="checkbox" checked><span>ตัดชิ้นข้างในที่มองไม่เห็นทิ้ง (เบาะ คอนโซล ห้องเครื่อง) · กระจกทึบอยู่แล้ว มองไม่เห็นข้างใน</span>';
   hideRow.hidden = true;
-  const capSel = pickerRow('ลด poly (จุดสูงสุดต่อไฟล์)', [['2000', '2,000'], ['3000', '3,000'], ['3500', '3,500 (แนะนำ)'], ['5000', '5,000 (ทดลอง)'], ['60000', 'ไม่ลด poly']], '3500', (v) => {
+  const capSel = pickerRow('ลด poly (จุดสูงสุดต่อไฟล์)', [['2000', '2,000'], ['3000', '3,000'], ['3500', '3,500 (แนะนำ)'], ['5000', '5,000 (ทดลอง)'], ['8000', '8,000 (ทดลอง · เกมอาจเด้ง ต้องทดสอบ)'], ['60000', 'ไม่ลด poly']], '3500', (v) => {
     capHint.textContent = CAP_HINTS[v];
     capHint.style.color = Number(v) > 3500 ? '#ff8a6a' : '';
     if (v === '60000') modeSel.querySelector('select').value = 'raw';

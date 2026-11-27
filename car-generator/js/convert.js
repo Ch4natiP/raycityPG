@@ -1233,16 +1233,45 @@ function simplifySoup(tris, target) {
   return out;
 }
 
+// Majority vote over the triangles that share a point: the cut between two parts (body / roof / hood...) is one
+// clean line instead of a zigzag, because a triangle near the cut no longer picks its part on its own.
+function smoothSlots(tris, labels, K, rounds = 8) {
+  const key = (p) => `${Math.round(p[0] * 1e3)},${Math.round(p[1] * 1e3)},${Math.round(p[2] * 1e3)}`;
+  const at = new Map();
+  tris.forEach((t, i) => { for (const p of [t.a, t.b, t.c]) { const k = key(p); const l = at.get(k); if (l) l.push(i); else at.set(k, [i]); } });
+  // Small parts (skirts, lamps, grilles...) are fixed: a vote would wear them away.
+  const count = new Array(K).fill(0); for (const l of labels) count[l]++;
+  const fixed = count.map((c) => c < 1500);
+  let cur = Int16Array.from(labels);
+  for (let r = 0; r < rounds; r++) {
+    const next = cur.slice();
+    tris.forEach((t, i) => {
+      if (fixed[cur[i]]) return;
+      // Votes come from the neighbours only; a triangle takes another part when most of its neighbours are there.
+      const votes = new Array(K).fill(0); let n = 0;
+      for (const p of [t.a, t.b, t.c]) for (const j of at.get(key(p))) if (j !== i && !fixed[cur[j]]) { votes[cur[j]]++; n++; }
+      let best = cur[i];
+      for (let k = 0; k < K; k++) if (!fixed[k] && votes[k] * 2 > n && votes[k] > votes[best]) best = k;
+      next[i] = best;
+    });
+    cur = next;
+  }
+  return cur;
+}
+
 // keep: nothing reduced here (writeCar shares a file's overflow out over the other files)
 async function fitRaw(tris, m, cap, log, keep = false) {
+  const slotOfTri = tris.map((t) => m.slotOf(t.c0, t.n, t.mat));
+  const slotNames = [...new Set(slotOfTri)];
+  const slotLab = smoothSlots(tris, slotOfTri.map((s) => slotNames.indexOf(s)), slotNames.length);
   const bySlot = new Map();
-  for (const t of tris) {
-    const slot = m.slotOf(t.c0, t.n, t.mat);
+  tris.forEach((t, i) => {
+    const slot = slotNames[slotLab[i]];
     if (!bySlot.has(slot)) bySlot.set(slot, new Map());
     const g = bySlot.get(slot);
     if (!g.has(t.mat)) g.set(t.mat, []);
     g.get(t.mat).push(t);
-  }
+  });
   const out = {};
   // weldCos: points at one spot share a vertex when their normals are within this (sharp edges kept).
   const buildParts = (g, weldCos) => {

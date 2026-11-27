@@ -956,6 +956,42 @@ async function fitShell(hull, ref, m, cap, log) {
   throw new Error('ลด poly ให้ต่ำกว่าเพดานไม่ได้');
 }
 
+// Whole-car fit: the shell is simplified ONCE and the size searched so that every file already fits the cap, so no file
+// is simplified again on its own. Two files that meet then share the same points and edges: no cracks, no gaps.
+async function fitShellGlobal(hull, ref, m, cap, log) {
+  const hullTris = hull.idx.length / 3;
+  const tryAt = (T) => {
+    const mid = dedupe(T >= hullTris ? hull.idx : MeshoptSimplifier.simplify(hull.idx, hull.pos, 3, Math.round(T) * 3, 1, [])[0]);
+    const { mats, info } = shellMaterials(hull.pos, mid, ref);
+    const slots = new Map();
+    for (let t = 0; t < mats.length; t++) {
+      const slot = m.slotOf(info[t].c0, info[t].n, mats[t]);
+      if (!slots.has(slot)) slots.set(slot, []);
+      slots.get(slot).push(mid[t * 3], mid[t * 3 + 1], mid[t * 3 + 2]);
+    }
+    const out = {}; let worst = 0;
+    for (const [slot, list] of slots) {
+      const parts = slotParts(hull.pos, list, shellMaterials(hull.pos, list, ref).mats);
+      worst = Math.max(worst, vertsOf(parts) / cap, (list.length / 3) / MAX_FILE_TRIS);
+      out[slot] = parts;
+    }
+    return { ok: worst <= 1, out, worst };
+  };
+  let lo = Math.min(hullTris, 2000); let best = tryAt(lo);
+  if (!best.ok) return null;
+  let hi = hullTris;
+  if (tryAt(hi).ok) { best = tryAt(hi); } else {
+    for (let k = 0; k < 14 && hi / lo > 1.01; k++) {
+      const mid = Math.sqrt(lo * hi);
+      const r = tryAt(mid);
+      await tick();
+      if (r.ok) { lo = mid; best = r; } else { hi = mid; }
+    }
+  }
+  log(`ลด poly รวมทั้งคัน ~${Math.round(lo).toLocaleString()} สามเหลี่ยม · ไฟล์ใหญ่สุดใช้ ${Math.round(best.worst * 100)}% ของเพดาน`);
+  return best.out;
+}
+
 // Triangles nobody can see from outside (cabin, seats, engine, inner panels): from the middle of each
 // triangle, rays in 26 directions; when every ray hits the car (windows count as solid: the game
 // shows our glass opaque), the triangle is hidden. Returns the visible triangles.

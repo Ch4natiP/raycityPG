@@ -743,6 +743,52 @@ function snapToSource(ref, parts, reach = 0.035) {
   }
 }
 
+// The snapped points carry the source's own small bumps (their ripples show as wavy reflections). Relax them over
+// the whole car with Taubin steps (smooth, no shrink). Every copy of a point at a seam is one node, so the parts still
+// meet with no gap, and the normals are taken after this, from the relaxed surface.
+function relaxShell(parts, rounds = 10) {
+  const key = (P, v) => `${Math.round(P[v * 3] * 1e4)},${Math.round(P[v * 3 + 1] * 1e4)},${Math.round(P[v * 3 + 2] * 1e4)}`;
+  const node = new Map(); const pos = []; const copies = [];
+  for (const part of parts) {
+    const P = part.positions; const ids = new Int32Array(P.length / 3);
+    for (let v = 0; v < ids.length; v++) {
+      const k = key(P, v); let id = node.get(k);
+      if (id === undefined) { id = pos.length / 3; node.set(k, id); pos.push(P[v * 3], P[v * 3 + 1], P[v * 3 + 2]); }
+      ids[v] = id;
+    }
+    copies.push(ids);
+  }
+  const N = pos.length / 3;
+  const nb = Array.from({ length: N }, () => new Set());
+  parts.forEach((part, pi) => {
+    const ids = copies[pi]; const ind = part.indices;
+    for (let t = 0; t < ind.length; t += 3) for (let k = 0; k < 3; k++) {
+      const a = ids[ind[t + k]]; const b = ids[ind[t + ((k + 1) % 3)]];
+      if (a !== b) { nb[a].add(b); nb[b].add(a); }
+    }
+  });
+  const nbr = nb.map((s) => Int32Array.from(s));
+  const step = (A, f) => {
+    const Y = new Float64Array(A.length);
+    for (let v = 0; v < N; v++) {
+      const ns = nbr[v]; const deg = ns.length;
+      let x = 0; let y = 0; let z = 0;
+      for (const u of ns) { x += A[u * 3]; y += A[u * 3 + 1]; z += A[u * 3 + 2]; }
+      for (let j = 0; j < 3; j++) {
+        const avg = deg ? [x, y, z][j] / deg : A[v * 3 + j];
+        Y[v * 3 + j] = A[v * 3 + j] + f * (avg - A[v * 3 + j]);
+      }
+    }
+    return Y;
+  };
+  let X = Float64Array.from(pos);
+  for (let r = 0; r < rounds; r++) { X = step(X, 0.5); X = step(X, -0.53); }
+  parts.forEach((part, pi) => {
+    const ids = copies[pi]; const P = part.positions;
+    for (let v = 0; v < ids.length; v++) for (let j = 0; j < 3; j++) P[v * 3 + j] = X[ids[v] * 3 + j];
+  });
+}
+
 // Clean index list: no degenerate or duplicate triangles.
 function dedupe(raw) {
   const seen = new Set();
@@ -788,7 +834,55 @@ function shellMaterials(P, idx, ref) {
       if (others.length === nb.length) mats[t] = mats[others[0]];
     }
   }
-  return { mats, info };
+  return { mats: smoothMaterials(P, idx, mats), info };
+}
+
+// Panel boundaries: each vertex carries a share of every material (from the triangles around it), spread a few
+// steps along the mesh; each triangle then takes the material strongest over its three corners. The cut between
+// two panels runs as one smooth curve instead of the stairs of single triangles.
+function smoothMaterials(P, idx, mats, steps = 12) {
+  const cats = [...new Set(mats)]; const C = cats.length;
+  if (C < 2) return mats;
+  const ci = new Map(cats.map((c, i) => [c, i]));
+  const local = new Map(); const vid = [];
+  const nt = mats.length;
+  const tv = new Uint32Array(nt * 3);
+  for (let t = 0; t < nt; t++) for (let k = 0; k < 3; k++) {
+    const v = idx[t * 3 + k]; let i = local.get(v);
+    if (i === undefined) { i = vid.length; local.set(v, i); vid.push(v); }
+    tv[t * 3 + k] = i;
+  }
+  const nv = vid.length;
+  const nb = Array.from({ length: nv }, () => new Set());
+  for (let t = 0; t < nt; t++) for (let k = 0; k < 3; k++) {
+    const a = tv[t * 3 + k]; const b = tv[t * 3 + ((k + 1) % 3)];
+    if (a !== b) { nb[a].add(b); nb[b].add(a); }
+  }
+  const nbr = nb.map((s) => Int32Array.from(s));
+  let f = new Float32Array(nv * C); const cnt = new Float32Array(nv);
+  for (let t = 0; t < nt; t++) for (let k = 0; k < 3; k++) { const v = tv[t * 3 + k]; f[v * C + ci.get(mats[t])] += 1; cnt[v] += 1; }
+  for (let v = 0; v < nv; v++) if (cnt[v]) for (let c = 0; c < C; c++) f[v * C + c] /= cnt[v];
+  for (let s = 0; s < steps; s++) {
+    const g = new Float32Array(nv * C);
+    for (let v = 0; v < nv; v++) {
+      const ns = nbr[v]; const deg = ns.length;
+      for (let c = 0; c < C; c++) {
+        let avg = 0; for (const u of ns) avg += f[u * C + c];
+        g[v * C + c] = deg ? 0.5 * f[v * C + c] + 0.5 * (avg / deg) : f[v * C + c];
+      }
+    }
+    f = g;
+  }
+  const out = new Array(nt);
+  for (let t = 0; t < nt; t++) {
+    let best = 0; let bs = -1;
+    for (let c = 0; c < C; c++) {
+      const sc = f[tv[t * 3] * C + c] + f[tv[t * 3 + 1] * C + c] + f[tv[t * 3 + 2] * C + c];
+      if (sc > bs) { bs = sc; best = c; }
+    }
+    out[t] = cats[best];
+  }
+  return out;
 }
 
 // One file's triangles as parts, one per material, with crease normals and the material's mask cell.
@@ -1228,6 +1322,7 @@ export async function convert(model, { name, template, categories = new Map(), m
       await tick();
       const all = Object.values(lod).flat();
       snapToSource(ref, all);
+      relaxShell(all);
       transferNormals(ref, all);
     }
   }

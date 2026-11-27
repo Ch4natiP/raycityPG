@@ -908,6 +908,63 @@ function foldCorners(parts) {
   }
 }
 
+// Hard edges, like a real car's panels: a point is split into one copy per smooth group of faces around it. A face
+// shares normals only with faces that turn less than `crease` degrees from it, so panel edges stay sharp and flat
+// panels stay flat. Copies sit at the same place, so nothing opens. Faces are oriented by the closed shell.
+function hardNormals(parts, crease = 35) {
+  const key = (P, v) => `${Math.round(P[v * 3] * 1e4)},${Math.round(P[v * 3 + 1] * 1e4)},${Math.round(P[v * 3 + 2] * 1e4)}`;
+  const node = new Map(); const pos = []; const copies = [];
+  for (const part of parts) {
+    const P = part.positions; const ids = new Int32Array(P.length / 3);
+    for (let v = 0; v < ids.length; v++) { const k = key(P, v); let id = node.get(k); if (id === undefined) { id = pos.length / 3; node.set(k, id); pos.push(P[v * 3], P[v * 3 + 1], P[v * 3 + 2]); } ids[v] = id; }
+    copies.push(ids);
+  }
+  const at = (i) => [pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]];
+  const faces = []; const fn = []; const partFaces = parts.map(() => []);
+  parts.forEach((part, pi) => {
+    const ids = copies[pi]; const I = part.indices;
+    for (let t = 0; t + 2 < I.length; t += 3) {
+      const a = ids[I[t]]; const b = ids[I[t + 1]]; const c = ids[I[t + 2]];
+      const A = at(a); const B = at(b); const C = at(c);
+      faces.push([pi, t, a, b, c]); fn.push(cross(sub(B, A), sub(C, A)));
+      partFaces[pi].push(faces.length - 1);
+    }
+  });
+  let vol = 0;
+  for (const f of faces) { const A = at(f[2]); const B = at(f[3]); const C = at(f[4]); vol += (A[0] * (B[1] * C[2] - B[2] * C[1]) - A[1] * (B[0] * C[2] - B[2] * C[0]) + A[2] * (B[0] * C[1] - B[1] * C[0])) / 6; }
+  const flip = vol < 0;
+  if (flip) for (let i = 0; i < faces.length; i++) { const f = faces[i]; const tmp = f[3]; f[3] = f[4]; f[4] = tmp; fn[i] = [-fn[i][0], -fn[i][1], -fn[i][2]]; }
+  const inc = Array.from({ length: pos.length / 3 }, () => []);
+  faces.forEach((f, i) => { inc[f[2]].push(i); inc[f[3]].push(i); inc[f[4]].push(i); });
+  const cosC = Math.cos((crease * Math.PI) / 180);
+  const cornerN = (fi, v) => {
+    const f0 = fn[fi]; const l0 = Math.hypot(f0[0], f0[1], f0[2]);
+    if (l0 < 1e-12) return [0, 0, 1];
+    const s = [0, 0, 0];
+    for (const gi of inc[v]) {
+      const g = fn[gi]; const lg = Math.hypot(g[0], g[1], g[2]); if (lg < 1e-12) continue;
+      if ((f0[0] * g[0] + f0[1] * g[1] + f0[2] * g[2]) / (l0 * lg) >= cosC) { s[0] += g[0]; s[1] += g[1]; s[2] += g[2]; }
+    }
+    const l = Math.hypot(s[0], s[1], s[2]); return l > 0 ? [s[0] / l, s[1] / l, s[2] / l] : [0, 0, 1];
+  };
+  parts.forEach((part, pi) => {
+    const U = part.uvs; const I = part.indices;
+    const map = new Map(); const nP = []; const nN = []; const nU = []; const nI = [];
+    const vert = (node, n, local) => {
+      const k = `${node}|${Math.round(n[0] * 1000)},${Math.round(n[1] * 1000)},${Math.round(n[2] * 1000)}`;
+      let id = map.get(k);
+      if (id === undefined) { id = nP.length / 3; map.set(k, id); const p = at(node); nP.push(p[0], p[1], p[2]); nN.push(n[0], n[1], n[2]); nU.push(U[local * 2], U[local * 2 + 1]); }
+      return id;
+    };
+    partFaces[pi].forEach((fi) => {
+      const f = faces[fi]; const t = f[1];
+      const loc = flip ? [I[t], I[t + 2], I[t + 1]] : [I[t], I[t + 1], I[t + 2]];
+      nI.push(vert(f[2], cornerN(fi, f[2]), loc[0]), vert(f[3], cornerN(fi, f[3]), loc[1]), vert(f[4], cornerN(fi, f[4]), loc[2]));
+    });
+    part.positions = nP; part.normals = nN; part.uvs = nU; part.indices = nI;
+  });
+}
+
 // Clean index list: no degenerate or duplicate triangles.
 function dedupe(raw) {
   const seen = new Set();
@@ -1441,9 +1498,11 @@ export async function convert(model, { name, template, categories = new Map(), m
     const outsideForBend = src.outside || await removeHidden(src.tris, log);
     ({ bent } = await bendTemplate(model, { name, template, outside: outsideForBend, geometryOnly: true, log }));
     const near = nearestTemplateFile(bent);
+    const skirtZ = m.bodyBounds(2, Math.min) + 0.12 * (m.bodyBounds(2, Math.max) - m.bodyBounds(2, Math.min));
     const slotOf0 = m.slotOf;
     m.slotOf = (c0, n, mat) => {
       const s0 = slotOf0(c0, n, mat);
+      if (!/glass|light|lamp/i.test(mat) && c0[2] < skirtZ && Math.abs(n[0]) > 0.8) return 'skirt';
       // Lamps stay where the lamp finder put them; everything else follows the template.
       const s = s0 === 'headlight' || s0 === 'rearlight' ? s0 : near(c0, /glass/i.test(mat) ? 1 : 0) || s0;
       return INTO_DRAWN[s] || s;
@@ -1494,11 +1553,10 @@ export async function convert(model, { name, template, categories = new Map(), m
       snapToSource(ref, all);
       relaxShell(all);
       despike(all);
-      geometryNormals(all);
-      foldCorners(all);
+      hardNormals(all);
     }
   }
-  smoothNormals(Object.values(lod).flat());
+  if (!smooth) smoothNormals(Object.values(lod).flat());
   const bounds = [[0, 1, 2].map((k) => m.bodyBounds(k, Math.min)), [0, 1, 2].map((k) => m.bodyBounds(k, Math.max))];
   if (layout === 'template') {
     log('คัดลอก UV จากรถแม่แบบ…');

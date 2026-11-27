@@ -604,6 +604,24 @@ function collect(model, categories) {
   return { tris, wheels: model.wheels.map((w) => ({ name: w.p[1] < 0 ? 'wheel_f' : 'wheel_r', p: w.p })), length: y1 - y0 };
 }
 
+// The car is left/right symmetric: keep the side of the source that is at or right of the centre plane and mirror it
+// across that plane, so both sides are the same surface. Triangles lying on the plane are kept once.
+function mirrorSource(tris) {
+  let x0 = Infinity; let x1 = -Infinity;
+  for (const t of tris) for (const p of [t.a, t.b, t.c]) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); }
+  const cx = (x0 + x1) / 2;
+  const keep = tris.filter((t) => (t.a[0] + t.b[0] + t.c[0]) / 3 >= cx);
+  const mir = (p) => [2 * cx - p[0], p[1], p[2]];
+  const flipN = (n) => [-n[0], n[1], n[2]];
+  const out = keep.slice();
+  for (const t of keep) {
+    const onPlane = Math.abs(t.a[0] - cx) < 1e-6 && Math.abs(t.b[0] - cx) < 1e-6 && Math.abs(t.c[0] - cx) < 1e-6;
+    if (onPlane) continue;
+    out.push({ a: mir(t.a), b: mir(t.c), c: mir(t.b), mat: t.mat, src: t.src, vn: [flipN(t.vn[0]), flipN(t.vn[2]), flipN(t.vn[1])] });
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------------------------
 // 2–4. Shell, slots, colors
 
@@ -791,7 +809,7 @@ function relaxShell(parts, rounds = 10) {
 
 // Points that stick out (a spike: far from the centre of their neighbours) are pulled halfway to that centre, the
 // same way at every copy of the point, a few rounds. Keeps the shape; removes the shards.
-function despike(parts, rounds = 4, thr = 0.8) {
+function despike(parts, rounds = 8, thr = 0.6) {
   const key = (P, v) => `${Math.round(P[v * 3] * 1e4)},${Math.round(P[v * 3 + 1] * 1e4)},${Math.round(P[v * 3 + 2] * 1e4)}`;
   const node = new Map(); const pos = []; const copies = [];
   for (const part of parts) {
@@ -844,15 +862,50 @@ function geometryNormals(parts, crease = 60) {
   const cos = Math.cos((crease * Math.PI) / 180);
   const nodeN = new Float64Array(pos.length);
   for (let v = 0; v < inc.length; v++) {
-    const sum = [0, 0, 0]; const list = inc[v];
+    const list = inc[v];
+    // pass 1: area-weighted sum of the faces around the point
+    const s1 = [0, 0, 0];
+    for (const i of list) { s1[0] += fn[i][0]; s1[1] += fn[i][1]; s1[2] += fn[i][2]; }
+    const l1 = Math.hypot(s1[0], s1[1], s1[2]) || 1;
+    // pass 2: keep only the faces that face the same way as that average (a fold's back face does not add in)
+    const sum = [0, 0, 0];
     for (const i of list) {
       const a = fn[i]; const la = Math.hypot(a[0], a[1], a[2]) || 1;
-      for (const j of list) { const b = fn[j]; const lb = Math.hypot(b[0], b[1], b[2]) || 1; if ((a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (la * lb) >= cos) { sum[0] += b[0]; sum[1] += b[1]; sum[2] += b[2]; } }
+      if ((a[0] * s1[0] + a[1] * s1[1] + a[2] * s1[2]) / (la * l1) >= cos) { sum[0] += a[0]; sum[1] += a[1]; sum[2] += a[2]; }
     }
-    const l = Math.hypot(sum[0], sum[1], sum[2]) || 1;
+    const l = Math.hypot(sum[0], sum[1], sum[2]) || l1;
     nodeN[v * 3] = sum[0] / l; nodeN[v * 3 + 1] = sum[1] / l; nodeN[v * 3 + 2] = sum[2] / l;
   }
   parts.forEach((part, pi) => { const ids = copies[pi]; const N = part.normals; for (let v = 0; v < ids.length; v++) for (let j = 0; j < 3; j++) N[v * 3 + j] = nodeN[ids[v] * 3 + j]; });
+}
+
+// A corner whose stored normal faces against its own triangle (a fold) gets its own copy of the point, shaded with
+// the triangle's normal: the copy sits at the same place, so nothing opens, but no triangle shades dark.
+function foldCorners(parts) {
+  for (const part of parts) {
+    const P = part.positions; const N = part.normals; const U = part.uvs; const I = part.indices;
+    let nv = P.length / 3; const addP = []; const addN = []; const addU = [];
+    for (let t = 0; t + 2 < I.length; t += 3) {
+      const a = I[t]; const b = I[t + 1]; const c = I[t + 2];
+      const A = [P[a * 3], P[a * 3 + 1], P[a * 3 + 2]]; const B = [P[b * 3], P[b * 3 + 1], P[b * 3 + 2]]; const C = [P[c * 3], P[c * 3 + 1], P[c * 3 + 2]];
+      const g = cross(sub(B, A), sub(C, A)); const gl = Math.hypot(g[0], g[1], g[2]);
+      if (gl < 1e-12) continue;
+      const gn = [g[0] / gl, g[1] / gl, g[2] / gl];
+      [a, b, c].forEach((v, k) => {
+        const d = gn[0] * N[v * 3] + gn[1] * N[v * 3 + 1] + gn[2] * N[v * 3 + 2];
+        if (d < 0.1) {
+          const id = nv++;
+          addP.push(P[v * 3], P[v * 3 + 1], P[v * 3 + 2]); addN.push(gn[0], gn[1], gn[2]); addU.push(U[v * 2], U[v * 2 + 1]);
+          I[t + k] = id;
+        }
+      });
+    }
+    if (addP.length) {
+      part.positions = Array.from(P).concat(addP);
+      part.normals = Array.from(N).concat(addN);
+      part.uvs = Array.from(U).concat(addU);
+    }
+  }
 }
 
 // Clean index list: no degenerate or duplicate triangles.
@@ -1350,6 +1403,7 @@ export async function convert(model, { name, template, categories = new Map(), m
   await MeshoptSimplifier.ready;
   log('อ่านโมเดล…');
   const src = collect(model, categories);
+  if (!raw) src.tris = mirrorSource(src.tris);
   if (raw && hideInterior) {
     // With the template's see-through glass the cabin seen through the windows stays.
     src.outside = await removeHidden(src.tris, log);
@@ -1441,6 +1495,7 @@ export async function convert(model, { name, template, categories = new Map(), m
       relaxShell(all);
       despike(all);
       geometryNormals(all);
+      foldCorners(all);
     }
   }
   smoothNormals(Object.values(lod).flat());

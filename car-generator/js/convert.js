@@ -789,6 +789,72 @@ function relaxShell(parts, rounds = 10) {
   });
 }
 
+// Points that stick out (a spike: far from the centre of their neighbours) are pulled halfway to that centre, the
+// same way at every copy of the point, a few rounds. Keeps the shape; removes the shards.
+function despike(parts, rounds = 4, thr = 0.8) {
+  const key = (P, v) => `${Math.round(P[v * 3] * 1e4)},${Math.round(P[v * 3 + 1] * 1e4)},${Math.round(P[v * 3 + 2] * 1e4)}`;
+  const node = new Map(); const pos = []; const copies = [];
+  for (const part of parts) {
+    const P = part.positions; const ids = new Int32Array(P.length / 3);
+    for (let v = 0; v < ids.length; v++) { const k = key(P, v); let id = node.get(k); if (id === undefined) { id = pos.length / 3; node.set(k, id); pos.push(P[v * 3], P[v * 3 + 1], P[v * 3 + 2]); } ids[v] = id; }
+    copies.push(ids);
+  }
+  const N = pos.length / 3; const nb = Array.from({ length: N }, () => new Set());
+  parts.forEach((part, pi) => { const ids = copies[pi]; const ind = part.indices; for (let t = 0; t + 2 < ind.length; t += 3) for (let k = 0; k < 3; k++) { const a = ids[ind[t + k]]; const b = ids[ind[t + ((k + 1) % 3)]]; if (a !== b) { nb[a].add(b); nb[b].add(a); } } });
+  const nbr = nb.map((s) => Int32Array.from(s));
+  let se = 0; let ne = 0;
+  for (let v = 0; v < N; v++) for (const u of nbr[v]) { se += Math.hypot(pos[v * 3] - pos[u * 3], pos[v * 3 + 1] - pos[u * 3 + 1], pos[v * 3 + 2] - pos[u * 3 + 2]); ne++; }
+  const avgE = ne ? se / ne : 0;
+  let X = Float64Array.from(pos);
+  for (let r = 0; r < rounds; r++) {
+    const Y = Float64Array.from(X);
+    for (let v = 0; v < N; v++) {
+      const ns = nbr[v]; if (ns.length < 3) continue;
+      let cx = 0; let cy = 0; let cz = 0;
+      for (const u of ns) { cx += X[u * 3]; cy += X[u * 3 + 1]; cz += X[u * 3 + 2]; }
+      cx /= ns.length; cy /= ns.length; cz /= ns.length;
+      const d = Math.hypot(X[v * 3] - cx, X[v * 3 + 1] - cy, X[v * 3 + 2] - cz) / (avgE || 1);
+      if (d > thr) { Y[v * 3] = X[v * 3] + 0.5 * (cx - X[v * 3]); Y[v * 3 + 1] = X[v * 3 + 1] + 0.5 * (cy - X[v * 3 + 1]); Y[v * 3 + 2] = X[v * 3 + 2] + 0.5 * (cz - X[v * 3 + 2]); }
+    }
+    X = Y;
+  }
+  parts.forEach((part, pi) => { const ids = copies[pi]; const P = part.positions; for (let v = 0; v < ids.length; v++) for (let j = 0; j < 3; j++) P[v * 3 + j] = X[ids[v] * 3 + j]; });
+}
+
+// Normals from the final geometry, not copied from the source: each face is oriented by the closed shell (signed
+// volume), and each point's normal is the area-weighted average of its faces within a 60 degree crease, across parts
+// (by position). A triangle can no longer shade dark from a flipped source normal.
+function geometryNormals(parts, crease = 60) {
+  const key = (P, v) => `${Math.round(P[v * 3] * 1e4)},${Math.round(P[v * 3 + 1] * 1e4)},${Math.round(P[v * 3 + 2] * 1e4)}`;
+  const node = new Map(); const pos = []; const copies = [];
+  for (const part of parts) {
+    const P = part.positions; const ids = new Int32Array(P.length / 3);
+    for (let v = 0; v < ids.length; v++) { const k = key(P, v); let id = node.get(k); if (id === undefined) { id = pos.length / 3; node.set(k, id); pos.push(P[v * 3], P[v * 3 + 1], P[v * 3 + 2]); } ids[v] = id; }
+    copies.push(ids);
+  }
+  const at = (i) => [pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]];
+  const faces = [];
+  parts.forEach((part, pi) => { const ids = copies[pi]; const ind = part.indices; for (let t = 0; t + 2 < ind.length; t += 3) { const a = ids[ind[t]]; const b = ids[ind[t + 1]]; const c = ids[ind[t + 2]]; if (a === b || b === c || a === c) continue; faces.push([a, b, c]); } });
+  let vol = 0;
+  for (const [a, b, c] of faces) { const A = at(a); const B = at(b); const C = at(c); vol += (A[0] * (B[1] * C[2] - B[2] * C[1]) - A[1] * (B[0] * C[2] - B[2] * C[0]) + A[2] * (B[0] * C[1] - B[1] * C[0])) / 6; }
+  if (vol < 0) for (const f of faces) { const t = f[1]; f[1] = f[2]; f[2] = t; }
+  const fn = faces.map(([a, b, c]) => { const A = at(a); const B = at(b); const C = at(c); return cross(sub(B, A), sub(C, A)); });
+  const inc = Array.from({ length: pos.length / 3 }, () => []);
+  faces.forEach((f, i) => { inc[f[0]].push(i); inc[f[1]].push(i); inc[f[2]].push(i); });
+  const cos = Math.cos((crease * Math.PI) / 180);
+  const nodeN = new Float64Array(pos.length);
+  for (let v = 0; v < inc.length; v++) {
+    const sum = [0, 0, 0]; const list = inc[v];
+    for (const i of list) {
+      const a = fn[i]; const la = Math.hypot(a[0], a[1], a[2]) || 1;
+      for (const j of list) { const b = fn[j]; const lb = Math.hypot(b[0], b[1], b[2]) || 1; if ((a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (la * lb) >= cos) { sum[0] += b[0]; sum[1] += b[1]; sum[2] += b[2]; } }
+    }
+    const l = Math.hypot(sum[0], sum[1], sum[2]) || 1;
+    nodeN[v * 3] = sum[0] / l; nodeN[v * 3 + 1] = sum[1] / l; nodeN[v * 3 + 2] = sum[2] / l;
+  }
+  parts.forEach((part, pi) => { const ids = copies[pi]; const N = part.normals; for (let v = 0; v < ids.length; v++) for (let j = 0; j < 3; j++) N[v * 3 + j] = nodeN[ids[v] * 3 + j]; });
+}
+
 // Clean index list: no degenerate or duplicate triangles.
 function dedupe(raw) {
   const seen = new Set();
@@ -809,16 +875,29 @@ function dedupe(raw) {
 function shellMaterials(P, idx, ref) {
   const nt = idx.length / 3;
   const mats = new Array(nt); const info = new Array(nt);
+  // One material per POINT (from the source surface at the point, normal averaged over its triangles), so the
+  // cut between two panels follows the points instead of stepping triangle by triangle.
+  const vsum = new Map();
+  for (let t = 0; t < nt; t++) {
+    const a = idx[t * 3]; const b = idx[t * 3 + 1]; const c = idx[t * 3 + 2];
+    const A = [P[a * 3], P[a * 3 + 1], P[a * 3 + 2]]; const B = [P[b * 3], P[b * 3 + 1], P[b * 3 + 2]]; const C = [P[c * 3], P[c * 3 + 1], P[c * 3 + 2]];
+    const fn = cross(sub(B, A), sub(C, A));
+    for (const v of [a, b, c]) { const s = vsum.get(v) || [0, 0, 0]; s[0] += fn[0]; s[1] += fn[1]; s[2] += fn[2]; vsum.set(v, s); }
+  }
+  const vmat = new Map();
+  for (const [v, s] of vsum) {
+    const len = Math.hypot(s[0], s[1], s[2]);
+    const n = len > 1e-12 ? [s[0] / len, s[1] / len, s[2] / len] : [0, 0, 1];
+    vmat.set(v, materialAt(ref, [P[v * 3], P[v * 3 + 1], P[v * 3 + 2]], n) || 'Underbody');
+  }
   for (let t = 0; t < nt; t++) {
     const v = [idx[t * 3], idx[t * 3 + 1], idx[t * 3 + 2]].map((i) => [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]);
     const c0 = [0, 1, 2].map((k) => (v[0][k] + v[1][k] + v[2][k]) / 3);
     const n = norm(cross(sub(v[1], v[0]), sub(v[2], v[0])));
     const votes = new Map();
-    for (const w of [[1 / 3, 1 / 3, 1 / 3], [0.6, 0.2, 0.2], [0.2, 0.6, 0.2], [0.2, 0.2, 0.6]]) {
-      const q = [0, 1, 2].map((k) => v[0][k] * w[0] + v[1][k] * w[1] + v[2][k] * w[2]);
-      const mm = materialAt(ref, q, n) || 'Underbody';
-      votes.set(mm, (votes.get(mm) || 0) + 1);
-    }
+    for (const i of [idx[t * 3], idx[t * 3 + 1], idx[t * 3 + 2]]) { const mm = vmat.get(i); votes.set(mm, (votes.get(mm) || 0) + 1); }
+    // tie (three different points): the material at the centre decides
+    if (votes.size === 3) { const mm = materialAt(ref, c0, n) || 'Underbody'; votes.set(mm, (votes.get(mm) || 0) + 0.5); }
     mats[t] = [...votes].sort((a, b) => b[1] - a[1])[0][0];
     info[t] = { c0, n };
   }
@@ -1360,7 +1439,8 @@ export async function convert(model, { name, template, categories = new Map(), m
       const all = Object.values(lod).flat();
       snapToSource(ref, all);
       relaxShell(all);
-      transferNormals(ref, all);
+      despike(all);
+      geometryNormals(all);
     }
   }
   smoothNormals(Object.values(lod).flat());

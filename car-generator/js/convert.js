@@ -2174,6 +2174,18 @@ export async function writeCar(lod, { name, template, bounds, paintAll = true, s
   }
   await defaultPartsLikeEscarabajo(out, name, { log });
   const nv = (rel) => { const b = out.get(rel); return b ? parseOM(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)).positions.length / 3 : 0; };
+  // A list.xml can name a texture this output does not carry (a template variant such as the mainspoiler's):
+  // the car's own paint texture is written under that name, so the part is not drawn without a texture.
+  for (const rel of [...out.keys()].filter((r) => /(^|\/)list\.xml$/.test(r))) {
+    const dir = rel.slice(0, rel.length - 'list.xml'.length);
+    const text = decodeSpec(out.get(rel));
+    for (const m of text.matchAll(/tex='([^']*)'/g)) {
+      const tex = m[1];
+      if (!tex || out.has(`${dir}${tex}.png`)) continue;
+      if (out.get(`${name}_base.png`)) out.set(`${dir}${tex}.png`, out.get(`${name}_base.png`));
+      if (out.get(`${name}_base_s.dds`)) out.set(`${dir}${tex}_s.dds`, out.get(`${name}_base_s.dds`));
+    }
+  }
   log(`เสร็จ: ${out.size} ไฟล์ · ตัวถัง ${nv('body_2.0m')} จุด`);
   return out;
 }

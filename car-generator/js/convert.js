@@ -1556,6 +1556,7 @@ export async function convert(model, { name, template, categories = new Map(), m
       hardNormals(all);
     }
   }
+  if (raw && smooth) { const allRaw = Object.values(lod).flat(); despike(allRaw); hardNormals(allRaw); }
   if (!smooth) smoothNormals(Object.values(lod).flat());
   const bounds = [[0, 1, 2].map((k) => m.bodyBounds(k, Math.min)), [0, 1, 2].map((k) => m.bodyBounds(k, Math.max))];
   if (layout === 'template') {

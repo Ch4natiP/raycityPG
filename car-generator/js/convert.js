@@ -1565,7 +1565,8 @@ export async function convert(model, { name, template, categories = new Map(), m
   if (raw) {
     log('ใช้ผิวจริงของโมเดล (ไม่สร้างผิวใหม่)…');
     await tick();
-    lod = await fitRaw(src.tris, m, maxVerts, log, raw && !hideInterior);
+    // Raw mode keeps every part whole: a reduced body leaves cut lines that do not meet the parts beside it.
+    lod = await fitRaw(src.tris, m, maxVerts, log, raw);
   } else {
     const ref = makeReference(src.tris);
     log('สร้างเปลือกนอก (voxel)…');

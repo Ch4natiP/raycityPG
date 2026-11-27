@@ -1019,7 +1019,7 @@ function bindOmButtons() {
   document.getElementById('btn-car-zip').addEventListener('click', downloadCarZip);
   document.getElementById('btn-car-check').addEventListener('click', async () => {
     const el = document.getElementById('car-check');
-    if (!folder) { el.textContent = 'เปิดโฟลเดอร์รถ หรือกดรถด้านบนก่อน'; return; }
+    if (!folder) { el.textContent = 'ยังไม่มีรถที่สร้างแล้ว: กด ⚡ สร้างรถก่อน แล้วค่อยกดตรวจ (หรือเปิดโฟลเดอร์รถที่มีอยู่)'; return; }
     el.textContent = '🩺 กำลังตรวจ…';
     const files = new Map();
     for (const [rel, file] of folder.files) files.set(rel, new Uint8Array(await file.arrayBuffer()));

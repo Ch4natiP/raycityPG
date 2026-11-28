@@ -1329,6 +1329,170 @@ function closeSlits(part) {
   return { ...part, positions: pos, normals: nrm, uvs, indices: idx };
 }
 
+// Seams between neighbouring panels (a door's edge, the tail-lamp surround) come out of the source model as two
+// open outlines a few cm apart, running side by side. Each point of an outline is projected onto the nearest
+// other outline within SEAM_MAX; where consecutive points project onto one outline in order, that stretch of the
+// two outlines is bridged by a band, split at the arc-length breakpoints of both outlines so every rim edge
+// meets the band. Glass and lens parts are left alone. Bands are written into the part that owns the outline.
+const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const SEAM_MAX = 0.07, SEAM_MIN = 0.004, SEAM_RUN = 0.02;
+const vdist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+function stitchSeams(out) {
+  const parts = [];
+  for (const slot of Object.keys(out)) for (const p of out[slot]) if (!/glass|lens/i.test(p.name || '')) parts.push(p);
+  // 1. outlines: cycles of welded boundary points, each with its unit normal
+  const loops = [];
+  parts.forEach((part, pi) => {
+    const P = part.positions, N = part.normals, I = part.indices; const nv = P.length / 3;
+    const ids = new Map(); const wid = new Int32Array(nv); const coord = []; const wn = [];
+    for (let v = 0; v < nv; v++) {
+      const k = `${Math.round(P[v * 3] * 2e3)},${Math.round(P[v * 3 + 1] * 2e3)},${Math.round(P[v * 3 + 2] * 2e3)}`;
+      let w = ids.get(k);
+      if (w === undefined) { w = coord.length; ids.set(k, w); coord.push([P[v * 3], P[v * 3 + 1], P[v * 3 + 2]]); wn.push([0, 0, 0]); }
+      wid[v] = w; wn[w][0] += N[v * 3]; wn[w][1] += N[v * 3 + 1]; wn[w][2] += N[v * 3 + 2];
+    }
+    const nrm = wn.map((n) => norm(n));
+    const dir = new Set();
+    for (let t = 0; t < I.length; t += 3) for (let k = 0; k < 3; k++) {
+      const a = wid[I[t + k]], b = wid[I[t + (k + 1) % 3]];
+      if (a !== b) dir.add(a + ',' + b);
+    }
+    const outN = new Map();
+    for (const e of dir) {
+      const [a, b] = e.split(',').map(Number);
+      if (dir.has(b + ',' + a)) continue;
+      if (!outN.has(a)) outN.set(a, []);
+      outN.get(a).push(b);
+    }
+    const done = new Set();
+    for (const a0 of [...outN.keys()]) {
+      if (done.has(a0)) continue;
+      const cyc = [a0]; done.add(a0); let cur = a0;
+      for (let g = 0; g < 1e6; g++) {
+        const nx = outN.get(cur); if (!nx || !nx.length) break;
+        const nxt = nx.shift();
+        if (nxt === a0) break;
+        if (done.has(nxt)) break;
+        cyc.push(nxt); done.add(nxt); cur = nxt;
+      }
+      if (cyc.length >= 3) loops.push({ pi, pts: cyc.map((id) => ({ c: coord[id], n: nrm[id] })) });
+    }
+  });
+  const L = loops.length;
+  const bb = loops.map((l) => {
+    const mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
+    for (const p of l.pts) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], p.c[k]); mx[k] = Math.max(mx[k], p.c[k]); }
+    return { mn, mx };
+  });
+  // 2. for every point: its nearest point on another outline (projected onto that outline's segments)
+  const match = loops.map((l) => new Array(l.pts.length).fill(null));
+  for (let a = 0; a < L; a++) {
+    const A = loops[a];
+    for (let b = 0; b < L; b++) {
+      if (b === a) continue;
+      const B = loops[b], nb = B.pts.length;
+      const near = (k) => bb[a].mx[k] + SEAM_MAX >= bb[b].mn[k] && bb[a].mn[k] - SEAM_MAX <= bb[b].mx[k];
+      if (!near(0) || !near(1) || !near(2)) continue;
+      A.pts.forEach((p, i) => {
+        let best = null;
+        for (let k = 0; k < nb; k++) {
+          const c0 = B.pts[k].c, c1 = B.pts[(k + 1) % nb].c;
+          const ab = sub(c1, c0); const l2 = dot3(ab, ab);
+          let t = l2 > 0 ? dot3(sub(p.c, c0), ab) / l2 : 0; t = Math.max(0, Math.min(1, t));
+          const d = vdist(p.c, lerp3(c0, c1, t));
+          if (!best || d < best.d) best = { d, param: k + t };
+        }
+        if (best && best.d >= SEAM_MIN && best.d <= SEAM_MAX && (!match[a][i] || best.d < match[a][i].d)) match[a][i] = { b, param: best.param, d: best.d };
+      });
+    }
+  }
+  // 3. runs of consecutive points that project onto one outline in order
+  const used = loops.map((l) => new Array(l.pts.length).fill(false));
+  const bands = [];
+  for (let a = 0; a < L; a++) {
+    const A = loops[a], n = A.pts.length;
+    for (let k0 = 0; k0 < n; k0++) {
+      const m0 = match[a][k0];
+      if (!m0 || used[a][k0]) continue;
+      const run = [k0]; let prev = m0.param, sign = 0;
+      for (let t = 1; t < n; t++) {
+        const k = (k0 + t) % n, m = match[a][k];
+        if (!m || m.b !== m0.b || used[a][k]) break;
+        const s = m.param - prev;
+        if (Math.abs(s) > 3) break;
+        const sg = Math.sign(s);
+        if (sg !== 0) { if (sign === 0) sign = sg; else if (sg !== sign) break; }
+        prev = m.param; run.push(k);
+      }
+      let arc = 0; for (let i = 1; i < run.length; i++) arc += vdist(A.pts[run[i]].c, A.pts[run[i - 1]].c);
+      if (run.length < 2 || arc < SEAM_RUN) continue;
+      run.forEach((k) => { used[a][k] = true; });
+      bands.push({ owner: A.pi, a, run, b: m0.b, p0: match[a][run[0]].param, p1: match[a][run[run.length - 1]].param });
+    }
+  }
+  // 4. bridge each run with a band split at the breakpoints of both outlines
+  const adds = new Map(); // part index -> [[p, q, r]] with per-point normals
+  let nBands = 0;
+  for (const bd of bands) {
+    const A = loops[bd.a].pts; const B = loops[bd.b].pts, nB = B.length;
+    const at = (x) => { const y = ((x % nB) + nB) % nB; const k = Math.floor(y) % nB, t = y - Math.floor(y); const q0 = B[k], q1 = B[(k + 1) % nB]; return { c: lerp3(q0.c, q1.c, t), n: norm(lerp3(q0.n, q1.n, t)) }; };
+    const Asub = bd.run.map((k) => A[k]);
+    // B polyline from p0 to p1 in the order the run goes
+    const Bsub = [at(bd.p0)];
+    const forward = bd.p1 >= bd.p0;
+    if (forward) { for (let k = Math.floor(bd.p0) + 1; k < bd.p1; k++) Bsub.push({ c: B[k % nB].c, n: B[k % nB].n }); }
+    else { for (let k = Math.ceil(bd.p0) - 1; k > bd.p1; k--) Bsub.push({ c: B[((k % nB) + nB) % nB].c, n: B[((k % nB) + nB) % nB].n }); }
+    Bsub.push(at(bd.p1));
+    const arcs = (poly) => { const s = [0]; for (let i = 1; i < poly.length; i++) s.push(s[i - 1] + vdist(poly[i].c, poly[i - 1].c)); const tot = s[s.length - 1]; return tot > 0 ? s.map((v) => v / tot) : null; };
+    const ua = arcs(Asub), ub = arcs(Bsub);
+    if (!ua || !ub) continue;
+    const us = [...new Set([...ua, ...ub].map((v) => +v.toFixed(9)))].sort((x, y) => x - y);
+    const pick = (poly, u, arr) => {
+      let i = 1; while (i < arr.length - 1 && arr[i] < u) i++;
+      const span = arr[i] - arr[i - 1]; const t = span > 0 ? Math.max(0, Math.min(1, (u - arr[i - 1]) / span)) : 0;
+      return { c: lerp3(poly[i - 1].c, poly[i].c, t), n: norm(lerp3(poly[i - 1].n, poly[i].n, t)) };
+    };
+    const PA = us.map((u) => pick(Asub, u, ua)), PB = us.map((u) => pick(Bsub, u, ub));
+    const owner = loops[bd.a].pi;
+    if (!adds.has(owner)) adds.set(owner, []);
+    for (let k = 0; k + 1 < us.length; k++) {
+      const quad = [[PA[k], PA[k + 1], PB[k]], [PA[k + 1], PB[k + 1], PB[k]]];
+      for (let tri of quad) {
+        const fn = cross(sub(tri[1].c, tri[0].c), sub(tri[2].c, tri[0].c));
+        if (Math.hypot(...fn) < 1e-12) continue;
+        const vn = [0, 1, 2].map((j) => tri[0].n[j] + tri[1].n[j] + tri[2].n[j]);
+        if (dot3(fn, vn) < 0) tri = [tri[0], tri[2], tri[1]];
+        adds.get(owner).push(tri);
+      }
+    }
+    nBands++;
+  }
+  // 5. write the bands into their parts
+  const replaced = new Map();
+  for (const [pi, list] of adds) {
+    if (!list.length) continue;
+    const part = parts[pi];
+    const P = part.positions, N = part.normals, I = part.indices; const nv = P.length / 3;
+    const u0 = part.uvs ? part.uvs[0] : 0, v0 = part.uvs ? part.uvs[1] : 0;
+    const extra = list.length * 3;
+    const pos = new Float32Array((nv + extra) * 3), nrm = new Float32Array((nv + extra) * 3), uvs = new Float32Array((nv + extra) * 2);
+    pos.set(P); nrm.set(N); uvs.set(part.uvs || new Float32Array(nv * 2));
+    const idx = new Uint32Array(I.length + extra); idx.set(I);
+    list.forEach((t, ti) => {
+      const fn = norm(cross(sub(t[1].c, t[0].c), sub(t[2].c, t[0].c)));
+      for (let j = 0; j < 3; j++) {
+        const vi = nv + ti * 3 + j;
+        pos.set(t[j].c, vi * 3); nrm.set(fn, vi * 3); uvs[vi * 2] = u0; uvs[vi * 2 + 1] = v0;
+        idx[I.length + ti * 3 + j] = vi;
+      }
+    });
+    replaced.set(part, { ...part, positions: pos, normals: nrm, uvs, indices: idx });
+  }
+  for (const slot of Object.keys(out)) out[slot] = out[slot].map((p) => replaced.get(p) || p);
+  return { bands: nBands, tris: [...adds.values()].reduce((s, l) => s + l.length, 0) };
+}
+
 async function fitRaw(tris, m, cap, log, keep = false) {
   const slotOfTri = tris.map((t) => m.slotOf(t.c0, t.n, t.mat));
   const slotNames = [...new Set(slotOfTri)];
@@ -1391,6 +1555,8 @@ async function fitRaw(tris, m, cap, log, keep = false) {
     await tick();
   }
   for (const slot of Object.keys(out)) out[slot] = out[slot].map(closeSlits);
+  const seam = stitchSeams(out);
+  log(`ต่อร่องรอยต่อชิ้นส่วน ${seam.bands} แถบ (${seam.tris.toLocaleString()} สามเหลี่ยม)`);
   return out;
 }
 
